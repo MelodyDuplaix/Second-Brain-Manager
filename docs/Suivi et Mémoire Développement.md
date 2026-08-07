@@ -178,13 +178,19 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   3. `GamificationHistoryView` avec annulation et graphiques SVG zéro-dépendance.
 - **Statut** : Validée.
 
-### 📅 2026-08-07 — Étape 1.5 : Architecture Native des Paramètres & Clavier
+### 📅 2026-08-07 — Étape 1.5c : Architecture Équilibrée Spaced Repetition & Tag Racine Dynamique
 - **Décision** :
-  1. Adoption du modèle exact de *Spaced Repetition* (`SettingsPageManager`, `BaseSettingsPage`, `SettingGroup`).
-  2. Page principale directe avec sections groupées, et sous-page dédiée aux récompenses.
-  3. Support complet de la navigation au clavier (`tabindex="0"`, `Entrée`/`Espace`, `clickable-icon`).
-  4. Champ dynamique pour le préfixe racine de tag de priorité (`#priorite`).
-- **Statut** : Validée.
+  1. **Page Principale Directe & Complète** : Accès direct aux réglages essentiels (Général & Énergie, Dossiers du Coffre, Syntaxes & Priorités, Matrice Eisenhower, Agent IA & Secret Storage) avec les `SettingGroup` natifs.
+  2. **Sous-Page Dédiée Récompenses** : Accès fluide via une ligne cliquable et navigable au clavier (`tabindex="0"`, `Enter`/`Space`) menant au catalogue de récompenses et au formulaire d'ajout, avec bouton de retour natif `<`.
+  3. **Champ Dynamique du Tag Racine de Priorité** : Lorsque le mode de priorité `tag` est sélectionné, un champ textuel apparaît automatiquement pour personnaliser le préfixe racine (ex: `priorite` pour `#priorite/haute`, `priority` pour `#priority/high`).
+- **Statut** : Terminée.
+
+### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub
+- **Objectifs** :
+  1. **Stratégie de Branches (Git Branching Model)** : Définition d'une convention de branches (`main` pour les versions stables/publiées, `develop` ou `feature/...` pour les développements actifs).
+  2. **Workflow GitHub Actions (CI/CD)** : Automatisation du linting, des tests unitaires Vitest et de la compilation lors des pushs et pull requests.
+  3. **Gestion des Releases & Tags Git (`vX.Y.Z`)** : Automatisation de la publication des releases officielles avec synchronisation du `manifest.json`, génération automatique des assets de distribution (`main.js`, `manifest.json`, `styles.css`) et changelog.
+
 
 ### 📅 2026-08-07 — Étape 3.1 : Chat Conversationnel IA & Streaming
 - **Décision** :
