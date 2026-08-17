@@ -20,7 +20,13 @@ export function matchTaskTitle(text: string, vaultTitle: string): boolean {
 	const cleanVault = clean(vaultTitle);
 
 	if (!cleanText || !cleanVault) return false;
-	if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
+	if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) {
+		// Vérifie que le texte n'est pas disproportionné par rapport au titre de la tâche
+		const getWordsCount = (s: string) => s.split(/\s+/).filter(w => w.length >= 2).length;
+		if (getWordsCount(cleanText) <= getWordsCount(cleanVault) * 2.5) {
+			return true;
+		}
+	}
 
 	const getWords = (s: string) =>
 		s
@@ -32,14 +38,17 @@ export function matchTaskTitle(text: string, vaultTitle: string): boolean {
 
 	if (wordsA.length === 0 || wordsB.length === 0) return false;
 
-	const common = wordsA.filter(w => wordsB.includes(w));
-	const score = common.length / Math.min(wordsA.length, wordsB.length);
+	// Si le texte est un long paragraphe explicatif, ce n'est pas une simple tâche
+	if (wordsA.length > wordsB.length * 2.2) return false;
 
-	return score >= 0.5 || common.length >= 2;
+	const common = wordsA.filter(w => wordsB.includes(w));
+	const matchRatio = common.length / wordsB.length;
+
+	return matchRatio >= 0.6 || (common.length >= 2 && wordsB.length <= 3 && matchRatio >= 0.5);
 }
 
 describe('Task Fuzzy Matcher', () => {
-	it('should match slightly rephrased task titles', () => {
+	it('should match slightly rephrased task titles in lists', () => {
 		const text = 'Envoyer le catalogue à Claire #reseau 📅 2026-08-07 Claire (Énergie : 2/10)';
 		const vaultTitle = 'Envoyer le catalogue de tarifs à Claire';
 
@@ -51,6 +60,13 @@ describe('Task Fuzzy Matcher', () => {
 		const vaultTitle = 'Réparer le bug de collision du joueur';
 
 		expect(matchTaskTitle(text, vaultTitle)).toBe(true);
+	});
+
+	it('should NEVER match conversational welcome paragraphs that just mention Second Brain', () => {
+		const welcomeText = 'Bonjour ! Je suis votre assistant Second Brain. Vous pouvez me poser des questions sur votre coffre, me raconter une réunion pour créer automatiquement des fiches et des tâches, ou me demander un briefing.';
+		const vaultTask = 'Définir les principes du Second Brain Manager #dev';
+
+		expect(matchTaskTitle(welcomeText, vaultTask)).toBe(false);
 	});
 
 	it('should not match unrelated tasks', () => {

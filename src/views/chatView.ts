@@ -476,7 +476,6 @@ export class ChatView extends ItemView {
 		const cleanVault = clean(vaultTitle);
 
 		if (!cleanText || !cleanVault) return false;
-		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
 
 		const getWords = (s: string) =>
 			s.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
@@ -486,10 +485,15 @@ export class ChatView extends ItemView {
 
 		if (wordsA.length === 0 || wordsB.length === 0) return false;
 
-		const common = wordsA.filter(w => wordsB.includes(w));
-		const score = common.length / Math.min(wordsA.length, wordsB.length);
+		// Si le texte est un long paragraphe explicatif, ce n'est pas une simple tâche
+		if (wordsA.length > wordsB.length * 2.2) return false;
 
-		return score >= 0.5 || common.length >= 2;
+		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
+
+		const common = wordsA.filter(w => wordsB.includes(w));
+		const matchRatio = common.length / wordsB.length;
+
+		return matchRatio >= 0.6 || (common.length >= 2 && wordsB.length <= 3 && matchRatio >= 0.5);
 	}
 
 	private async upgradeTaskElementsInPlace(
@@ -518,6 +522,17 @@ export class ChatView extends ItemView {
 
 			const text = el.textContent || '';
 			if (!text.trim()) return;
+
+			// Si c'est un paragraphe <p>, on n'analyse QUE s'il commence par une puce ou contient des marqueurs explicites de tâche
+			if (el.tagName.toLowerCase() === 'p') {
+				const isTaskLike =
+					/^[-*0-9.]+\s*\[[ xX/]\]/.test(text.trim()) ||
+					text.includes('📅') ||
+					text.includes('⚡') ||
+					text.includes('#tm/') ||
+					text.includes('#energie/');
+				if (!isTaskLike) return;
+			}
 
 			// Recherche par similarité floue avec les tâches du coffre
 			const matched = vaultTasks.find(vt => {
