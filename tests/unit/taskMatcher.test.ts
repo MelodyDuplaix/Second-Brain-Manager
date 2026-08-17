@@ -20,13 +20,6 @@ export function matchTaskTitle(text: string, vaultTitle: string): boolean {
 	const cleanVault = clean(vaultTitle);
 
 	if (!cleanText || !cleanVault) return false;
-	if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) {
-		// Vérifie que le texte n'est pas disproportionné par rapport au titre de la tâche
-		const getWordsCount = (s: string) => s.split(/\s+/).filter(w => w.length >= 2).length;
-		if (getWordsCount(cleanText) <= getWordsCount(cleanVault) * 2.5) {
-			return true;
-		}
-	}
 
 	const getWords = (s: string) =>
 		s
@@ -38,9 +31,15 @@ export function matchTaskTitle(text: string, vaultTitle: string): boolean {
 
 	if (wordsA.length === 0 || wordsB.length === 0) return false;
 
-	// Si le texte est un long paragraphe explicatif, ce n'est pas une simple tâche
-	if (wordsA.length > wordsB.length * 2.2) return false;
+	// Si le texte est un long paragraphe explicatif (> 25 mots), ce n'est pas une ligne de tâche
+	if (wordsA.length > 25 && wordsA.length > wordsB.length * 3) return false;
 
+	// 1. Inclusion directe de la chaîne
+	if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) {
+		return true;
+	}
+
+	// 2. Score de mots en commun
 	const common = wordsA.filter(w => wordsB.includes(w));
 	const matchRatio = common.length / wordsB.length;
 
@@ -48,6 +47,20 @@ export function matchTaskTitle(text: string, vaultTitle: string): boolean {
 }
 
 describe('Task Fuzzy Matcher', () => {
+	it('should match task titles with appended wikilink paths and tags', () => {
+		const text = 'Réserver le billet de train #perso 📅 2026-08-10 #tm/q2 00 - Inbox/Idées vrac';
+		const vaultTitle = 'Réserver le billet de train #perso';
+
+		expect(matchTaskTitle(text, vaultTitle)).toBe(true);
+	});
+
+	it('should match list items with category and location', () => {
+		const text = 'Sortir les poubelles #maison 📅 2026-08-07 #tm/q3 Maison';
+		const vaultTitle = 'Sortir les poubelles #maison';
+
+		expect(matchTaskTitle(text, vaultTitle)).toBe(true);
+	});
+
 	it('should match slightly rephrased task titles in lists', () => {
 		const text = 'Envoyer le catalogue à Claire #reseau 📅 2026-08-07 Claire (Énergie : 2/10)';
 		const vaultTitle = 'Envoyer le catalogue de tarifs à Claire';

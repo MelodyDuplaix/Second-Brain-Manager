@@ -485,11 +485,13 @@ export class ChatView extends ItemView {
 
 		if (wordsA.length === 0 || wordsB.length === 0) return false;
 
-		// Si le texte est un long paragraphe explicatif, ce n'est pas une simple tâche
-		if (wordsA.length > wordsB.length * 2.2) return false;
+		// Si le texte est un long paragraphe explicatif (> 25 mots), ce n'est pas une simple tâche
+		if (wordsA.length > 25 && wordsA.length > wordsB.length * 3) return false;
 
+		// 1. Inclusion directe
 		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
 
+		// 2. Mots-clés en commun
 		const common = wordsA.filter(w => wordsB.includes(w));
 		const matchRatio = common.length / wordsB.length;
 
@@ -519,6 +521,9 @@ export class ChatView extends ItemView {
 
 		candidateElements.forEach(el => {
 			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card')) return;
+
+			// Si c'est un parent <li> contenant d'autres <li>, ignorer (on ne traite que les feuilles)
+			if (el.tagName.toLowerCase() === 'li' && el.querySelector('li') !== null) return;
 
 			const text = el.textContent || '';
 			if (!text.trim()) return;
@@ -555,9 +560,11 @@ export class ChatView extends ItemView {
 			} else if (
 				/^\[[ xX/]\]/.test(text.trim()) ||
 				el.classList.contains('task-list-item') ||
+				el.querySelector('input[type="checkbox"]') !== null ||
 				(text.includes('📅') && (text.includes('⚡') || text.includes('#tm/')))
 			) {
-				const parsed = TaskParser.parseLine(`- ${text.replace(/^[-*0-9.]+\s*/, '')}`, 'Coffre', 1, this.plugin.settings);
+				const cleanLine = text.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '');
+				const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
 				if (parsed) {
 					const wrapper = document.createElement('div');
 					wrapper.className = 'sbm-inline-task-wrapper';

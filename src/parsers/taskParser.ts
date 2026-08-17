@@ -114,8 +114,16 @@ export class TaskParser {
 		const lines = fileContent.split(/\r?\n/);
 		const rootTasks: ObsidianTask[] = [];
 		const taskStack: ObsidianTask[] = [];
+		let inCodeBlock = false;
 
 		lines.forEach((line, index) => {
+			const trimmed = line.trim();
+			if (trimmed.startsWith('```')) {
+				inCodeBlock = !inCodeBlock;
+				return;
+			}
+			if (inCodeBlock) return;
+
 			const lineNumber = index + 1;
 			const task = this.parseLine(line, filePath, lineNumber, config);
 

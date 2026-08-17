@@ -219,8 +219,9 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
      - Menu déroulant `<select>` dynamique dans les réglages du plugin avec bouton `🔄 Détecter via API` et saisie personnalisée.
      - Prise en charge automatique de **tous** les modèles actuels et futurs (dont `gemini-3.5-flash`, `gemini-3.5-pro`, `gemini-2.5-flash`, `gpt-4o`, `o3-mini`, etc.).
   8. **Widgets de Tâches Interactifs & Remplacement In-Place dans le Message (`TaskCardWidget`)** :
-     - **Intégration In-Place au cœur du flux Markdown** : Les éléments de liste (`<li>`) et paragraphes de tâches (`<p>`) sont directement transformés et remplacés à leur position exacte dans le texte au lieu d'être relégués en bas du message.
-     - **Résolution des Tâches Sautées & Élimination des Faux Positifs** : Algorithme de token matching résilient (`isTaskMatch`) calibré avec ratio de longueur de mots et filtrage strict des paragraphes conversationnels (évitant que le message d'accueil mentionnant "Second Brain" ne soit confondu avec une tâche).
+     - **Intégration In-Place au cœur du flux Markdown** : Les éléments de liste (`<li>`) et paragraphes de tâches (`<p>`) sont directement transformés et remplacés à leur position exacte dans le texte.
+     - **Support des Listes Imbriquées & Feuilles (`<li>`)** : Filtrage intelligent des éléments parents pour ne transformer que les éléments feuilles réels sans écraser les en-têtes de catégorie.
+     - **Exclusion des Blocs de Code (`TaskParser`)** : `TaskParser.parseFile` ignore strictement les lignes situées à l'intérieur des blocs de code clôturés par des triples backticks (```...```) évitant l'indexation de tâches fictives issues de la documentation.
      - **Bouton `🚀 Commencer` / `⏳ En cours` Fonctionnel** : Implémentation de `TaskMutator.setStatus` passant atomiquement la tâche en cours (`- [/]`) dans la note avec bascule d'état visuelle (checkbox indéterminée, fond accentué et badge actif).
      - **Cochage & Récompenses réelles** : Cocher la case met à jour la note dans le coffre (`app.vault.process`) et crédite instantanément les pièces 🪙 dans le profil de gamification.
      - **Édition Inline Complète** : Clic direct sur n'importe quel badge pour modifier l'échéance 📅, l'énergie ⚡ (1-10), le quadrant de matrice `#Q1/#Q4`, la priorité ou le montant de pièces avec répercussion immédiate dans la note.
@@ -228,7 +229,7 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   9. **Cadrage du Prompt Agentique (Consultation vs Modification)** :
      - L'agent ne propose plus de modifications agressives lors des simples questions de planning ou d'information du jour.
      - Les propositions d'écriture (`propose_create_task`, `propose_update_task`) sont réservées aux demandes explicites d'actions ou comptes-rendus de réunion.
-  10. **Audit de Conformité & Tests** : **44/44 tests unitaires passés avec succès à 100% (9 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
+  10. **Audit de Conformité & Tests** : **47/47 tests unitaires passés avec succès à 100% (9 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
 - **Statut** : Validée.
 
 ### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub

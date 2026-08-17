@@ -84,4 +84,21 @@ describe('TaskParser', () => {
 		expect(tasks[0].subtasks[1].subtasks[0].title).toBe('Sous-sous-tâche 2.1');
 		expect(tasks[1].title).toBe('Autre Tâche Racine');
 	});
+
+	it('should ignore tasks written inside fenced code blocks', () => {
+		const markdown = `
+# Documentation
+Voici comment écrire une tâche :
+\`\`\`markdown
+- [ ] Tâche exemple dans un bloc de code 📅 2026-08-10
+\`\`\`
+- [ ] Vraie tâche active 📅 2026-08-15
+`;
+
+		const tasks = TaskParser.parseFile(markdown, 'doc.md', DEFAULT_SYNTAX_CONFIG);
+		expect(tasks.length).toBe(1);
+		expect(tasks[0].title).toBe('Vraie tâche active');
+		expect(tasks[0].dueDate).toBe('2026-08-15');
+	});
 });
+
