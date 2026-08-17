@@ -63,6 +63,20 @@ describe('TaskMutator', () => {
 		expect(updated).toBe('- [ ] Ecrire un chapitre #energie/8 ^chapitre-1');
 	});
 
+	it('should set status to in_progress [/]', () => {
+		const line = '- [ ] Réparer le bug de collision 📅 2026-08-07';
+		const updated = TaskMutator.setStatus(line, 'in_progress', DEFAULT_SYNTAX_CONFIG);
+
+		expect(updated).toBe('- [/] Réparer le bug de collision 📅 2026-08-07');
+	});
+
+	it('should revert status from in_progress [/] back to todo [ ]', () => {
+		const line = '- [/] Réparer le bug de collision 📅 2026-08-07';
+		const updated = TaskMutator.setStatus(line, 'todo', DEFAULT_SYNTAX_CONFIG);
+
+		expect(updated).toBe('- [ ] Réparer le bug de collision 📅 2026-08-07');
+	});
+
 	it('should format subtask lines with appropriate indentation', () => {
 		const subtask = TaskMutator.createSubtaskLine(0, 'Sous-étape 1');
 		expect(subtask).toBe('  - [ ] Sous-étape 1');

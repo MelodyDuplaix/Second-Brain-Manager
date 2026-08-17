@@ -190,13 +190,40 @@ export class TaskCardWidget {
 
 		// Bouton Commencer [/]
 		const startBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn start', text: '🚀 Commencer' });
-		startBtn.title = 'Passer la tâche en cours [/]';
+		startBtn.title = 'Passer la tâche en cours [/] ou la remettre à faire';
+
+		if (task.status === 'in_progress') {
+			cardEl.addClass('is-in-progress');
+			checkbox.indeterminate = true;
+			startBtn.setText('⏳ En cours');
+			startBtn.addClass('active');
+		}
+
 		startBtn.addEventListener('click', async () => {
+			const isAlreadyInProgress = task.status === 'in_progress';
+			const newStatus = isAlreadyInProgress ? 'todo' : 'in_progress';
+
 			await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
-				TaskMutator.setStatus(line, 'in_progress', plugin.settings)
+				TaskMutator.setStatus(line, newStatus, plugin.settings)
 			);
-			task.status = 'in_progress';
-			newNotice(`Tâche démarrée : ${task.title}`);
+			task.status = newStatus;
+			task.completed = false;
+			checkbox.checked = false;
+
+			if (newStatus === 'in_progress') {
+				cardEl.addClass('is-in-progress');
+				cardEl.removeClass('is-completed');
+				checkbox.indeterminate = true;
+				startBtn.setText('⏳ En cours');
+				startBtn.addClass('active');
+				newNotice(`🚀 Tâche passée en cours [/] : ${task.title}`);
+			} else {
+				cardEl.removeClass('is-in-progress');
+				checkbox.indeterminate = false;
+				startBtn.setText('🚀 Commencer');
+				startBtn.removeClass('active');
+				newNotice(`Tâche remise à faire [ ] : ${task.title}`);
+			}
 			if (onTaskUpdated) onTaskUpdated();
 		});
 
@@ -206,7 +233,11 @@ export class TaskCardWidget {
 		completeBtn.addEventListener('click', async () => {
 			await TaskCardWidget.setTaskCompleted(plugin, task, true);
 			checkbox.checked = true;
+			checkbox.indeterminate = false;
 			cardEl.addClass('is-completed');
+			cardEl.removeClass('is-in-progress');
+			startBtn.setText('🚀 Commencer');
+			startBtn.removeClass('active');
 			if (onTaskUpdated) onTaskUpdated();
 		});
 
@@ -241,6 +272,12 @@ export class TaskCardWidget {
 			const isDone = checkbox.checked;
 			await TaskCardWidget.setTaskCompleted(plugin, task, isDone);
 			cardEl.toggleClass('is-completed', isDone);
+			if (isDone) {
+				cardEl.removeClass('is-in-progress');
+				checkbox.indeterminate = false;
+				startBtn.setText('🚀 Commencer');
+				startBtn.removeClass('active');
+			}
 			if (onTaskUpdated) onTaskUpdated();
 		});
 

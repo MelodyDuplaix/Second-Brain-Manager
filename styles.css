@@ -1647,6 +1647,18 @@ textarea.sbm-chat-textarea:focus {
 	transition: color 0.15s ease, background-color 0.15s ease;
 }
 
+.sbm-chat-task-card.is-in-progress {
+	border-color: var(--interactive-accent);
+	background-color: rgba(var(--interactive-accent-rgb), 0.04);
+}
+
+.sbm-chat-task-btn.start.active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-weight: 600;
+	border-color: var(--interactive-accent);
+}
+
 .sbm-chat-task-btn:hover {
 	color: var(--text-normal);
 	background-color: var(--background-modifier-hover);

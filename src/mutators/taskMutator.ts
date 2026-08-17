@@ -28,6 +28,22 @@ export class TaskMutator {
 		return lineWithStatus;
 	}
 
+	public static setStatus(rawLine: string, status: 'in_progress' | 'done' | 'todo' | 'cancelled' | string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
+		const checkboxRegex = DynamicRegexBuilder.buildCheckboxRegex(config);
+		const match = checkboxRegex.exec(rawLine);
+		if (!match) return rawLine;
+
+		const indentWhitespace = match[1];
+		const body = match[3];
+		let statusChar = ' ';
+		if (status === 'in_progress' || status === '/') statusChar = '/';
+		else if (status === 'done' || status === 'completed' || status === 'x') statusChar = 'x';
+		else if (status === 'cancelled' || status === '-') statusChar = '-';
+		else statusChar = ' ';
+
+		return `${indentWhitespace}- [${statusChar}] ${body}`;
+	}
+
 	public static setDueDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const dueDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.dueDateSignifier);
 		const lineWithoutDue = rawLine.replace(dueDateRegex, '').replace(/\s+/g, ' ').trim();
