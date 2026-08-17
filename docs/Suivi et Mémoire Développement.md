@@ -185,27 +185,45 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   3. **Champ Dynamique du Tag Racine de Priorité** : Lorsque le mode de priorité `tag` est sélectionné, un champ textuel apparaît automatiquement pour personnaliser le préfixe racine (ex: `priorite` pour `#priorite/haute`, `priority` pour `#priority/high`).
 - **Statut** : Terminée.
 
+### 📅 2026-08-17 — Étape 3.2 : Audit Sécurité, Fiabilité, Normalisation des Chemins & Guidelines Obsidian
+- **Décision & Actions Réalisées** :
+  1. **Sécurité (Éradication de `innerHTML`)** : Création du module `DomUtils` (`src/utils/domUtils.ts`) permettant la génération programmatique des éléments SVG (courbes d'évolution, camemberts donut, histogrammes) sans aucune injection de chaînes HTML brutes.
+  2. **Fiabilité & Atomicité (`Vault.process`)** : Remplacement de tous les blocs `vault.read` + `vault.modify` par `this.app.vault.process()` dans `DashboardView` et `BriefingView` pour éliminer les risques de *race condition*.
+  3. **Annulation et Résilience Réseau (`AbortController`)** : Intégration d'un signal d'interruption dans `LLMService` et `ChatView`, permettant l'annulation instantanée du streaming via le bouton d'interface ou la fermeture d'onglet (`onClose`).
+  4. **Nettoyage du Code Mort** : Suppression des 5 fichiers orphelins (`aiPage.ts`, `generalPage.ts`, `matrixPage.ts`, `syntaxPage.ts`, `editMetaModal.ts`).
+  5. **Normalisation des Chemins & Guidelines** : Application systématique de `normalizePath()` sur les dossiers Inbox, Journal et chemins de fichiers. Suppression de tous les `console.log` superflus et harmonisation des libellés UI en *Sentence case*.
+  6. **Tests Unitaires & Couverture** : Extension de la suite de tests Vitest avec couverture complète de `DynamicRegexBuilder`, `MatrixAdapter`, `TaskMutator` et `TaskParser`.
+- **Statut** : Validée.
+
+### 📅 2026-08-17 — Étape 3.3 : Outils Agentiques (Tools), RAG Contextuel & Boîte d'Aperçu Interactive
+- **Décision & Actions Réalisées** :
+  1. **Modèles d'Actions & Outils (`src/models/actions.ts`)** : Typage complet des propositions d'actions (`create_note`, `append_to_note`, `create_task`, `update_task`, `decompose_task`, `link_notes`, `move_note`) et des schémas d'outils.
+  2. **Moteur RAG & Cartographie du Coffre (`VaultContextService`)** : Recherche pondérée dans les notes, découverte des backlinks et outlinks (`[[...]]`), recherche avancée des tâches Tasks et extraction de l'arborescence des projets, contacts et domaines.
+  3. **Registre d'Outils & Multi-Fournisseurs (`ToolRegistry`)** : Définition des schémas JSON compatibles OpenAI/Ollama, déclarations de fonctions Gemini, et exécution sécurisée des requêtes d'outils.
+  4. **Exécuteur Atomique Sécurisé (`ActionExecutor`)** : Exécution des actions validées par l'utilisateur via `app.vault.process()` et `app.fileManager.renameFile()` garantissant l'intégrité des liens.
+  5. **Widget d'Aperçu Interactif (`ActionPreviewWidget`)** : Affichage soigné dans le chat avec cases à cocher `[x]`, badges de statut et bouton `[Tout Appliquer]`.
+- **Statut** : Validée.
+
+### 📅 2026-08-17 — Étape 3.4 : Expérience Utilisateur Copilot-like, Édition In-Place, Liens Cliquables & Audit
+- **Décision & Actions Réalisées** :
+  1. **Résolution Définitive des Liens Wikilinks Non Cliquables** :
+     - Cause identifiée : Le modèle entourait parfois les wikilinks d'accents graves (ex: `\`[[Claire]]\``), ce que le Markdown d'Obsidian traite en bloc `<code>` littéral non cliquable.
+     - Correction : Nettoyage automatique en amont (`cleanWikilinkSyntax`) éliminant les backticks superflus, interdiction explicite dans le prompt système, et gestion des clics universelle dans le conteneur du chat sur tous les éléments contenant `[[...]]`.
+  2. **Boucle Agentique Autonome (ReAct)** : Fin des doubles messages pour demander d'analyser le coffre. L'agent exécute automatiquement les outils de lecture en arrière-plan et synthétise directement la réponse en 1 tour.
+  3. **Filtrage du JSON Brut & Indicateur de Réflexion Discret** : Aucun bloc JSON technique affiché en streaming. Présentation d'un spinner discret à 3 points (*dots wave*) indiquant l'action en cours (`🔍 Recherche dans le coffre : "Claire"...`).
+  4. **Édition de Message In-Place & Régénération d'Arborescence** : Cliquer sur le crayon ✏️ permet d'éditer directement le message dans la bulle avec mise à jour et régénération de la suite de l'historique.
+  5. **Suppression Universelle de Messages (Utilisateur & Assistant)** : Bouton poubelle 🗑️ fonctionnel sur chaque message.
+  6. **Cadre de Saisie Intégré & Fluide (Copilot Style)** : Suppression de la double bordure pour une carte unique épurée (`sbm-chat-input-card`), avec barre de contexte `@ Add context`, détection de note active, champ transparent et barre d'outils inférieure.
+  7. **Correction de la Superposition Horodatage / Actions** : Ajustement du `min-width: 140px` sur les bulles pour garantir un espacement parfait même sur les messages d'un seul mot.
+  8. **Audit de Conformité & Tests** : **36/36 tests unitaires passés avec succès à 100%**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
+- **Statut** : Validée.
+
 ### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub
 - **Objectifs** :
   1. **Stratégie de Branches (Git Branching Model)** : Définition d'une convention de branches (`main` pour les versions stables/publiées, `develop` ou `feature/...` pour les développements actifs).
   2. **Workflow GitHub Actions (CI/CD)** : Automatisation du linting, des tests unitaires Vitest et de la compilation lors des pushs et pull requests.
   3. **Gestion des Releases & Tags Git (`vX.Y.Z`)** : Automatisation de la publication des releases officielles avec synchronisation du `manifest.json`, génération automatique des assets de distribution (`main.js`, `manifest.json`, `styles.css`) et changelog.
 
-
-### 📅 2026-08-17 — Étape 3.4 : Expérience Utilisateur Copilot-like, Édition In-Place & Cadre Intégré Fluide
-- **Décision & Actions Réalisées** :
-  1. **Résolution Définitive des Liens Wikilinks Non Cliquables** :
-     - Cause identifiée : Le modèle entourait parfois les wikilinks d'accents graves (ex: `\`[[Claire]]\``), ce que le Markdown d'Obsidian traite en bloc `<code>` littéral non cliquable.
-     - Correction : Nettoyage automatique en amont (`cleanWikilinkSyntax`) éliminant les backticks superflus, interdiction explicite dans le prompt système, et gestion des clics universelle dans le conteneur du chat sur tous les éléments contenant `[[...]]`.
-  2. **Édition de Message In-Place & Régénération d'Arborescence d'Historique** :
-     - Cliquer sur le bouton crayon ✏️ transforme directement la bulle du message utilisateur en un éditeur en ligne (`sbm-inline-edit-box`) avec boutons `[Enregistrer et soumettre]` et `[Annuler]`.
-     - Lors de la soumission, l'historique de discussion est automatiquement tronqué à partir de cette position (`messages.splice(i + 1)`), et une nouvelle réponse de l'assistant est générée et streamée à partir de ce nouveau point de départ.
-  3. **Suppression Universelle de Messages (Utilisateur & Assistant)** :
-     - Chaque bulle dispose d'un bouton poubelle 🗑️ fonctionnel permettant de supprimer un message individuel et de synchroniser instantanément l'historique.
-  4. **Cadre de Saisie Intégré & Fluide (Copilot Style)** :
-     - Remplacement de la double bordure par une carte unique élégante (`sbm-chat-input-card`), intégrant la barre de contexte `@ Add context`, les pilules actives, la zone de texte fluide et la barre d'outils inférieure (`+`, modèle actif, bouton flèche `↑`).
-  5. **Qualité & Tests** : **36/36 tests unitaires réussis**, 0 erreur et 0 avertissement ESLint.
-- **Statut** : Validée.
 
 
 
