@@ -10,11 +10,12 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
 
 1. **Socle & Moteur de Tâches (`TaskParser`, `TaskMutator`, `TaskIdentityResolver`)** :
    - Détection et parsing intégral des tâches Markdown checkbox.
+   - **Exclusion stricte des blocs de code** : `TaskParser.parseFile` ignore les blocs clôturés par des triples backticks (```...```), évitant l'indexation de fausses tâches de documentation.
    - Support des signifiants Obsidian Tasks : Échéance (`📅`), Début (`🛫`), Programmée (`⏳`), Réalisée (`✅`), Annulée (`❌`), Récurrence (`🔁`).
    - Support des tags normalisés : Énergie (`#energie/1-10`), Difficulté (`#difficulte/facile|moyenne|difficile`), Pièces (`#pieces/N`), Domaines (`#domaine/...`), Contextes (`#contexte/...`).
    - Mode de priorité configurable : Emojis Obsidian Tasks (`🔺 ⏫ 🔼 🔽 ⏬`) ou Tags hiérarchiques (`#priorite/haute`, `#priority/high` avec tag racine personnalisable).
    - Couche d'adaptation de matrice Eisenhower (`MatrixAdapter`) : Support de `TaskMatrix` (`#tm/qN`), `Focus First`, et tags personnalisés.
-   - Modification chirurgicale en place des fichiers Markdown (`TaskMutator`) sans altérer le reste de la note.
+   - Modification chirurgicale et atomique en place des fichiers Markdown (`TaskMutator`, `app.vault.process()`) sans altérer le reste de la note.
 
 2. **Système de Gamification & Portefeuille (`GamificationService`, `data.json`)** :
    - Écouteur automatique de complétion de tâches (`app.vault.on('modify')`).
@@ -32,76 +33,78 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
    - **`GamificationHistoryView` (`sbm-gamification-history-view`)** :
      - Onglet *Historique des Gains* avec recherche et bouton de remboursement/annulation.
      - Onglet *Statistiques Avancées* avec graphiques SVG natifs zéro-dépendance (Courbe d'évolution sur 14 jours, Donut des catégories avec pourcentages, Diagramme en barres quotidien).
-   - **`ChatView` (`sbm-chat-view`)** :
-     - Dialogue avec l'IA en flux continu (streaming SSE / ReadableStream) multi-fournisseurs (Gemini, OpenAI, Ollama, LM Studio).
-     - Pacing progressif (Typewriter Queue à 16ms) avec curseur actif (`▌`) pour un déroulement mot à mot naturel.
-     - Rendu Markdown compact sans grands espaces vides verticaux.
+   - **`ChatView` (`sbm-chat-view`) — Expérience Copilot Fluide** :
+     - Dialogue avec l'IA en flux continu (streaming SSE / ReadableStream) multi-fournisseurs (Google Gemini, OpenAI, Ollama, LM Studio).
+     - **Boucle Agentique ReAct Autonome** : L'agent consulte le coffre via des outils de lecture transparents et synthétise sa réponse sans polluer le chat de JSON brut.
+     - **Découverte Automatique des Modèles (`ModelDiscoveryService`)** : Détection en temps réel des modèles API disponibles (`gemini-3.5-flash`, `gemini-3.5-pro`, `gpt-4o`, etc.) avec sélecteur direct au clic en bas à gauche de la carte de chat.
+     - **Widgets de Tâches In-Place (`TaskCardWidget`)** : Transformation directe des puces de tâches au cœur du texte Markdown avec liaison exacte à la note source.
+     - **Édition Inline & Cochage Réel** : Clic direct sur les badges pour modifier l'échéance 📅, l'énergie ⚡, le quadrant `#Q1/#Q4`, la priorité ou les pièces. Cocher la case met à jour la note et crédite instantanément les pièces 🪙.
+     - **Bouton `🚀 Commencer` / `⏳ En cours`** : Mutation instantanée du statut vers `- [/]` dans la note avec retour visuel actif.
+     - **Matching Flou Résilient (`isTaskMatch`)** : Token similarity évitant les tâches sautées lorsque le modèle reformule légèrement le titre.
 
 4. **Paramètres Natifs & Secret Storage (`SettingsPageManager`)** :
-   - Architecture calquée sur le plugin officiel *Spaced Repetition* :
-     - Page principale directe (`MainPage`) regroupant les `SettingGroup` natifs.
-     - Sous-page dédiée pour le catalogue des récompenses (`RewardsPage`) avec ajout, édition des coûts et suppression.
-     - Navigation 100% accessible au clavier (`tabindex="0"`, `Entrée` / `Espace`, `clickable-icon`, `chevron-right`).
-   - Gestion sécurisée des clés d'API via l'API officielle `app.secretStorage` d'Obsidian (`SecretSelectModal`).
-   - Affichage dynamique du champ de tag racine lorsque le mode de priorité `tag` est activé.
+   - Architecture calquée sur le plugin officiel *Spaced Repetition* (Page principale `MainPage` + Sous-page `RewardsPage`).
+   - Gestion sécurisée des clés d'API via `app.secretStorage`.
+   - Menu déroulant `<select>` dynamique pour le choix du modèle IA avec bouton `🔄 Détecter via API`.
 
 5. **Qualité & Tests Automatisés** :
-   - Suite de tests unitaires Vitest : **10/10 tests passés avec succès** (100% de réussite).
+   - Suite de tests unitaires Vitest : **47/47 tests passés avec succès** (100% de réussite sur 9 suites de tests).
    - Linting ESLint & Compilation ESBuild : **0 erreur, 0 avertissement**.
 
 ---
 
-## 2. 📋 Feuille de Route : Ce qu'il reste à faire (alignement avec `Réflexion plugin.md`)
+## 2. 📋 Feuille de Route Exhaustive : Ce qu'il reste à faire (Alignement 100% avec `Réflexion plugin.md`)
 
-Pour répondre à l'intégralité des spécifications et ambitions du document [`Réflexion plugin.md`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/docs/R%C3%A9flexion%20plugin.md), voici la feuille de route détaillée par phases et composants :
+Pour couvrir l'ensemble des fonctionnalités décrites dans le rapport de conception [`Réflexion plugin.md`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/docs/R%C3%A9flexion%20plugin.md), voici la feuille de route détaillée par phases et modules :
 
 ### 🎯 Phase A : Workflows Dédiés (Briefing, Revue & Reprise)
-1. **Workflow du Briefing du Matin (`MorningBriefingWorkflow` / Commande & Vue Dédiée)** :
+1. **Workflow du Briefing du Matin (`MorningBriefingWorkflow` / Commande & Modal/Vue Dédiée)** :
    - Commande Obsidian : `Second Brain: Briefing du matin`.
    - Étape 1 : Lecture des tâches dues aujourd'hui, en retard, dont la date de début est atteinte, et récurrentes.
-   - Étape 2 : Demande / confirmation du niveau d'énergie actuel.
-   - Étape 3 : Sélection éventuelle d'un **projet prioritaire du jour** (ex: *« Aujourd'hui la priorité c'est le MFRB »*).
+   - Étape 2 : Demande / confirmation du niveau d'énergie actuel (jauge 1-10).
+   - Étape 3 : Sélection éventuelle d'un **projet prioritaire du jour** (ex: *« Aujourd'hui la priorité c'est le MFRB »* ou *« Avancée de mon jeu vidéo »*).
    - Étape 4 : Proposition d'un programme structuré de la journée (tâche principale, tâches secondaires, mode économie si énergie faible).
    - Étape 5 : Validation et application des dates de début / planification.
+   - Possibilité de réévaluer son niveau d'énergie après une tâche (Commande : `Second Brain: Indiquer mon énergie`).
 
-2. **Workflow de la Revue du Soir (`EveningReviewWorkflow` / Commande & Vue Dédiée)** :
+2. **Workflow de la Revue du Soir (`EveningReviewWorkflow` / Commande & Modal/Vue Dédiée)** :
    - Commande Obsidian : `Second Brain: Revue du soir`.
    - Comparaison des tâches prévues vs tâches terminées de la journée.
    - Traitement sans culpabilisation des tâches ouvertes : proposition de *reporter*, *découper*, *changer de quadrant*, *abandonner* ou *conserver*.
-   - Proposition d'un « nettoyage mental / rangement du second cerveau » (classer les notes de l'Inbox, suggérer des liens entre notes).
+   - Proposition d'un « nettoyage mental / rangement du second cerveau » (classer les notes de l'Inbox, suggérer des liens pertinents entre notes).
 
 3. **Workflow de Reprise après Pause (`RecoveryWorkflow`)** :
    - Commande Obsidian : `Second Brain: Reprendre après une pause`.
-   - Détection de la durée écoulée depuis la dernière session.
-   - Sélection courte et non intimidante : 1 tâche administrative rapide, 1 tâche importante, urgences réelles, et traitement des éléments Inbox.
+   - Détection de la durée écoulée depuis la dernière session active.
+   - Sélection courte et non intimidante : 1 tâche administrative courte, 1 tâche importante, urgences réelles, et traitement des éléments Inbox.
+
+4. **Journal de Journée (`DailySessionJournal`)** :
+   - Commande Obsidian : `Second Brain: Démarrer une session` / `Faire une pause`.
+   - Enregistrement des accomplissements et réorganisations dans la note quotidienne du jour.
 
 ---
 
-### 🤖 Phase B : Actions et Intelligence Artificielle Avancée sur le Coffre
+### 🤖 Phase B : Commandes Métier Contextuelles & Intelligence Artificielle sur les Notes
 1. **Commandes Contextuelles d'Édition et Analyse de Notes** :
    - `Second Brain: Reformuler la note courante` (amélioration du style, clarté).
    - `Second Brain: Résumer la note courante` (synthèse exécutive).
-   - `Second Brain: Extraire les tâches d'une note` (transformer les décisions de réunions en tâches Tasks avec dates et tags).
+   - `Second Brain: Extraire les tâches d'une note` (transformer les comptes-rendus en tâches Tasks avec dates et tags).
    - `Second Brain: Décomposer la tâche courante` (générer automatiquement des sous-tâches ordonnées avec estimation d'énergie et dates).
-   - `Second Brain: Rechercher dans le coffre avec l'IA` (recherche contextuelle sur les notes et tâches du coffre).
-
-2. **Boîte d'Aperçu et Validation Contrôlée (`ActionValidator`, `ActionExecutor`)** :
-   - L'IA produit des propositions d'actions structurées en JSON.
-   - Affichage d'un panneau d'aperçu clair avant toute modification sur le coffre :
-     ```text
-     3 modifications proposées :
-     [x] Modifier la tâche « Préparer le dossier »
-     [x] Ajouter 2 sous-tâches
-     [x] Ajouter #energie/3 et #pieces/4
-     [Appliquer]  [Modifier]  [Annuler]
-     ```
-   - Protection contre les écritures concurrentes et sauvegarde du contenu précédent.
+   - `Second Brain: Classer la tâche dans la matrice` (assignation assistée du quadrant Q1-Q4).
+   - `Second Brain: Replanifier la tâche` / `Reporter les tâches sélectionnées`.
+   - `Second Brain: Nettoyage mental` (triage rapide de l'Inbox et consolidation des liens).
 
 ---
 
-### ⏰ Phase C : Moteur de Rappels & Notifications
+### ⏰ Phase C : Moteur de Rappels & Notifications Découplé
 1. **Architecture `NotificationProvider`** :
-   - Fournisseur abstrait avec implémentation `DesktopNotificationProvider` (notifications système de l'OS) et `InAppNotificationProvider` (notices et badges Obsidian).
+   - Interface abstraite permettant de découpler le moteur de règles temporelles des canaux de diffusion :
+     ```text
+     NotificationProvider
+     ├── DesktopNotificationProvider (Notifications système OS)
+     ├── InAppNotificationProvider (Notices et badges Obsidian)
+     └── FutureMobileNotificationProvider (ntfy, Gotify, application compagnon)
+     ```
 2. **Rappels Logiques & Anticipation** :
    - Rappel d'anticipation à J-3 avant une échéance (`📅`).
    - Rappels quotidiens des tâches programmées (`⏳`).
@@ -111,10 +114,10 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
 
 ### 🎮 Phase D : Gamification Avancée (XP, Niveaux & Trophées)
 1. **Système d'Expérience (XP) & Niveaux de Productivité** :
-   - Ajout d'une jauge d'XP en complément des pièces pour valoriser la régularité.
+   - Ajout d'une jauge d'XP en complément des pièces pour valoriser la régularité et l'effort.
    - Calcul des séries de jours actifs (streaks).
 2. **Trophées et Accomplissements** :
-   - Déblocage de badges de succès (ex: *Première semaine complète*, *Maître du Q2*, *Zéro tâche en retard*).
+   - Déblocage de badges de succès (ex: *Première semaine complète*, *Maître du Q2*, *Zéro tâche en retard*, *Grand Nettoyeur d'Inbox*).
 
 ---
 
@@ -128,26 +131,51 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
 
 ---
 
-## 3. 📊 Tableau Récapitulatif d'Avancement
+### 🌿 Phase F : Stratégie Git, Workflow CI/CD & Releases GitHub (IMPORTANT)
+1. **Gestion des Branches Git (`main` & `dev`)** :
+   - **Branche `main`** : Branche de production, réservée aux versions stables, auditées et publiées sur les releases GitHub.
+   - **Branche `dev`** : Branche de développement actif, recevant les nouvelles fonctionnalités, tests et ajustements avant merge sur `main`.
+2. **Workflow GitHub Actions (CI)** :
+   - Déclenchement automatique sur chaque `push` et `pull_request` vers `dev` et `main`.
+   - Exécution systématique :
+     - Vérification de la syntaxe et conformité (`npm run lint` / ESLint).
+     - Exécution des tests unitaires (`npx vitest run` / 47 tests).
+     - Validation de la compilation (`npm run build` / ESBuild).
+3. **Automatisation des Releases & Tags Git (CD)** :
+   - Déclenchement sur création d'un tag git `vX.Y.Z`.
+   - Synchronisation automatique du numéro de version dans `manifest.json` et `package.json`.
+   - Génération automatique des release assets officiels d'Obsidian : `main.js`, `manifest.json`, `styles.css`.
+   - Création de la release GitHub avec changelog automatisé.
+
+---
+
+## 3. 📊 Tableau Récapitulatif d'Avancement Global
 
 | Module / Fonctionnalité | Statut | Fichiers Clés |
 |---|---|---|
 | **Parsing Obsidian Tasks (Dates, Signifiants, Statuts)** | ✅ Terminé | `src/parsers/taskParser.ts` |
-| **Mutation Chirurgicale Markdown** | ✅ Terminé | `src/mutators/taskMutator.ts` |
+| **Exclusion des Blocs de Code (```) dans le Parsing** | ✅ Terminé | `src/parsers/taskParser.ts` |
+| **Mutation Chirurgicale Markdown & Statuts (`[/]`)** | ✅ Terminé | `src/mutators/taskMutator.ts` |
 | **Adaptateur Matrice Eisenhower Multi-Plugins** | ✅ Terminé | `src/adapters/matrixAdapter.ts` |
 | **Détection de Complétion & Portefeuille de Pièces** | ✅ Terminé | `src/services/gamificationService.ts` |
 | **Révocation de Pièces / Anti-Missclick** | ✅ Terminé | `src/services/gamificationService.ts` |
 | **Tableau de Bord & Barre de Recherche** | ✅ Terminé | `src/views/dashboardView.ts` |
 | **Historique des Gains & Graphiques Statistiques (SVG)** | ✅ Terminé | `src/views/gamificationHistoryView.ts` |
 | **Chat IA avec Streaming Progressif (Typewriter)** | ✅ Terminé | `src/services/llmService.ts`, `src/views/chatView.ts` |
+| **Boucle Agentique ReAct & Outils du Coffre** | ✅ Terminé | `src/services/agentOrchestrator.ts`, `src/services/toolRegistry.ts` |
+| **Découverte Dynamique des Modèles API** | ✅ Terminé | `src/services/modelDiscoveryService.ts`, `src/modals/modelPickerModal.ts` |
+| **Widgets de Tâches In-Place & Édition Inline (Popovers)** | ✅ Terminé | `src/views/taskCardWidget.ts`, `src/views/inlineMetaPopover.ts` |
+| **Matching Flou Intelligent Anti-Tâches Sautées** | ✅ Terminé | `src/views/chatView.ts` (`isTaskMatch`) |
 | **Gestion Sécurisée des Clés API (Secret Storage)** | ✅ Terminé | `src/modals/secretSelectModal.ts` |
 | **Panneau de Réglages Natif (Style Spaced Repetition)** | ✅ Terminé | `src/settings/` (`settingsPageManager.ts`, `mainPage.ts`, `rewardsPage.ts`) |
+| **Configuration Branche Git `dev` & `main`** | ✅ Terminé | Dépôt GitHub (`origin/main`, `origin/dev`) |
+| **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
+| **Workflow de Release GitHub Automatisé (CD)** | ⏳ À faire | `.github/workflows/release.yml` |
 | **Workflow du Briefing du Matin (Projet Prioritaire & Énergie)** | ⏳ À faire | `src/workflows/morningBriefing.ts` |
 | **Workflow de la Revue du Soir & Nettoyage Mental** | ⏳ À faire | `src/workflows/eveningReview.ts` |
 | **Workflow de Reprise après Pause** | ⏳ À faire | `src/workflows/recoveryWorkflow.ts` |
-| **Extraction de Tâches & Reformulation de Notes via IA** | ⏳ À faire | `src/services/noteActionsService.ts` |
-| **Aperçu & Validation d'Actions Structurées IA** | ⏳ À faire | `src/services/actionExecutor.ts` |
-| **Moteur de Rappels & Notifications Desktop** | ⏳ À faire | `src/services/reminderEngine.ts` |
+| **Commandes Contextuelles d'Édition / Reformulation de Notes** | ⏳ À faire | `src/services/noteActionsService.ts` |
+| **Moteur de Rappels & Notifications Desktop** | ⏳ À faire | `src/services/reminderEngine.ts`, `src/services/notificationService.ts` |
 | **Système d'XP, Niveaux & Trophées** | ⏳ À faire | `src/services/gamificationService.ts` |
 | **Capture Vocale & Whisper Local** | ⏳ Futur | `src/services/voiceService.ts` |
 
@@ -232,14 +260,11 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   10. **Audit de Conformité & Tests** : **47/47 tests unitaires passés avec succès à 100% (9 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
 - **Statut** : Validée.
 
-### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub
-- **Objectifs** :
-  1. **Stratégie de Branches (Git Branching Model)** : Définition d'une convention de branches (`main` pour les versions stables/publiées, `develop` ou `feature/...` pour les développements actifs).
-  2. **Workflow GitHub Actions (CI/CD)** : Automatisation du linting, des tests unitaires Vitest et de la compilation lors des pushs et pull requests.
-  3. **Gestion des Releases & Tags Git (`vX.Y.Z`)** : Automatisation de la publication des releases officielles avec synchronisation du `manifest.json`, génération automatique des assets de distribution (`main.js`, `manifest.json`, `styles.css`) et changelog.
-
-
-
-
-
-
+### 📅 2026-08-17 — Étape 3.5 : Mise en Place de la Branche `dev` & Stratégie de Versioning
+- **Décision & Actions Réalisées** :
+  1. **Création et synchronisation de la branche `dev`** : La branche `dev` est créée localement et sur le dépôt distant (`origin/dev`).
+  2. **Convention de Branches** :
+     - `main` : Réservée aux versions de production stables et aux releases officielles.
+     - `dev` : Branche d'intégration pour les fonctionnalités en cours de développement.
+  3. **Planification CI/CD** : Mise en place prochaine des workflows GitHub Actions pour tester et builder automatiquement sur chaque commit / PR.
+- **Statut** : Validée.
