@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
@@ -20,7 +20,7 @@ export class BriefingView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return 'Briefing du Matin';
+		return 'Briefing du matin';
 	}
 
 	getIcon(): string {
@@ -41,7 +41,7 @@ export class BriefingView extends ItemView {
 
 		// Header & Énergie
 		const headerEl = container.createEl('div', { cls: 'sbm-briefing-header' });
-		headerEl.createEl('h2', { text: '🧠 Briefing du Matin' });
+		headerEl.createEl('h2', { text: '🧠 Briefing du matin' });
 
 		const energyContainer = headerEl.createEl('div', { cls: 'sbm-energy-bar' });
 		energyContainer.createEl('span', { text: `Niveau d'énergie : ` });
@@ -61,9 +61,8 @@ export class BriefingView extends ItemView {
 
 		energyContainer.createEl('span', {
 			cls: `sbm-mode-badge ${isEconomyMode ? 'economy' : 'full'}`,
-			text: isEconomyMode ? '⚡ Mode Économie (1 tâche prioritaire)' : '🔥 Mode Plein Potentiel'
+			text: isEconomyMode ? '⚡ Mode économie (1 tâche prioritaire)' : '🔥 Mode plein potentiel'
 		});
-
 
 		// Parsing des tâches du coffre
 		const allTasks = await this.loadAllVaultTasks();
@@ -81,16 +80,16 @@ export class BriefingView extends ItemView {
 		const unclassified = openTasks.filter(t => !matrixAdapter.getQuadrant(t) && !t.energy);
 
 		// 1. Tâche Principale
-		this.renderSection(container, '🎯 Tâche Principale', mainTask ? [mainTask] : [], 'main');
+		this.renderSection(container, '🎯 Tâche principale', mainTask ? [mainTask] : [], 'main');
 
 		// 2. Tâches Secondaires
-		this.renderSection(container, '📋 Tâches Secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
+		this.renderSection(container, '📋 Tâches secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
 
 		// 3. Échéances
-		this.renderSection(container, '⏰ Échéances & Urgences', deadlines, 'deadlines');
+		this.renderSection(container, '⏰ Échéances et urgences', deadlines, 'deadlines');
 
 		// 4. Tâches à Décider
-		this.renderSection(container, '❓ Tâches à Décider', unclassified, 'unclassified');
+		this.renderSection(container, '❓ Tâches à décider', unclassified, 'unclassified');
 	}
 
 	private renderSection(container: Element, title: string, tasks: ObsidianTask[], sectionType: string): void {
@@ -156,49 +155,55 @@ export class BriefingView extends ItemView {
 	}
 
 	private async updateTaskStatus(task: ObsidianTask, inProgress: boolean): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
-		const lineIdx = task.lineNumber - 1;
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split('\n');
+			const lineIdx = task.lineNumber - 1;
 
-		if (lines[lineIdx]) {
-			lines[lineIdx] = TaskMutator.setCompleted(lines[lineIdx], inProgress, undefined, this.plugin.settings);
-			await this.app.vault.modify(file, lines.join('\n'));
-		}
+			if (lines[lineIdx] !== undefined) {
+				lines[lineIdx] = TaskMutator.setCompleted(lines[lineIdx], inProgress, undefined, this.plugin.settings);
+			}
+			return lines.join('\n');
+		});
 	}
 
 	private async deferTaskDate(task: ObsidianTask): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
-		const lineIdx = task.lineNumber - 1;
+		const tomorrow = new Date();
+		tomorrow.setDate(tomorrow.getDate() + 1);
+		const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-		if (lines[lineIdx]) {
-			const tomorrow = new Date();
-			tomorrow.setDate(tomorrow.getDate() + 1);
-			const tomorrowStr = tomorrow.toISOString().split('T')[0];
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split('\n');
+			const lineIdx = task.lineNumber - 1;
 
-			lines[lineIdx] = TaskMutator.setDueDate(lines[lineIdx], tomorrowStr, this.plugin.settings);
-			await this.app.vault.modify(file, lines.join('\n'));
-		}
+			if (lines[lineIdx] !== undefined) {
+				lines[lineIdx] = TaskMutator.setDueDate(lines[lineIdx], tomorrowStr, this.plugin.settings);
+			}
+			return lines.join('\n');
+		});
 	}
 
 	private async decomposeTask(task: ObsidianTask): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
-		const lineIdx = task.lineNumber - 1;
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split('\n');
+			const lineIdx = task.lineNumber - 1;
 
-		if (lines[lineIdx]) {
-			const subtaskLine = TaskMutator.createSubtaskLine(task.indentLevel, 'Nouvelle sous-tâche décomposée');
-			lines.splice(lineIdx + 1, 0, subtaskLine);
-			await this.app.vault.modify(file, lines.join('\n'));
-		}
+			if (lines[lineIdx] !== undefined) {
+				const subtaskLine = TaskMutator.createSubtaskLine(task.indentLevel, 'Nouvelle sous-tâche décomposée');
+				lines.splice(lineIdx + 1, 0, subtaskLine);
+			}
+			return lines.join('\n');
+		});
 	}
 }

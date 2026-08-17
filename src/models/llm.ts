@@ -12,4 +12,5 @@ export interface LLMConfig {
 	model: string;
 	apiKey?: string;
 	temperature?: number;
+	signal?: AbortSignal;
 }

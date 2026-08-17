@@ -13,9 +13,9 @@ export const SettingsPageTypesArray: ReadonlyArray<SettingsPageType> = [
 export function getPageName(pageType: SettingsPageType): string {
 	switch (pageType) {
 		case 'main-page':
-			return 'Paramètres Généraux';
+			return 'Paramètres généraux';
 		case 'rewards-page':
-			return 'Récompenses de Boutique';
+			return 'Récompenses de boutique';
 	}
 }
 

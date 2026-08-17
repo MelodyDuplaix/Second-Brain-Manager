@@ -1,4 +1,4 @@
-import { ButtonComponent, Setting, setIcon, Notice } from 'obsidian';
+import { ButtonComponent, Setting, setIcon, Notice, normalizePath } from 'obsidian';
 import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
@@ -10,10 +10,10 @@ export class MainPage extends BaseSettingsPage {
 		this.containerEl.addClass('sbm-main-settings-page');
 
 		// 1. Module Gamification & Boutique (Sous-page dédiée)
-		const gamificationGroup = new SettingGroup(this.containerEl).setHeading('Gamification & Boutique');
+		const gamificationGroup = new SettingGroup(this.containerEl).setHeading('Gamification et boutique');
 		gamificationGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Récompenses de Boutique')
+				.setName('Récompenses de boutique')
 				.setDesc('Gérer le catalogue des récompenses, leurs coûts en pièces et les ajouts')
 				.addButton((button: ButtonComponent) => {
 					button.setIcon('chevron-right').onClick(() => {
@@ -46,7 +46,7 @@ export class MainPage extends BaseSettingsPage {
 		});
 
 		// 2. Général & Énergie
-		const generalGroup = new SettingGroup(this.containerEl).setHeading('Général & Énergie');
+		const generalGroup = new SettingGroup(this.containerEl).setHeading('Général et énergie');
 		generalGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Niveau d\'énergie initial')
@@ -64,17 +64,17 @@ export class MainPage extends BaseSettingsPage {
 		});
 
 		// 3. Dossiers du Coffre
-		const foldersGroup = new SettingGroup(this.containerEl).setHeading('Dossiers du Coffre');
+		const foldersGroup = new SettingGroup(this.containerEl).setHeading('Dossiers du coffre');
 		foldersGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Dossier Inbox')
+				.setName('Dossier boîte de réception (Inbox)')
 				.setDesc('Dossier dans lequel les nouvelles notes brutes sont stockées')
 				.addText((text) => {
 					text
 						.setPlaceholder('00 - Inbox')
 						.setValue(this.plugin.settings.inboxFolder)
 						.onChange(async (value) => {
-							this.plugin.settings.inboxFolder = value.trim();
+							this.plugin.settings.inboxFolder = normalizePath(value.trim());
 							await this.plugin.saveSettings();
 						});
 					new FolderSuggest(this.plugin.app, text.inputEl);
@@ -83,14 +83,14 @@ export class MainPage extends BaseSettingsPage {
 
 		foldersGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Dossier Journal (Daily Notes)')
+				.setName('Dossier du journal (Daily notes)')
 				.setDesc('Dossier des notes quotidiennes du journal')
 				.addText((text) => {
 					text
 						.setPlaceholder('04 - Journal')
 						.setValue(this.plugin.settings.dailyNotesFolder)
 						.onChange(async (value) => {
-							this.plugin.settings.dailyNotesFolder = value.trim();
+							this.plugin.settings.dailyNotesFolder = normalizePath(value.trim());
 							await this.plugin.saveSettings();
 						});
 					new FolderSuggest(this.plugin.app, text.inputEl);
@@ -98,11 +98,11 @@ export class MainPage extends BaseSettingsPage {
 		});
 
 		// 4. Syntaxes des Tâches & Priorités
-		const syntaxGroup = new SettingGroup(this.containerEl).setHeading('Syntaxes des Tâches & Priorités');
+		const syntaxGroup = new SettingGroup(this.containerEl).setHeading('Syntaxes des tâches et priorités');
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Format des Priorités')
-				.setDesc('Choisissez entre les emojis Obsidian Tasks (🔺 ⏫ 🔼 🔽 ⏬) ou les tags (#priorite/haute, #priority/high...)')
+				.setName('Format des priorités')
+				.setDesc('Choisissez entre les émojis Obsidian Tasks (🔺 ⏫ 🔼 🔽 ⏬) ou les tags (#priorite/haute, #priority/high...)')
 				.addDropdown((dropdown) => {
 					dropdown
 						.addOption('emoji', 'Emojis Obsidian Tasks (🔺 ⏫ 🔼 🔽 ⏬)')
@@ -135,7 +135,7 @@ export class MainPage extends BaseSettingsPage {
 
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Préfixe Tag Énergie')
+				.setName('Préfixe du tag d\'énergie')
 				.setDesc('Préfixe des tags d\'énergie (ex: energie -> #energie/4)')
 				.addText((text) => {
 					text
@@ -149,7 +149,7 @@ export class MainPage extends BaseSettingsPage {
 
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Préfixe Tag Pièces')
+				.setName('Préfixe du tag de pièces')
 				.setDesc('Préfixe des tags de récompense (ex: pieces -> #pieces/5)')
 				.addText((text) => {
 					text
@@ -178,7 +178,7 @@ export class MainPage extends BaseSettingsPage {
 
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Dates sous forme de Wikilinks')
+				.setName('Dates sous forme de liens wikilinks')
 				.setDesc('Encadrer les dates dans des wikilinks [[YYYY-MM-DD]]')
 				.addToggle((toggle) => {
 					toggle
@@ -194,13 +194,13 @@ export class MainPage extends BaseSettingsPage {
 		const matrixGroup = new SettingGroup(this.containerEl).setHeading('Matrice Eisenhower');
 		matrixGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Fournisseur de Matrice')
+				.setName('Fournisseur de matrice')
 				.setDesc('Sélectionnez le format de tag de matrice utilisé dans votre coffre')
 				.addDropdown((dropdown) => {
 					dropdown
 						.addOption('task-matrix', 'TaskMatrix (#tm/qN)')
 						.addOption('focus-first', 'Focus First (#focus, #qN)')
-						.addOption('custom', 'Tags Personnalisés (#q1, #q2...)')
+						.addOption('custom', 'Tags personnalisés (#q1, #q2...)')
 						.setValue(this.plugin.settings.matrixProvider)
 						.onChange(async (value: 'focus-first' | 'task-matrix' | 'quad-tasks' | '4d-matrix' | 'custom') => {
 							this.plugin.settings.matrixProvider = value;
@@ -210,7 +210,7 @@ export class MainPage extends BaseSettingsPage {
 		});
 
 		// 6. Agent IA & Secret Storage
-		const aiGroup = new SettingGroup(this.containerEl).setHeading('Agent IA & Secret Storage');
+		const aiGroup = new SettingGroup(this.containerEl).setHeading('Agent IA et clés secrètes');
 		aiGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Fournisseur LLM')
@@ -255,7 +255,7 @@ export class MainPage extends BaseSettingsPage {
 		if (this.plugin.settings.llmProvider === 'ollama' || this.plugin.settings.llmProvider === 'lm-studio') {
 			aiGroup.addSetting((setting: Setting) => {
 				setting
-					.setName('URL de l\'Endpoint Local')
+					.setName('URL du serveur local')
 					.setDesc('URL du serveur IA local')
 					.addText((text) => {
 						text

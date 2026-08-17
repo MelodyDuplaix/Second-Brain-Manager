@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, Notice } from 'obsidian';
 import { GamificationService } from '../services/gamificationService';
+import { DomUtils } from '../utils/domUtils';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_GAMIFICATION_HISTORY = 'sbm-gamification-history-view';
@@ -19,7 +20,7 @@ export class GamificationHistoryView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return 'Historique & Statistiques Pièces';
+		return 'Historique et statistiques des pièces';
 	}
 
 	getIcon(): string {
@@ -36,14 +37,14 @@ export class GamificationHistoryView extends ItemView {
 		container.addClass('sbm-history-container');
 
 		const headerEl = container.createEl('div', { cls: 'sbm-history-header' });
-		headerEl.createEl('h2', { text: '🪙 Gamification — Historique & Statistiques' });
+		headerEl.createEl('h2', { text: '🪙 Gamification — Historique et statistiques' });
 
 		// Navigation par Onglets
 		const tabNav = container.createEl('div', { cls: 'sbm-tab-nav' });
 
 		const historyTabBtn = tabNav.createEl('button', {
 			cls: `sbm-tab-btn ${this.currentTab === 'history' ? 'active' : ''}`,
-			text: '📜 Historique des Gains'
+			text: '📜 Historique des gains'
 		});
 		historyTabBtn.addEventListener('click', () => {
 			this.currentTab = 'history';
@@ -52,7 +53,7 @@ export class GamificationHistoryView extends ItemView {
 
 		const statsTabBtn = tabNav.createEl('button', {
 			cls: `sbm-tab-btn ${this.currentTab === 'stats' ? 'active' : ''}`,
-			text: '📊 Statistiques Avancées (Courbe & Camembert)'
+			text: '📊 Statistiques avancées (courbe et camembert)'
 		});
 		statsTabBtn.addEventListener('click', () => {
 			this.currentTab = 'stats';
@@ -63,18 +64,18 @@ export class GamificationHistoryView extends ItemView {
 		const summaryRow = container.createEl('div', { cls: 'sbm-history-summary' });
 
 		const balanceStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		balanceStat.createEl('div', { cls: 'sbm-summary-label', text: 'Solde Portefeuille' });
+		balanceStat.createEl('div', { cls: 'sbm-summary-label', text: 'Solde portefeuille' });
 		balanceStat.createEl('div', { cls: 'sbm-summary-val gold', text: `${this.plugin.pluginData.wallet.balance} 🪙` });
 
 		const lifetimeStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		lifetimeStat.createEl('div', { cls: 'sbm-summary-label', text: 'Total Gagné à Vie' });
+		lifetimeStat.createEl('div', { cls: 'sbm-summary-label', text: 'Total gagné à vie' });
 		lifetimeStat.createEl('div', { cls: 'sbm-summary-val green', text: `${this.plugin.pluginData.wallet.lifetimeEarned} 🪙` });
 
 		const events = Object.values(this.plugin.pluginData.completionEvents)
 			.sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
 
 		const countStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		countStat.createEl('div', { cls: 'sbm-summary-label', text: 'Tâches Validées' });
+		countStat.createEl('div', { cls: 'sbm-summary-label', text: 'Tâches validées' });
 		countStat.createEl('div', { cls: 'sbm-summary-val', text: `${events.length}` });
 
 		const mainContent = container.createEl('div', { cls: 'sbm-tab-content' });
@@ -149,30 +150,31 @@ export class GamificationHistoryView extends ItemView {
 	}
 
 	private renderAdvancedStatsTab(container: Element, _events: Array<{ taskId: string; completedAt: string; coins: number; taskText: string; categoryTags?: string[] }>): void {
-
 		const statsGrid = container.createEl('div', { cls: 'sbm-stats-grid' });
 
 		// 1. Graphique en Courbe (Line Chart SVG)
 		const lineCard = statsGrid.createEl('div', { cls: 'sbm-stats-chart-card full-width' });
-		lineCard.createEl('h3', { text: '📈 Évolution Temporelle des Pièces (Courbe des 14 derniers jours)' });
+		lineCard.createEl('h3', { text: '📈 Évolution temporelle des pièces (courbe des 14 derniers jours)' });
 		const trend14 = GamificationService.getDailyTrend(this.plugin.pluginData, 14);
 		this.renderLineChart(lineCard, trend14);
 
 		// 2. Graphique en Camembert / Donut (Donut Chart SVG)
 		const pieCard = statsGrid.createEl('div', { cls: 'sbm-stats-chart-card' });
-		pieCard.createEl('h3', { text: '🥧 Répartition des Pièces par Catégorie (Camembert)' });
+		pieCard.createEl('h3', { text: '🥧 Répartition des pièces par catégorie (camembert)' });
 		const catBreakdown = GamificationService.getCoinsByCategory(this.plugin.pluginData);
 		this.renderDonutChart(pieCard, catBreakdown);
 
 		// 3. Graphique en Barres Quotidiennes (Daily Bar Chart)
 		const barCard = statsGrid.createEl('div', { cls: 'sbm-stats-chart-card' });
-		barCard.createEl('h3', { text: '📊 Comparatif Quotidien (7 derniers jours)' });
+		barCard.createEl('h3', { text: '📊 Comparatif quotidien (7 derniers jours)' });
 		const trend7 = GamificationService.getDailyTrend(this.plugin.pluginData, 7);
 		this.renderDailyBarChart(barCard, trend7);
 	}
 
 	private renderLineChart(container: Element, trend: { date: string; coins: number }[]): void {
 		const chartWrap = container.createEl('div', { cls: 'sbm-chart-wrapper' });
+		chartWrap.empty();
+
 		const width = 560;
 		const height = 180;
 		const padding = 35;
@@ -189,27 +191,54 @@ export class GamificationHistoryView extends ItemView {
 		const pathD = points.reduce((acc, pt, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`, '');
 		const areaD = `${pathD} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
 
-		let svg = `<svg viewBox="0 0 ${width} ${height}" class="sbm-advanced-svg">`;
+		const svgEl = DomUtils.appendSvgChild(chartWrap, 'svg', {
+			viewBox: `0 0 ${width} ${height}`,
+			class: 'sbm-advanced-svg'
+		});
+
 		// Area fill
-		svg += `<path d="${areaD}" class="sbm-line-area" />`;
-		// Line
-		svg += `<path d="${pathD}" class="sbm-line-stroke" />`;
+		DomUtils.appendSvgChild(svgEl, 'path', {
+			d: areaD,
+			class: 'sbm-line-area'
+		});
+
+		// Line stroke
+		DomUtils.appendSvgChild(svgEl, 'path', {
+			d: pathD,
+			class: 'sbm-line-stroke'
+		});
 
 		// Points & Labels
 		points.forEach(pt => {
-			svg += `<circle cx="${pt.x}" cy="${pt.y}" r="4" class="sbm-line-dot" />`;
-			svg += `<text x="${pt.x}" y="${height - 12}" class="sbm-chart-axis-label" text-anchor="middle">${pt.date}</text>`;
+			DomUtils.appendSvgChild(svgEl, 'circle', {
+				cx: pt.x,
+				cy: pt.y,
+				r: 4,
+				class: 'sbm-line-dot'
+			});
+
+			DomUtils.appendSvgChild(svgEl, 'text', {
+				x: pt.x,
+				y: height - 12,
+				class: 'sbm-chart-axis-label',
+				'text-anchor': 'middle'
+			}, pt.date);
+
 			if (pt.coins > 0) {
-				svg += `<text x="${pt.x}" y="${pt.y - 8}" class="sbm-chart-val-label" text-anchor="middle">${pt.coins}</text>`;
+				DomUtils.appendSvgChild(svgEl, 'text', {
+					x: pt.x,
+					y: pt.y - 8,
+					class: 'sbm-chart-val-label',
+					'text-anchor': 'middle'
+				}, String(pt.coins));
 			}
 		});
-
-		svg += `</svg>`;
-		chartWrap.innerHTML = svg;
 	}
 
 	private renderDonutChart(container: Element, catBreakdown: Record<string, number>): void {
 		const chartWrap = container.createEl('div', { cls: 'sbm-donut-wrapper' });
+		chartWrap.empty();
+
 		const entries = Object.entries(catBreakdown);
 		const total = entries.reduce((acc, [, val]) => acc + val, 0);
 
@@ -224,7 +253,10 @@ export class GamificationHistoryView extends ItemView {
 		const cy = 80;
 
 		let cumulativePercent = 0;
-		let svg = `<svg viewBox="0 0 160 160" class="sbm-donut-svg">`;
+		const svgEl = DomUtils.appendSvgChild(chartWrap, 'svg', {
+			viewBox: '0 0 160 160',
+			class: 'sbm-donut-svg'
+		});
 
 		entries.forEach(([_cat, val], idx) => {
 			const percent = val / total;
@@ -242,17 +274,35 @@ export class GamificationHistoryView extends ItemView {
 			const color = colors[idx % colors.length];
 
 			if (entries.length === 1) {
-				svg += `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${color}" />`;
+				DomUtils.appendSvgChild(svgEl, 'circle', {
+					cx,
+					cy,
+					r: radius,
+					fill: color
+				});
 			} else {
 				const pathData = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
-				svg += `<path d="${pathData}" fill="${color}" />`;
+				DomUtils.appendSvgChild(svgEl, 'path', {
+					d: pathData,
+					fill: color
+				});
 			}
 		});
 
 		// Donut hole
-		svg += `<circle cx="${cx}" cy="${cy}" r="35" fill="var(--background-primary)" />`;
-		svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" class="sbm-donut-center-text">${total}🪙</text>`;
-		svg += `</svg>`;
+		DomUtils.appendSvgChild(svgEl, 'circle', {
+			cx,
+			cy,
+			r: 35,
+			fill: 'var(--background-primary)'
+		});
+
+		DomUtils.appendSvgChild(svgEl, 'text', {
+			x: cx,
+			y: cy + 5,
+			'text-anchor': 'middle',
+			class: 'sbm-donut-center-text'
+		}, `${total}🪙`);
 
 		// Légende
 		const legend = container.createEl('div', { cls: 'sbm-donut-legend' });
@@ -263,19 +313,22 @@ export class GamificationHistoryView extends ItemView {
 			const percentage = Math.round((val / total) * 100);
 			row.createEl('span', { cls: 'sbm-legend-text', text: `${cat} : ${val} 🪙 (${percentage}%)` });
 		});
-
-		chartWrap.innerHTML = svg;
 	}
 
 	private renderDailyBarChart(container: Element, trend: { date: string; coins: number }[]): void {
 		const chartWrap = container.createEl('div', { cls: 'sbm-chart-wrapper' });
+		chartWrap.empty();
+
 		const width = 280;
 		const height = 160;
 		const maxCoins = Math.max(1, ...trend.map(t => t.coins));
 		const barWidth = 26;
 		const gap = (width - barWidth * trend.length) / (trend.length + 1);
 
-		let svg = `<svg viewBox="0 0 ${width} ${height}" class="sbm-sparkline-svg">`;
+		const svgEl = DomUtils.appendSvgChild(chartWrap, 'svg', {
+			viewBox: `0 0 ${width} ${height}`,
+			class: 'sbm-sparkline-svg'
+		});
 
 		trend.forEach((item, index) => {
 			const x = gap + index * (barWidth + gap);
@@ -283,14 +336,30 @@ export class GamificationHistoryView extends ItemView {
 			const y = height - barHeight - 22;
 			const dayLabel = item.date.slice(5);
 
-			svg += `
-				<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="4" class="sbm-bar ${item.coins > 0 ? 'active' : 'empty'}" />
-				<text x="${x + barWidth / 2}" y="${height - 6}" class="sbm-bar-label" text-anchor="middle">${dayLabel}</text>
-				${item.coins > 0 ? `<text x="${x + barWidth / 2}" y="${y - 4}" class="sbm-bar-val" text-anchor="middle">${item.coins}</text>` : ''}
-			`;
-		});
+			DomUtils.appendSvgChild(svgEl, 'rect', {
+				x,
+				y,
+				width: barWidth,
+				height: barHeight,
+				rx: 4,
+				class: `sbm-bar ${item.coins > 0 ? 'active' : 'empty'}`
+			});
 
-		svg += `</svg>`;
-		chartWrap.innerHTML = svg;
+			DomUtils.appendSvgChild(svgEl, 'text', {
+				x: x + barWidth / 2,
+				y: height - 6,
+				class: 'sbm-bar-label',
+				'text-anchor': 'middle'
+			}, dayLabel);
+
+			if (item.coins > 0) {
+				DomUtils.appendSvgChild(svgEl, 'text', {
+					x: x + barWidth / 2,
+					y: y - 4,
+					class: 'sbm-bar-val',
+					'text-anchor': 'middle'
+				}, String(item.coins));
+			}
+		});
 	}
 }

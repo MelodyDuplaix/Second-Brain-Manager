@@ -10,6 +10,13 @@ describe('TaskMutator', () => {
 		expect(updated).toBe('- [x] Acheter du pain 📅 2026-08-07 ✅ 2026-08-07 ^task-pain');
 	});
 
+	it('should uncheck completed task and strip completion date', () => {
+		const line = '- [x] Acheter du pain 📅 2026-08-07 ✅ 2026-08-07 ^task-pain';
+		const updated = TaskMutator.setCompleted(line, false, undefined, DEFAULT_SYNTAX_CONFIG);
+
+		expect(updated).toBe('- [ ] Acheter du pain 📅 2026-08-07 ^task-pain');
+	});
+
 	it('should update due date with wikilinks when configured', () => {
 		const config = {
 			...DEFAULT_SYNTAX_CONFIG,
@@ -22,10 +29,45 @@ describe('TaskMutator', () => {
 		expect(updated).toBe('- [ ] Réparer le vélo 📅 [[2026-08-15]]');
 	});
 
+	it('should update start date properly', () => {
+		const line = '- [ ] Commencer le projet';
+		const updated = TaskMutator.setStartDate(line, '2026-08-10', DEFAULT_SYNTAX_CONFIG);
+
+		expect(updated).toBe('- [ ] Commencer le projet 🛫 2026-08-10');
+	});
+
+	it('should update priority in emoji mode', () => {
+		const line = '- [ ] Rapport trimestriel 🔼';
+		const updated = TaskMutator.setPriority(line, 'highest', DEFAULT_SYNTAX_CONFIG);
+
+		expect(updated).toBe('- [ ] Rapport trimestriel 🔺');
+	});
+
+	it('should update priority in tag mode', () => {
+		const config = {
+			...DEFAULT_SYNTAX_CONFIG,
+			priorityMode: 'tag' as const,
+			priorityTagPrefix: 'priorite'
+		};
+
+		const line = '- [ ] Rapport trimestriel #priorite/moyenne';
+		const updated = TaskMutator.setPriority(line, 'high', config);
+
+		expect(updated).toBe('- [ ] Rapport trimestriel #priorite/high');
+	});
+
 	it('should update controlled tags preserving blockId anchor', () => {
 		const line = '- [ ] Ecrire un chapitre #energie/2 ^chapitre-1';
 		const updated = TaskMutator.setControlledTag(line, 'energie', 8, DEFAULT_SYNTAX_CONFIG);
 
 		expect(updated).toBe('- [ ] Ecrire un chapitre #energie/8 ^chapitre-1');
+	});
+
+	it('should format subtask lines with appropriate indentation', () => {
+		const subtask = TaskMutator.createSubtaskLine(0, 'Sous-étape 1');
+		expect(subtask).toBe('  - [ ] Sous-étape 1');
+
+		const nestedSubtask = TaskMutator.createSubtaskLine(1, 'Sous-étape 1.1');
+		expect(nestedSubtask).toBe('    - [ ] Sous-étape 1.1');
 	});
 });

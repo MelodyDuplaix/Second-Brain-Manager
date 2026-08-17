@@ -1,10 +1,11 @@
-import { Plugin, Notice, PluginSettingTab, App, TFile } from 'obsidian';
+import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath } from 'obsidian';
 import { TaskParser } from './parsers/taskParser';
 import { CustomMatrixTagMapping } from './adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from './models/syntaxConfig';
 import { DashboardView, VIEW_TYPE_DASHBOARD } from './views/dashboardView';
 import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views/gamificationHistoryView';
 import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
+import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { Wallet, Reward, CompletionEvent } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
@@ -69,8 +70,6 @@ export default class SecondBrainPlugin extends Plugin {
 	pluginData: PluginData;
 
 	async onload() {
-		console.log('Chargement du plugin Second Brain Manager');
-
 		await this.loadPluginData();
 
 		// Enregistrement des vues
@@ -89,11 +88,21 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new ChatView(leaf, this)
 		);
 
+		this.registerView(
+			VIEW_TYPE_BRIEFING,
+			(leaf) => new BriefingView(leaf, this)
+		);
+
+		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
 		});
 
-		this.addRibbonIcon('coins', 'Historique des Pièces & Statistiques', () => {
+		this.addRibbonIcon('sun', 'Briefing du matin', () => {
+			this.activateBriefingView();
+		});
+
+		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
 			this.activateHistoryView();
 		});
 
@@ -113,17 +122,26 @@ export default class SecondBrainPlugin extends Plugin {
 			})
 		);
 
+		// Commandes de la palette
 		this.addCommand({
 			id: 'ouvrir-dashboard',
-			name: 'Ouvrir le Tableau de bord',
+			name: 'Ouvrir le tableau de bord',
 			callback: () => {
 				this.activateDashboardView();
 			}
 		});
 
 		this.addCommand({
+			id: 'ouvrir-briefing',
+			name: 'Ouvrir le briefing du matin',
+			callback: () => {
+				this.activateBriefingView();
+			}
+		});
+
+		this.addCommand({
 			id: 'ouvrir-chat-ia',
-			name: 'Ouvrir le Chat IA',
+			name: 'Ouvrir le chat IA',
 			callback: () => {
 				this.activateChatView();
 			}
@@ -156,7 +174,7 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	onunload() {
-		console.log('Déchargement du plugin Second Brain Manager');
+		// Nettoyage automatique assuré par Obsidian pour les vues et événements enregistrés
 	}
 
 	public async checkFileForCompletedTasks(file: TFile): Promise<void> {
@@ -183,6 +201,23 @@ export default class SecondBrainPlugin extends Plugin {
 			if (rightLeaf) {
 				leaf = rightLeaf;
 				await leaf.setViewState({ type: VIEW_TYPE_DASHBOARD, active: true });
+			}
+		}
+
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
+	}
+
+	async activateBriefingView() {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(VIEW_TYPE_BRIEFING)[0];
+
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				leaf = rightLeaf;
+				await leaf.setViewState({ type: VIEW_TYPE_BRIEFING, active: true });
 			}
 		}
 
@@ -235,20 +270,29 @@ export default class SecondBrainPlugin extends Plugin {
 			return undefined;
 		}
 
-		// Utilisation de l'API de stockage des secrets si disponible sur l'instance Obsidian
+		// Utilisation de l'API officielle de stockage des secrets si disponible sur l'instance Obsidian
 		const secretStorage = (this.app as unknown as { secretStorage?: { getSecret: (key: string) => Promise<string | null> } }).secretStorage;
 		if (secretStorage && typeof secretStorage.getSecret === 'function') {
 			const secret = await secretStorage.getSecret(secretId);
 			if (secret) return secret;
 		}
 
-		// Fallback sur le localStorage chiffré/local de l'instance
+		// Fallback sur le stockage local de l'instance
 		return window.localStorage.getItem(`sbm_secret_${secretId}`) || undefined;
 	}
 
 	async loadPluginData() {
 		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, await this.loadData());
 		this.settings = raw.settings;
+
+		// Normalisation des chemins configurés
+		if (this.settings.inboxFolder) {
+			this.settings.inboxFolder = normalizePath(this.settings.inboxFolder);
+		}
+		if (this.settings.dailyNotesFolder) {
+			this.settings.dailyNotesFolder = normalizePath(this.settings.dailyNotesFolder);
+		}
+
 		this.pluginData = {
 			wallet: raw.wallet || DEFAULT_STORED_DATA.wallet,
 			rewards: raw.rewards || DEFAULT_STORED_DATA.rewards,

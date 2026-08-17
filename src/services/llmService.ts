@@ -40,7 +40,8 @@ export class LLMService {
 		const response = await window.fetch(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ contents })
+			body: JSON.stringify({ contents }),
+			signal: config.signal
 		});
 
 		if (!response.ok || !response.body) {
@@ -111,7 +112,8 @@ export class LLMService {
 				messages: messages.map(m => ({ role: m.role, content: m.content })),
 				temperature: config.temperature ?? 0.7,
 				stream: true
-			})
+			}),
+			signal: config.signal
 		});
 
 		if (!response.ok || !response.body) {
@@ -178,7 +180,8 @@ export class LLMService {
 				model: config.model || 'llama3:latest',
 				messages: messages.map(m => ({ role: m.role, content: m.content })),
 				stream: true
-			})
+			}),
+			signal: config.signal
 		});
 
 		if (!response.ok || !response.body) {
@@ -238,7 +241,8 @@ export class LLMService {
 				messages: messages.map(m => ({ role: m.role, content: m.content })),
 				temperature: config.temperature ?? 0.7,
 				stream: true
-			})
+			}),
+			signal: config.signal
 		});
 
 		if (!response.ok || !response.body) {

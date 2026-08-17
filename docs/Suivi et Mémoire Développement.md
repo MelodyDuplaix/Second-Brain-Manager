@@ -192,9 +192,22 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   3. **Gestion des Releases & Tags Git (`vX.Y.Z`)** : Automatisation de la publication des releases officielles avec synchronisation du `manifest.json`, génération automatique des assets de distribution (`main.js`, `manifest.json`, `styles.css`) et changelog.
 
 
-### 📅 2026-08-07 — Étape 3.1 : Chat Conversationnel IA & Streaming
-- **Décision** :
-  1. `LLMService` multi-fournisseurs (Gemini, OpenAI, Ollama, LM Studio) avec streaming Server-Sent Events.
-  2. Buffer progressif lissé (Typewriter Queue à 16ms) avec curseur actif (`▌`) pour un déroulement mot à mot naturel.
-  3. Intégration de l'API officielle `SecretStorage` d'Obsidian pour sécuriser les clés sans les exposer dans `data.json`.
+### 📅 2026-08-17 — Étape 3.4 : Expérience Utilisateur Copilot-like, Édition In-Place & Cadre Intégré Fluide
+- **Décision & Actions Réalisées** :
+  1. **Résolution Définitive des Liens Wikilinks Non Cliquables** :
+     - Cause identifiée : Le modèle entourait parfois les wikilinks d'accents graves (ex: `\`[[Claire]]\``), ce que le Markdown d'Obsidian traite en bloc `<code>` littéral non cliquable.
+     - Correction : Nettoyage automatique en amont (`cleanWikilinkSyntax`) éliminant les backticks superflus, interdiction explicite dans le prompt système, et gestion des clics universelle dans le conteneur du chat sur tous les éléments contenant `[[...]]`.
+  2. **Édition de Message In-Place & Régénération d'Arborescence d'Historique** :
+     - Cliquer sur le bouton crayon ✏️ transforme directement la bulle du message utilisateur en un éditeur en ligne (`sbm-inline-edit-box`) avec boutons `[Enregistrer et soumettre]` et `[Annuler]`.
+     - Lors de la soumission, l'historique de discussion est automatiquement tronqué à partir de cette position (`messages.splice(i + 1)`), et une nouvelle réponse de l'assistant est générée et streamée à partir de ce nouveau point de départ.
+  3. **Suppression Universelle de Messages (Utilisateur & Assistant)** :
+     - Chaque bulle dispose d'un bouton poubelle 🗑️ fonctionnel permettant de supprimer un message individuel et de synchroniser instantanément l'historique.
+  4. **Cadre de Saisie Intégré & Fluide (Copilot Style)** :
+     - Remplacement de la double bordure par une carte unique élégante (`sbm-chat-input-card`), intégrant la barre de contexte `@ Add context`, les pilules actives, la zone de texte fluide et la barre d'outils inférieure (`+`, modèle actif, bouton flèche `↑`).
+  5. **Qualité & Tests** : **36/36 tests unitaires réussis**, 0 erreur et 0 avertissement ESLint.
 - **Statut** : Validée.
+
+
+
+
+

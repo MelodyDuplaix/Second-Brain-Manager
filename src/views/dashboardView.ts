@@ -1,10 +1,11 @@
-import { ItemView, WorkspaceLeaf, Notice, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import { GamificationService } from '../services/gamificationService';
+import { DomUtils } from '../utils/domUtils';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_DASHBOARD = 'sbm-dashboard-view';
@@ -25,7 +26,7 @@ export class DashboardView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return 'Tableau de Bord';
+		return 'Tableau de bord';
 	}
 
 	getIcon(): string {
@@ -51,7 +52,7 @@ export class DashboardView extends ItemView {
 
 		// Header principal
 		const headerEl = container.createEl('div', { cls: 'sbm-dashboard-header' });
-		headerEl.createEl('h2', { text: '📊 Tableau de Bord' });
+		headerEl.createEl('h2', { text: '📊 Tableau de bord' });
 
 		// Barre d'énergie
 		const energyContainer = headerEl.createEl('div', { cls: 'sbm-energy-bar' });
@@ -72,7 +73,7 @@ export class DashboardView extends ItemView {
 
 		energyContainer.createEl('span', {
 			cls: `sbm-mode-badge ${isEconomyMode ? 'economy' : 'full'}`,
-			text: isEconomyMode ? '⚡ Mode Économie' : '🔥 Mode Plein Potentiel'
+			text: isEconomyMode ? '⚡ Mode économie' : '🔥 Mode plein potentiel'
 		});
 
 		// Carte de Gamification & Statistiques de pièces
@@ -120,10 +121,10 @@ export class DashboardView extends ItemView {
 		const deadlines = filteredTasks.filter(t => t.dueDate || t.scheduledDate);
 		const unclassified = filteredTasks.filter(t => !matrixAdapter.getQuadrant(t) && !t.energy);
 
-		this.renderSection(container, '🎯 Tâche Principale', mainTask ? [mainTask] : [], 'main');
-		this.renderSection(container, '📋 Tâches Secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
-		this.renderSection(container, '⏰ Échéances & Urgences', deadlines, 'deadlines');
-		this.renderSection(container, '❓ Tâches à Décider', unclassified, 'unclassified');
+		this.renderSection(container, '🎯 Tâche principale', mainTask ? [mainTask] : [], 'main');
+		this.renderSection(container, '📋 Tâches secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
+		this.renderSection(container, '⏰ Échéances et urgences', deadlines, 'deadlines');
+		this.renderSection(container, '❓ Tâches à décider', unclassified, 'unclassified');
 	}
 
 	private renderGamificationStatsCard(container: Element): void {
@@ -132,17 +133,17 @@ export class DashboardView extends ItemView {
 		const topRow = statsCard.createEl('div', { cls: 'sbm-gamification-top-row' });
 
 		const walletBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
-		walletBox.createEl('div', { cls: 'sbm-stat-label', text: 'Solde Portefeuille' });
+		walletBox.createEl('div', { cls: 'sbm-stat-label', text: 'Solde portefeuille' });
 		walletBox.createEl('div', { cls: 'sbm-stat-value gold', text: `🪙 ${this.plugin.pluginData.wallet.balance} pièces` });
 
 		const todayCoins = GamificationService.getTodayCoins(this.plugin.pluginData);
 		const todayBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
-		todayBox.createEl('div', { cls: 'sbm-stat-label', text: 'Gagnées Aujourd\'hui' });
+		todayBox.createEl('div', { cls: 'sbm-stat-label', text: 'Gagnées aujourd\'hui' });
 		todayBox.createEl('div', { cls: 'sbm-stat-value green', text: `+${todayCoins} 🪙` });
 
 		// Résumé et lien historique
 		const historyLink = statsCard.createEl('div', { cls: 'sbm-history-link-row' });
-		const linkBtn = historyLink.createEl('button', { cls: 'sbm-history-btn', text: '📜 Consulter l\'historique des pièces (Annuler un missclick)' });
+		const linkBtn = historyLink.createEl('button', { cls: 'sbm-history-btn', text: '📜 Consulter l\'historique des pièces (annuler un missclick)' });
 		linkBtn.addEventListener('click', () => {
 			this.plugin.activateHistoryView();
 		});
@@ -162,7 +163,7 @@ export class DashboardView extends ItemView {
 			});
 		}
 
-		// Graphique d'activité sur 7 jours (Sparkline SVG)
+		// Graphique d'activité sur 7 jours (Sparkline SVG sécurisé sans innerHTML)
 		const trend = GamificationService.getDailyTrend(this.plugin.pluginData, 7);
 		this.renderTrendChart(statsCard, trend);
 	}
@@ -172,6 +173,7 @@ export class DashboardView extends ItemView {
 		chartContainer.createEl('div', { cls: 'sbm-trend-title', text: '📈 Activité des 7 derniers jours' });
 
 		const svgContainer = chartContainer.createEl('div', { cls: 'sbm-sparkline-wrapper' });
+		svgContainer.empty();
 
 		const maxCoins = Math.max(1, ...trend.map(t => t.coins));
 		const width = 280;
@@ -179,24 +181,42 @@ export class DashboardView extends ItemView {
 		const barWidth = 28;
 		const gap = (width - barWidth * trend.length) / (trend.length + 1);
 
-		let svgContent = `<svg viewBox="0 0 ${width} ${height}" class="sbm-sparkline-svg">`;
+		const svgEl = DomUtils.appendSvgChild(svgContainer, 'svg', {
+			viewBox: `0 0 ${width} ${height}`,
+			class: 'sbm-sparkline-svg'
+		});
 
 		trend.forEach((item, index) => {
 			const x = gap + index * (barWidth + gap);
 			const barHeight = Math.max(4, (item.coins / maxCoins) * (height - 16));
 			const y = height - barHeight - 12;
-
 			const dayLabel = item.date.slice(8);
 
-			svgContent += `
-				<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="4" class="sbm-bar ${item.coins > 0 ? 'active' : 'empty'}" />
-				<text x="${x + barWidth / 2}" y="${height - 2}" class="sbm-bar-label" text-anchor="middle">${dayLabel}</text>
-				${item.coins > 0 ? `<text x="${x + barWidth / 2}" y="${y - 3}" class="sbm-bar-val" text-anchor="middle">${item.coins}</text>` : ''}
-			`;
-		});
+			DomUtils.appendSvgChild(svgEl, 'rect', {
+				x,
+				y,
+				width: barWidth,
+				height: barHeight,
+				rx: 4,
+				class: `sbm-bar ${item.coins > 0 ? 'active' : 'empty'}`
+			});
 
-		svgContent += `</svg>`;
-		svgContainer.innerHTML = svgContent;
+			DomUtils.appendSvgChild(svgEl, 'text', {
+				x: x + barWidth / 2,
+				y: height - 2,
+				class: 'sbm-bar-label',
+				'text-anchor': 'middle'
+			}, dayLabel);
+
+			if (item.coins > 0) {
+				DomUtils.appendSvgChild(svgEl, 'text', {
+					x: x + barWidth / 2,
+					y: y - 3,
+					class: 'sbm-bar-val',
+					'text-anchor': 'middle'
+				}, String(item.coins));
+			}
+		});
 	}
 
 	private renderSection(container: Element, title: string, tasks: ObsidianTask[], sectionType: string): void {
@@ -292,7 +312,8 @@ export class DashboardView extends ItemView {
 	}
 
 	private async openTaskLocation(task: ObsidianTask): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (file instanceof TFile) {
 			const leaf = this.app.workspace.getUnpinnedLeaf();
 			await leaf.openFile(file, { eState: { line: task.lineNumber - 1 } });
@@ -376,17 +397,19 @@ export class DashboardView extends ItemView {
 	}
 
 	private async mutateTaskLine(task: ObsidianTask, mutatorFn: (line: string) => string): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
-		const lineIdx = task.lineNumber - 1;
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split('\n');
+			const lineIdx = task.lineNumber - 1;
 
-		if (lines[lineIdx] !== undefined) {
-			lines[lineIdx] = mutatorFn(lines[lineIdx]);
-			await this.app.vault.modify(file, lines.join('\n'));
-		}
+			if (lines[lineIdx] !== undefined) {
+				lines[lineIdx] = mutatorFn(lines[lineIdx]);
+			}
+			return lines.join('\n');
+		});
 	}
 
 	private async loadAllVaultTasks(): Promise<ObsidianTask[]> {
@@ -426,17 +449,19 @@ export class DashboardView extends ItemView {
 	}
 
 	private async decomposeTask(task: ObsidianTask): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(task.filePath);
+		const normalized = normalizePath(task.filePath);
+		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
-		const lineIdx = task.lineNumber - 1;
+		await this.app.vault.process(file, (content) => {
+			const lines = content.split('\n');
+			const lineIdx = task.lineNumber - 1;
 
-		if (lines[lineIdx] !== undefined) {
-			const subtaskLine = TaskMutator.createSubtaskLine(task.indentLevel, 'Nouvelle sous-tâche décomposée');
-			lines.splice(lineIdx + 1, 0, subtaskLine);
-			await this.app.vault.modify(file, lines.join('\n'));
-		}
+			if (lines[lineIdx] !== undefined) {
+				const subtaskLine = TaskMutator.createSubtaskLine(task.indentLevel, 'Nouvelle sous-tâche décomposée');
+				lines.splice(lineIdx + 1, 0, subtaskLine);
+			}
+			return lines.join('\n');
+		});
 	}
 }

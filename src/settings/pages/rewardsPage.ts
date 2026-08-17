@@ -7,7 +7,7 @@ export class RewardsPage extends BaseSettingsPage {
 		this.containerEl.empty();
 		this.renderHeader();
 
-		const catalogGroup = new SettingGroup(this.containerEl).setHeading('Catalogue des Récompenses');
+		const catalogGroup = new SettingGroup(this.containerEl).setHeading('Catalogue des récompenses');
 
 		if (this.plugin.pluginData.rewards.length === 0) {
 			catalogGroup.addSetting((setting: Setting) => {
@@ -56,7 +56,7 @@ export class RewardsPage extends BaseSettingsPage {
 		}
 
 		// Formulaire d'ajout
-		const addGroup = new SettingGroup(this.containerEl).setHeading('Ajouter une Nouvelle Récompense');
+		const addGroup = new SettingGroup(this.containerEl).setHeading('Ajouter une nouvelle récompense');
 
 		let newName = '';
 		let newDesc = '';

@@ -16,7 +16,7 @@ export class TaskMutator {
 		const newStatusChar = completed ? 'x' : ' ';
 
 		const completedDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.completedDateSignifier);
-		const updatedBody = body.replace(completedDateRegex, '').trim();
+		const updatedBody = body.replace(completedDateRegex, '').replace(/\s+/g, ' ').trim();
 
 		const lineWithStatus = `${indentWhitespace}- [${newStatusChar}] ${updatedBody}`;
 

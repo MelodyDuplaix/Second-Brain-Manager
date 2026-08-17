@@ -28,8 +28,8 @@ export class SecretSelectModal extends Modal {
 			try {
 				const res = await secretStorage.listSecrets();
 				if (Array.isArray(res)) existingSecrets = res;
-			} catch (e) {
-				console.warn('Impossible de lister les secrets :', e);
+			} catch {
+				// Ignorer silencieusement si la méthode n'est pas supportée
 			}
 		}
 
@@ -50,7 +50,7 @@ export class SecretSelectModal extends Modal {
 		}
 
 		// Option pour créer / lier un nouvel identifiant de secret
-		contentEl.createEl('h3', { text: 'Enregistrer / Lier un nouveau secret' });
+		contentEl.createEl('h3', { text: 'Enregistrer ou lier un nouveau secret' });
 		const formEl = contentEl.createEl('div', { cls: 'sbm-new-secret-form' });
 
 		let customSecretId = `${this.provider}-api-key`;
