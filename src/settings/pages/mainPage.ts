@@ -3,6 +3,7 @@ import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
 import { SecretSelectModal } from '../../modals/secretSelectModal';
+import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
 
 export class MainPage extends BaseSettingsPage {
 	render(): void {
@@ -214,23 +215,26 @@ export class MainPage extends BaseSettingsPage {
 		aiGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Fournisseur LLM')
-				.setDesc('Sélectionnez le modèle d\'intelligence artificielle pour le chat et les briefings')
+				.setDesc('Sélectionnez le fournisseur d\'intelligence artificielle pour le chat et les briefings')
 				.addDropdown((dropdown) => {
 					dropdown
-						.addOption('gemini', 'Google Gemini (1.5 Flash / Pro, 2.0)')
-						.addOption('openai', 'OpenAI ChatGPT (GPT-4o, GPT-4o-mini)')
+						.addOption('gemini', 'Google Gemini (Gemini 3.5 / 2.5 / 1.5)')
+						.addOption('openai', 'OpenAI ChatGPT (GPT-4o, o3-mini, o1)')
 						.addOption('ollama', 'Ollama (Local sans clé API)')
-						.addOption('lm-studio', 'LM Studio (Local sans clé API)')
+						.addOption('lmstudio', 'LM Studio (Local sans clé API)')
 						.setValue(this.plugin.settings.llmProvider)
-						.onChange(async (value: 'gemini' | 'openai' | 'ollama' | 'lm-studio') => {
+						.onChange(async (value: 'gemini' | 'openai' | 'ollama' | 'lmstudio') => {
 							this.plugin.settings.llmProvider = value;
 							if (value === 'gemini') {
-								this.plugin.settings.llmModel = 'gemini-1.5-flash';
+								this.plugin.settings.llmModel = 'gemini-2.5-flash';
 							} else if (value === 'openai') {
 								this.plugin.settings.llmModel = 'gpt-4o-mini';
 							} else if (value === 'ollama') {
 								this.plugin.settings.llmEndpoint = 'http://localhost:11434';
-								this.plugin.settings.llmModel = 'llama3:latest';
+								this.plugin.settings.llmModel = 'llama3.2';
+							} else if (value === 'lmstudio') {
+								this.plugin.settings.llmEndpoint = 'http://localhost:1234';
+								this.plugin.settings.llmModel = 'local-model';
 							}
 							await this.plugin.saveSettings();
 							this.render();
@@ -238,19 +242,82 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
+		const currentProvider = this.plugin.settings.llmProvider;
+		const knownModels = ModelDiscoveryService.getFallbackForProvider(currentProvider);
+
 		aiGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Modèle IA')
-				.setDesc('Nom du modèle (ex: gemini-1.5-flash, gpt-4o-mini, llama3)')
-				.addText((text) => {
-					text
-						.setValue(this.plugin.settings.llmModel)
-						.onChange(async (value) => {
-							this.plugin.settings.llmModel = value.trim() || 'gemini-1.5-flash';
+				.setName('Modèle par défaut')
+				.setDesc('Sélectionnez le modèle IA actif ou actualisez la liste en direct depuis l\'API')
+				.addDropdown((dropdown) => {
+					let isCurrentInList = false;
+					knownModels.forEach(m => {
+						dropdown.addOption(m.name, `${m.name} (${m.desc.slice(0, 32)}...)`);
+						if (m.name === this.plugin.settings.llmModel) isCurrentInList = true;
+					});
+
+					if (!isCurrentInList && this.plugin.settings.llmModel) {
+						dropdown.addOption(this.plugin.settings.llmModel, `⭐ ${this.plugin.settings.llmModel} (Actuel)`);
+					}
+
+					dropdown.addOption('__custom__', '✏️ Saisir un modèle personnalisé...');
+					dropdown.setValue(isCurrentInList ? this.plugin.settings.llmModel : (this.plugin.settings.llmModel ? this.plugin.settings.llmModel : '__custom__'));
+
+					dropdown.onChange(async (val) => {
+						if (val === '__custom__') {
+							this.render();
+						} else {
+							this.plugin.settings.llmModel = val;
 							await this.plugin.saveSettings();
+							this.render();
+						}
+					});
+				})
+				.addButton((btn) => {
+					btn
+						.setButtonText('🔄 Détecter via API')
+						.setTooltip('Interroger l\'API du fournisseur pour détecter les nouveaux modèles disponibles')
+						.onClick(async () => {
+							try {
+								btn.setDisabled(true);
+								btn.setButtonText('⏳ Recherche...');
+								const apiKey = await this.plugin.getSecretApiKey(this.plugin.settings.llmProvider);
+								const live = await ModelDiscoveryService.fetchLiveModels(
+									this.plugin.settings.llmProvider,
+									apiKey,
+									this.plugin.settings.llmEndpoint
+								);
+								btn.setDisabled(false);
+								btn.setButtonText('🔄 Détecter via API');
+								new Notice(`📡 ${live.length} modèle(s) détecté(s) auprès de ${this.plugin.settings.llmProvider.toUpperCase()}`);
+								this.render();
+							} catch {
+								btn.setDisabled(false);
+								btn.setButtonText('🔄 Détecter via API');
+								new Notice('Impossible de contacter l\'API du fournisseur pour lister les modèles.');
+							}
 						});
 				});
 		});
+
+		// Champ de saisie personnalisée si sélectionné ou modèle exotique
+		const isPreset = knownModels.some(m => m.name === this.plugin.settings.llmModel);
+		if (!isPreset) {
+			aiGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Nom du modèle personnalisé')
+					.setDesc('Saisissez l\'identifiant exact du modèle souhaité (ex: gemini-3.5-flash, custom-model-name)')
+					.addText((text) => {
+						text
+							.setPlaceholder('ex: gemini-3.5-flash')
+							.setValue(this.plugin.settings.llmModel)
+							.onChange(async (val) => {
+								this.plugin.settings.llmModel = val.trim() || 'gemini-2.5-flash';
+								await this.plugin.saveSettings();
+							});
+					});
+			});
+		}
 
 		if (this.plugin.settings.llmProvider === 'ollama' || this.plugin.settings.llmProvider === 'lm-studio') {
 			aiGroup.addSetting((setting: Setting) => {

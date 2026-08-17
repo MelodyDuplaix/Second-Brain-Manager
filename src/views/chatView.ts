@@ -3,6 +3,9 @@ import { ChatMessage, LLMConfig } from '../models/llm';
 import { AgentOrchestrator } from '../services/agentOrchestrator';
 import { ActionExecutor } from '../services/actionExecutor';
 import { ActionPreviewWidget } from './actionPreviewWidget';
+import { TaskCardWidget } from './taskCardWidget';
+import { TaskParser } from '../parsers/taskParser';
+import { VaultContextService } from '../services/vaultContextService';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { ModelPickerModal } from '../modals/modelPickerModal';
 import SecondBrainPlugin from '../main';
@@ -376,6 +379,11 @@ export class ChatView extends ItemView {
 		if (msg.content) {
 			const cleanedContent = this.cleanWikilinkSyntax(msg.content);
 			MarkdownRenderer.render(this.app, cleanedContent, textContentEl, '', this);
+
+			// Affichage sous forme de widgets de tâches interactifs
+			if (msg.role === 'assistant') {
+				this.renderTasksInsideBubble(bubbleEl, msg.content);
+			}
 		}
 
 		// Barre de métadonnées et actions (Copilot-like)
@@ -442,6 +450,45 @@ export class ChatView extends ItemView {
 		});
 
 		return bubbleEl;
+	}
+
+	private async renderTasksInsideBubble(bubbleEl: HTMLElement, content: string): Promise<void> {
+		const lines = content.split('\n');
+		const rawTaskLines: string[] = [];
+
+		lines.forEach(line => {
+			const trimmed = line.trim();
+			if (/^[-*0-9.]+\s*\[[ xX/]\]/.test(trimmed)) {
+				rawTaskLines.push(trimmed.replace(/^[-*0-9.]+\s*/, '- '));
+			}
+		});
+
+		if (rawTaskLines.length === 0) return;
+
+		const tasksContainer = bubbleEl.createDiv({ cls: 'sbm-chat-tasks-container' });
+
+		try {
+			const vaultContext = new VaultContextService(this.app, this.plugin.settings);
+			const vaultTasks = await vaultContext.searchTasks({});
+
+			rawTaskLines.forEach(line => {
+				const parsed = TaskParser.parseLine(line, 'Coffre', 1, this.plugin.settings);
+				if (!parsed) return;
+
+				const cleanParsedTitle = parsed.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
+				const matched = vaultTasks.find(vt => {
+					const cleanVtTitle = vt.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
+					return cleanVtTitle.includes(cleanParsedTitle) || cleanParsedTitle.includes(cleanVtTitle);
+				});
+
+				const taskToRender = matched ? matched : parsed;
+				TaskCardWidget.render(tasksContainer, taskToRender, this.plugin, () => {
+					// Callback optionnel sur modification
+				});
+			});
+		} catch {
+			// En cas d'erreur de recherche, fallback silencieux
+		}
 	}
 
 	private scrollToBottom(): void {
