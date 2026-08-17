@@ -1511,6 +1511,21 @@ textarea.sbm-chat-textarea:focus {
 }
 
 /* Widgets de Tâches Interactives dans les réponses de l'Agent */
+.sbm-inline-task-wrapper {
+	margin: 8px 0;
+	list-style: none;
+	display: block;
+	width: 100%;
+}
+
+.sbm-msg-text-content ul:has(.sbm-inline-task-wrapper),
+.sbm-msg-text-content ol:has(.sbm-inline-task-wrapper),
+.sbm-msg-text-content ul.contains-task-list {
+	list-style: none;
+	padding-left: 0;
+	margin: 6px 0;
+}
+
 .sbm-chat-tasks-container {
 	margin-top: 10px;
 	margin-bottom: 8px;

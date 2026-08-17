@@ -380,9 +380,9 @@ export class ChatView extends ItemView {
 			const cleanedContent = this.cleanWikilinkSyntax(msg.content);
 			MarkdownRenderer.render(this.app, cleanedContent, textContentEl, '', this);
 
-			// Affichage sous forme de widgets de tâches interactifs
+			// Intégration in-place des widgets de tâches au cœur du message
 			if (msg.role === 'assistant') {
-				this.renderTasksInsideBubble(bubbleEl, msg.content, msg.tasks);
+				this.upgradeTaskElementsInPlace(textContentEl, msg.content, msg.tasks);
 
 				if (msg.proposals && msg.proposals.length > 0) {
 					ActionPreviewWidget.render(bubbleEl, msg.proposals, this.actionExecutor);
@@ -456,55 +456,67 @@ export class ChatView extends ItemView {
 		return bubbleEl;
 	}
 
-	private async renderTasksInsideBubble(bubbleEl: HTMLElement, content: string, attachedTasks?: ObsidianTask[]): Promise<void> {
-		// 1. Si des tâches réelles du coffre sont attachées (via search_tasks), les afficher directement
-		if (attachedTasks && attachedTasks.length > 0) {
-			const tasksContainer = bubbleEl.createDiv({ cls: 'sbm-chat-tasks-container' });
+	private async upgradeTaskElementsInPlace(
+		textContentEl: HTMLElement,
+		content: string,
+		attachedTasks?: ObsidianTask[]
+	): Promise<void> {
+		// 1. Récupère les tâches du coffre
+		let vaultTasks: ObsidianTask[] = attachedTasks && attachedTasks.length > 0 ? attachedTasks : [];
+		if (vaultTasks.length === 0) {
+			try {
+				const vaultContext = new VaultContextService(this.app, this.plugin.settings);
+				vaultTasks = await vaultContext.searchTasks({});
+			} catch {
+				vaultTasks = [];
+			}
+		}
+
+		// 2. Recherche tous les <li> rendus par MarkdownRenderer
+		const allListItems = Array.from(textContentEl.querySelectorAll('li'));
+		let upgradedCount = 0;
+
+		allListItems.forEach(li => {
+			const liText = li.textContent || '';
+			const cleanLiText = liText.toLowerCase().replace(/\[\[|\]\]/g, '').replace(/^[xX\s\-*\d./]+/, '').trim();
+			if (!cleanLiText) return;
+
+			// Recherche de correspondance avec une tâche du coffre
+			const matched = vaultTasks.find(vt => {
+				const vtClean = vt.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
+				return cleanLiText.includes(vtClean) || vtClean.includes(cleanLiText);
+			});
+
+			if (matched) {
+				const wrapper = document.createElement('div');
+				wrapper.className = 'sbm-inline-task-wrapper';
+				TaskCardWidget.render(wrapper, matched, this.plugin, () => {
+					this.renderFullMessages();
+				});
+				li.replaceWith(wrapper);
+				upgradedCount++;
+			} else if (/^\[[ xX/]\]/.test(liText.trim()) || li.classList.contains('task-list-item')) {
+				const parsed = TaskParser.parseLine(`- ${liText}`, 'Coffre', 1, this.plugin.settings);
+				if (parsed) {
+					const wrapper = document.createElement('div');
+					wrapper.className = 'sbm-inline-task-wrapper';
+					TaskCardWidget.render(wrapper, parsed, this.plugin, () => {
+						this.renderFullMessages();
+					});
+					li.replaceWith(wrapper);
+					upgradedCount++;
+				}
+			}
+		});
+
+		// 3. Fallback : Si des tâches spécifiques ont été trouvées mais qu'aucune liste <li> n'a été matchée
+		if (upgradedCount === 0 && attachedTasks && attachedTasks.length > 0) {
+			const tasksContainer = textContentEl.createDiv({ cls: 'sbm-chat-tasks-container' });
 			attachedTasks.forEach(task => {
 				TaskCardWidget.render(tasksContainer, task, this.plugin, () => {
 					this.renderFullMessages();
 				});
 			});
-			return;
-		}
-
-		// 2. Sinon, détection dans le texte
-		const lines = content.split('\n');
-		const rawTaskLines: string[] = [];
-
-		lines.forEach(line => {
-			const trimmed = line.trim();
-			if (/^[-*0-9.]+\s*\[[ xX/]\]/.test(trimmed)) {
-				rawTaskLines.push(trimmed.replace(/^[-*0-9.]+\s*/, '- '));
-			}
-		});
-
-		if (rawTaskLines.length === 0) return;
-
-		const tasksContainer = bubbleEl.createDiv({ cls: 'sbm-chat-tasks-container' });
-
-		try {
-			const vaultContext = new VaultContextService(this.app, this.plugin.settings);
-			const vaultTasks = await vaultContext.searchTasks({});
-
-			rawTaskLines.forEach(line => {
-				const parsed = TaskParser.parseLine(line, 'Coffre', 1, this.plugin.settings);
-				if (!parsed) return;
-
-				const cleanParsedTitle = parsed.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
-				const matched = vaultTasks.find(vt => {
-					const cleanVtTitle = vt.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
-					return cleanVtTitle.includes(cleanParsedTitle) || cleanParsedTitle.includes(cleanVtTitle);
-				});
-
-				if (matched) {
-					TaskCardWidget.render(tasksContainer, matched, this.plugin, () => {
-						this.renderFullMessages();
-					});
-				}
-			});
-		} catch {
-			// En cas d'erreur de recherche, fallback silencieux
 		}
 	}
 
@@ -632,8 +644,8 @@ export class ChatView extends ItemView {
 				assistantMsg.proposals = agentResponse.actionProposals;
 			}
 
-			// Rendu des widgets de tâches interactifs
-			await this.renderTasksInsideBubble(bubbleEl, agentResponse.text, assistantMsg.tasks);
+			// Rendu in-place des widgets de tâches interactifs
+			await this.upgradeTaskElementsInPlace(textContentEl, agentResponse.text, assistantMsg.tasks);
 
 			if (agentResponse.actionProposals.length > 0) {
 				ActionPreviewWidget.render(bubbleEl, agentResponse.actionProposals, this.actionExecutor);
