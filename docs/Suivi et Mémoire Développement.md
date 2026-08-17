@@ -219,14 +219,15 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
      - Menu déroulant `<select>` dynamique dans les réglages du plugin avec bouton `🔄 Détecter via API` et saisie personnalisée.
      - Prise en charge automatique de **tous** les modèles actuels et futurs (dont `gemini-3.5-flash`, `gemini-3.5-pro`, `gemini-2.5-flash`, `gpt-4o`, `o3-mini`, etc.).
   8. **Widgets de Tâches Interactifs & Remplacement In-Place dans le Message (`TaskCardWidget`)** :
-     - **Intégration In-Place au cœur du flux Markdown** : Les éléments de liste (`<li>`) de tâches sont directement transformés et remplacés à leur position exacte dans le texte (sous les sous-titres, catégories ou dates où l'agent les cite) au lieu d'être relégués en bas du message.
+     - **Intégration In-Place au cœur du flux Markdown** : Les éléments de liste (`<li>`) et paragraphes (`<p>`) de tâches sont directement transformés et remplacés à leur position exacte dans le texte au lieu d'être relégués en bas du message.
+     - **Résolution des Tâches Sautées (Matching Flou / Token Similarity)** : Algorithme de token matching résilient (`isTaskMatch`) éliminant les échecs de correspondance lorsque le LLM reformule légèrement le titre de la tâche (ex: omission d'un mot de liaison ou variations de syntaxe).
      - **Cochage & Récompenses réelles** : Cocher la case met à jour la note dans le coffre (`app.vault.process`) et crédite instantanément les pièces 🪙 dans le profil de gamification.
      - **Édition Inline Complète** : Clic direct sur n'importe quel badge pour modifier l'échéance 📅, l'énergie ⚡ (1-10), le quadrant de matrice `#Q1/#Q4`, la priorité ou le montant de pièces avec répercussion immédiate dans la note.
      - Boutons d'action instantanés : `[ 🚀 Commencer ]`, `[ ✅ Terminer ]`, `[ ⏩ Reporter à demain ]` et `[ 🔗 Ouvrir la note à la ligne exacte ]`.
   9. **Cadrage du Prompt Agentique (Consultation vs Modification)** :
      - L'agent ne propose plus de modifications agressives lors des simples questions de planning ou d'information du jour.
      - Les propositions d'écriture (`propose_create_task`, `propose_update_task`) sont réservées aux demandes explicites d'actions ou comptes-rendus de réunion.
-  10. **Audit de Conformité & Tests** : **38/38 tests unitaires passés avec succès à 100% (8 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
+  10. **Audit de Conformité & Tests** : **41/41 tests unitaires passés avec succès à 100% (9 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
 - **Statut** : Validée.
 
 ### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub

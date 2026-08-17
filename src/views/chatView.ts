@@ -456,6 +456,42 @@ export class ChatView extends ItemView {
 		return bubbleEl;
 	}
 
+	private isTaskMatch(text: string, vaultTitle: string): boolean {
+		const stopWords = new Set([
+			'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'a', 'à', 'pour', 'dans', 'en', 'par',
+			'sur', 'et', 'ou', 'ce', 'cette', 'ces', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son',
+			'sa', 'ses', 'the', 'of', 'in', 'to', 'for', 'with', 'on', 'at', 'from', 'by', 'about'
+		]);
+
+		const clean = (str: string) =>
+			str
+				.toLowerCase()
+				.replace(/\[\[([^\]]+)\]\]/g, '$1')
+				.replace(/#[\w/_-]+/g, '')
+				.replace(/📅[^\s]+|⚡[^\s]+|\(énergie\s*:[^)]+\)/gi, '')
+				.replace(/[^\p{L}\p{N}]+/gu, ' ')
+				.trim();
+
+		const cleanText = clean(text);
+		const cleanVault = clean(vaultTitle);
+
+		if (!cleanText || !cleanVault) return false;
+		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
+
+		const getWords = (s: string) =>
+			s.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
+
+		const wordsA = getWords(cleanText);
+		const wordsB = getWords(cleanVault);
+
+		if (wordsA.length === 0 || wordsB.length === 0) return false;
+
+		const common = wordsA.filter(w => wordsB.includes(w));
+		const score = common.length / Math.min(wordsA.length, wordsB.length);
+
+		return score >= 0.5 || common.length >= 2;
+	}
+
 	private async upgradeTaskElementsInPlace(
 		textContentEl: HTMLElement,
 		content: string,
@@ -472,44 +508,54 @@ export class ChatView extends ItemView {
 			}
 		}
 
-		// 2. Recherche tous les <li> rendus par MarkdownRenderer
-		const allListItems = Array.from(textContentEl.querySelectorAll('li'));
+		// 2. Recherche tous les <li> et <p> candidats
+		const candidateElements = Array.from(textContentEl.querySelectorAll('li, p'));
 		let upgradedCount = 0;
+		const usedTaskIds = new Set<string>();
 
-		allListItems.forEach(li => {
-			const liText = li.textContent || '';
-			const cleanLiText = liText.toLowerCase().replace(/\[\[|\]\]/g, '').replace(/^[xX\s\-*\d./]+/, '').trim();
-			if (!cleanLiText) return;
+		candidateElements.forEach(el => {
+			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card')) return;
 
-			// Recherche de correspondance avec une tâche du coffre
+			const text = el.textContent || '';
+			if (!text.trim()) return;
+
+			// Recherche par similarité floue avec les tâches du coffre
 			const matched = vaultTasks.find(vt => {
-				const vtClean = vt.title.toLowerCase().replace(/\[\[|\]\]/g, '').trim();
-				return cleanLiText.includes(vtClean) || vtClean.includes(cleanLiText);
+				const taskId = `${vt.filePath}:${vt.lineNumber}`;
+				if (usedTaskIds.has(taskId)) return false;
+				return this.isTaskMatch(text, vt.title);
 			});
 
 			if (matched) {
+				const taskId = `${matched.filePath}:${matched.lineNumber}`;
+				usedTaskIds.add(taskId);
+
 				const wrapper = document.createElement('div');
 				wrapper.className = 'sbm-inline-task-wrapper';
 				TaskCardWidget.render(wrapper, matched, this.plugin, () => {
 					this.renderFullMessages();
 				});
-				li.replaceWith(wrapper);
+				el.replaceWith(wrapper);
 				upgradedCount++;
-			} else if (/^\[[ xX/]\]/.test(liText.trim()) || li.classList.contains('task-list-item')) {
-				const parsed = TaskParser.parseLine(`- ${liText}`, 'Coffre', 1, this.plugin.settings);
+			} else if (
+				/^\[[ xX/]\]/.test(text.trim()) ||
+				el.classList.contains('task-list-item') ||
+				(text.includes('📅') && (text.includes('⚡') || text.includes('#tm/')))
+			) {
+				const parsed = TaskParser.parseLine(`- ${text.replace(/^[-*0-9.]+\s*/, '')}`, 'Coffre', 1, this.plugin.settings);
 				if (parsed) {
 					const wrapper = document.createElement('div');
 					wrapper.className = 'sbm-inline-task-wrapper';
 					TaskCardWidget.render(wrapper, parsed, this.plugin, () => {
 						this.renderFullMessages();
 					});
-					li.replaceWith(wrapper);
+					el.replaceWith(wrapper);
 					upgradedCount++;
 				}
 			}
 		});
 
-		// 3. Fallback : Si des tâches spécifiques ont été trouvées mais qu'aucune liste <li> n'a été matchée
+		// 3. Fallback : Si des tâches spécifiques ont été trouvées mais qu'aucune n'a été matchée
 		if (upgradedCount === 0 && attachedTasks && attachedTasks.length > 0) {
 			const tasksContainer = textContentEl.createDiv({ cls: 'sbm-chat-tasks-container' });
 			attachedTasks.forEach(task => {
