@@ -145,18 +145,9 @@ export class ChatView extends ItemView {
 
 		const inputLeftActions = inputBottomBar.createEl('div', { cls: 'sbm-input-left-actions' });
 
-		const plusBtn = inputLeftActions.createEl('button', { cls: 'sbm-input-action-btn' });
-		setIcon(plusBtn, 'plus');
-		plusBtn.title = 'Ajouter un fichier ou dossier au contexte (@)';
-		plusBtn.addEventListener('click', () => {
-			new ContextPickerModal(this.app, (item) => {
-				this.addContextItem(item);
-			}).open();
-		});
-
 		const currentModelTag = inputLeftActions.createEl('span', {
 			cls: 'sbm-input-model-tag',
-			text: this.plugin.settings.llmModel || this.plugin.settings.llmProvider
+			text: `⚡ ${this.plugin.settings.llmModel || this.plugin.settings.llmProvider}`
 		});
 		currentModelTag.title = 'Modèle configuré dans les réglages';
 
