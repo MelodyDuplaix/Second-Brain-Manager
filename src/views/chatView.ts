@@ -4,6 +4,7 @@ import { AgentOrchestrator } from '../services/agentOrchestrator';
 import { ActionExecutor } from '../services/actionExecutor';
 import { ActionPreviewWidget } from './actionPreviewWidget';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
+import { ModelPickerModal } from '../modals/modelPickerModal';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_CHAT = 'sbm-chat-view';
@@ -78,11 +79,11 @@ export class ChatView extends ItemView {
 		
 		const titleLeft = titleRow.createEl('div', { cls: 'sbm-chat-title-left' });
 		titleLeft.createEl('h2', { text: 'Assistant IA' });
-		const modelBadge = titleLeft.createEl('span', {
+		const modelBadge = titleLeft.createEl('button', {
 			cls: 'sbm-header-model-badge',
 			text: this.plugin.settings.llmModel || 'Modèle IA'
 		});
-		modelBadge.title = `Fournisseur : ${this.plugin.settings.llmProvider}`;
+		modelBadge.title = `Fournisseur : ${this.plugin.settings.llmProvider} (Cliquer pour changer)`;
 
 		const clearBtn = titleRow.createEl('button', { cls: 'sbm-chat-clear-btn' });
 		setIcon(clearBtn, 'trash-2');
@@ -145,11 +146,22 @@ export class ChatView extends ItemView {
 
 		const inputLeftActions = inputBottomBar.createEl('div', { cls: 'sbm-input-left-actions' });
 
-		const currentModelTag = inputLeftActions.createEl('span', {
-			cls: 'sbm-input-model-tag',
-			text: `⚡ ${this.plugin.settings.llmModel || this.plugin.settings.llmProvider}`
+		const currentModelBtn = inputLeftActions.createEl('button', {
+			cls: 'sbm-input-model-btn',
+			text: `⚡ ${this.plugin.settings.llmModel || this.plugin.settings.llmProvider} ▾`
 		});
-		currentModelTag.title = 'Modèle configuré dans les réglages';
+		currentModelBtn.title = 'Cliquer pour changer de modèle ou de fournisseur IA';
+
+		const openModelModal = () => {
+			new ModelPickerModal(this.app, this.plugin, (selected) => {
+				currentModelBtn.setText(`⚡ ${selected.name} ▾`);
+				modelBadge.setText(selected.name);
+				modelBadge.title = `Fournisseur : ${selected.providerName} (Cliquer pour changer)`;
+			}).open();
+		};
+
+		currentModelBtn.addEventListener('click', openModelModal);
+		modelBadge.addEventListener('click', openModelModal);
 
 		this.sendBtnEl = inputBottomBar.createEl('button', {
 			cls: 'sbm-chat-send-btn mod-cta'

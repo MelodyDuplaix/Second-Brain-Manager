@@ -214,8 +214,9 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   4. **Édition de Message In-Place & Régénération d'Arborescence** : Cliquer sur le crayon ✏️ permet d'éditer directement le message dans la bulle avec mise à jour et régénération de la suite de l'historique.
   5. **Suppression Universelle de Messages (Utilisateur & Assistant)** : Bouton poubelle 🗑️ fonctionnel sur chaque message.
   6. **Cadre de Saisie Intégré & Fluide (Copilot Style)** : Suppression de la double bordure pour une carte unique épurée (`sbm-chat-input-card`), avec barre de contexte `@ Add context`, détection de note active, champ transparent et barre d'outils inférieure.
-  7. **Correction de la Superposition Horodatage / Actions** : Ajustement du `min-width: 140px` sur les bulles pour garantir un espacement parfait même sur les messages d'un seul mot.
-  8. **Audit de Conformité & Tests** : **36/36 tests unitaires passés avec succès à 100%**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
+  7. **Sélecteur Rapide de Modèle / Fournisseur IA (`ModelPickerModal`)** : Possibilité de cliquer sur le badge de modèle (en bas à gauche ou dans l'en-tête) pour changer instantanément de modèle ou de fournisseur IA (Gemini, OpenAI, Ollama, LM Studio) avec persistance automatique.
+  8. **Correction de la Superposition Horodatage / Actions** : Ajustement du `min-width: 140px` sur les bulles pour garantir un espacement parfait même sur les messages d'un seul mot.
+  9. **Audit de Conformité & Tests** : **36/36 tests unitaires passés avec succès à 100%**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
 - **Statut** : Validée.
 
 ### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub

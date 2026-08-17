@@ -28,6 +28,24 @@ export class Modal {
 	close() {}
 }
 
+export class MenuItem {
+	setTitle(_t: string) { return this; }
+	setIcon(_i: string) { return this; }
+	setChecked(_c: boolean) { return this; }
+	onClick(_fn: () => void) { return this; }
+}
+
+export class Menu {
+	addItem(cb: (item: MenuItem) => void) {
+		const item = new MenuItem();
+		cb(item);
+		return this;
+	}
+	addSeparator() { return this; }
+	showAtMouseEvent(_e: MouseEvent) { return this; }
+	showAtPosition(_pos: { x: number; y: number }) { return this; }
+}
+
 export class FuzzySuggestModal<T = unknown> extends Modal {
 	_type?: T;
 	constructor(public app: unknown) {
