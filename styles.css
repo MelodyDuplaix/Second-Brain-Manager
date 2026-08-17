@@ -1445,6 +1445,15 @@ textarea.sbm-chat-textarea:focus {
 	border: 1px solid var(--background-modifier-border);
 }
 
+.sbm-model-live-badge {
+	font-size: 0.72em;
+	padding: 1px 6px;
+	border-radius: 8px;
+	background-color: rgba(var(--interactive-accent-rgb), 0.12);
+	color: var(--text-accent);
+	font-weight: 500;
+}
+
 .sbm-model-active-badge {
 	font-size: 0.75em;
 	font-weight: 600;

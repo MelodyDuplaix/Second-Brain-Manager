@@ -1,112 +1,58 @@
 import { App, FuzzySuggestModal, Notice } from 'obsidian';
-import { LLMProvider } from '../models/llm';
+import { ModelDiscoveryService, ModelOption, FALLBACK_MODELS } from '../services/modelDiscoveryService';
 import SecondBrainPlugin from '../main';
-
-export interface ModelOption {
-	id: string;
-	name: string;
-	provider: LLMProvider;
-	desc: string;
-	providerName: string;
-}
-
-export const PRESET_MODELS: ModelOption[] = [
-	// Google Gemini
-	{
-		id: 'gemini-2.5-flash',
-		name: 'gemini-2.5-flash',
-		provider: 'gemini',
-		providerName: 'Google Gemini',
-		desc: 'Recommandé : Ultra-rapide, multimodal et hautement intelligent'
-	},
-	{
-		id: 'gemini-2.5-pro',
-		name: 'gemini-2.5-pro',
-		provider: 'gemini',
-		providerName: 'Google Gemini',
-		desc: 'Raisonnement complexe et analyse approfondie'
-	},
-	{
-		id: 'gemini-1.5-flash',
-		name: 'gemini-1.5-flash',
-		provider: 'gemini',
-		providerName: 'Google Gemini',
-		desc: 'Modèle léger et très réactif'
-	},
-	// OpenAI
-	{
-		id: 'gpt-4o',
-		name: 'gpt-4o',
-		provider: 'openai',
-		providerName: 'OpenAI',
-		desc: 'Modèle phare multimodal d\'OpenAI'
-	},
-	{
-		id: 'gpt-4o-mini',
-		name: 'gpt-4o-mini',
-		provider: 'openai',
-		providerName: 'OpenAI',
-		desc: 'Rapide, économique et performant'
-	},
-	{
-		id: 'o3-mini',
-		name: 'o3-mini',
-		provider: 'openai',
-		providerName: 'OpenAI',
-		desc: 'Raisonnement logique et décomposition'
-	},
-	// Ollama (Local)
-	{
-		id: 'llama3.2',
-		name: 'llama3.2',
-		provider: 'ollama',
-		providerName: 'Ollama (Local)',
-		desc: 'Modèle local Meta optimisé et rapide'
-	},
-	{
-		id: 'qwen2.5',
-		name: 'qwen2.5',
-		provider: 'ollama',
-		providerName: 'Ollama (Local)',
-		desc: 'Modèle multilingue et précis en code/markdown'
-	},
-	{
-		id: 'mistral',
-		name: 'mistral',
-		provider: 'ollama',
-		providerName: 'Ollama (Local)',
-		desc: 'Modèle 7B français/anglais équilibré'
-	},
-	{
-		id: 'deepseek-r1:8b',
-		name: 'deepseek-r1:8b',
-		provider: 'ollama',
-		providerName: 'Ollama (Local)',
-		desc: 'Raisonnement pas-à-pas local'
-	},
-	// LM Studio (Local)
-	{
-		id: 'local-model',
-		name: 'local-model',
-		provider: 'lmstudio',
-		providerName: 'LM Studio (Local)',
-		desc: 'Modèle actuellement chargé dans LM Studio'
-	}
-];
 
 export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 	private plugin: SecondBrainPlugin;
 	private onModelSelected: (model: ModelOption) => void;
+	private loadedModels: ModelOption[] = [];
 
 	constructor(app: App, plugin: SecondBrainPlugin, onModelSelected: (model: ModelOption) => void) {
 		super(app);
 		this.plugin = plugin;
 		this.onModelSelected = onModelSelected;
-		this.setPlaceholder('Choisir un modèle IA (Gemini, OpenAI, Ollama, LM Studio)...');
+		this.loadedModels = FALLBACK_MODELS;
+		this.setPlaceholder('Rechercher ou saisir un modèle IA (ex: gemini-3.5-flash, gpt-4o, llama3.2)...');
+	}
+
+	async onOpen(): Promise<void> {
+		super.onOpen();
+
+		// Chargement dynamique des modèles en direct depuis l'API du fournisseur actif
+		try {
+			const apiKey = await this.plugin.getSecretApiKey(this.plugin.settings.llmProvider);
+			const liveModels = await ModelDiscoveryService.fetchLiveModels(
+				this.plugin.settings.llmProvider,
+				apiKey,
+				this.plugin.settings.llmEndpoint
+			);
+
+			if (liveModels.length > 0) {
+				// Combine les modèles du fournisseur actif avec les modèles des autres fournisseurs
+				const otherProvidersModels = FALLBACK_MODELS.filter(m => m.provider !== this.plugin.settings.llmProvider);
+				this.loadedModels = [...liveModels, ...otherProvidersModels];
+			}
+		} catch {
+			this.loadedModels = FALLBACK_MODELS;
+		}
 	}
 
 	getItems(): ModelOption[] {
-		return PRESET_MODELS;
+		const currentQuery = this.inputEl.value.trim();
+
+		// Si l'utilisateur tape un nom qui n'est pas dans la liste, on propose de l'utiliser comme modèle personnalisé
+		if (currentQuery && !this.loadedModels.some(m => m.name.toLowerCase() === currentQuery.toLowerCase())) {
+			const customOption: ModelOption = {
+				id: currentQuery,
+				name: currentQuery,
+				provider: this.plugin.settings.llmProvider,
+				providerName: `${this.plugin.settings.llmProvider.toUpperCase()} (Personnalisé)`,
+				desc: `Utiliser "${currentQuery}" comme nom de modèle personnalisé`
+			};
+			return [customOption, ...this.loadedModels];
+		}
+
+		return this.loadedModels;
 	}
 
 	getItemText(item: ModelOption): string {
@@ -122,6 +68,10 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 		titleRow.createSpan({ text: item.item.name, cls: 'sbm-model-name' });
 		titleRow.createSpan({ text: item.item.providerName, cls: 'sbm-model-provider-badge' });
 
+		if (item.item.isLive) {
+			titleRow.createSpan({ text: '📡 API Live', cls: 'sbm-model-live-badge' });
+		}
+
 		if (isCurrent) {
 			titleRow.createSpan({ text: '✓ Actif', cls: 'sbm-model-active-badge' });
 		}
@@ -133,7 +83,6 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 		this.plugin.settings.llmProvider = item.provider;
 		this.plugin.settings.llmModel = item.name;
 
-		// Si c'est Ollama ou LM Studio et que l'endpoint n'est pas configuré, définir le port par défaut
 		if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
 			this.plugin.settings.llmEndpoint = 'http://localhost:11434';
 		} else if (item.provider === 'lmstudio' && !this.plugin.settings.llmEndpoint) {
@@ -141,7 +90,7 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 		}
 
 		await this.plugin.saveSettings();
-		new Notice(`Modèle actif : ${item.name} (${item.providerName})`);
+		new Notice(`Modèle sélectionné : ${item.name} (${item.providerName})`);
 		this.onModelSelected(item);
 	}
 }

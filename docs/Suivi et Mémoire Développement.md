@@ -214,9 +214,12 @@ Pour répondre à l'intégralité des spécifications et ambitions du document [
   4. **Édition de Message In-Place & Régénération d'Arborescence** : Cliquer sur le crayon ✏️ permet d'éditer directement le message dans la bulle avec mise à jour et régénération de la suite de l'historique.
   5. **Suppression Universelle de Messages (Utilisateur & Assistant)** : Bouton poubelle 🗑️ fonctionnel sur chaque message.
   6. **Cadre de Saisie Intégré & Fluide (Copilot Style)** : Suppression de la double bordure pour une carte unique épurée (`sbm-chat-input-card`), avec barre de contexte `@ Add context`, détection de note active, champ transparent et barre d'outils inférieure.
-  7. **Sélecteur Rapide de Modèle / Fournisseur IA (`ModelPickerModal`)** : Possibilité de cliquer sur le badge de modèle (en bas à gauche ou dans l'en-tête) pour changer instantanément de modèle ou de fournisseur IA (Gemini, OpenAI, Ollama, LM Studio) avec persistance automatique.
+  7. **Découverte Dynamique & Auto-Sélection de Modèles (`ModelDiscoveryService`)** :
+     - Interrogation en temps réel des APIs de modèles (Google Gemini API `/v1beta/models`, OpenAI `/v1/models`, Ollama `/api/tags`, LM Studio `/v1/models`).
+     - Prise en charge automatique de **tous** les modèles actuels et futurs (dont `gemini-3.5-flash`, `gemini-3.5-pro`, `gemini-2.5-flash`, `gpt-4o`, `o3-mini`, etc.).
+     - Saisie libre d'un nom de modèle personnalisé à la volée directement dans le sélecteur.
   8. **Correction de la Superposition Horodatage / Actions** : Ajustement du `min-width: 140px` sur les bulles pour garantir un espacement parfait même sur les messages d'un seul mot.
-  9. **Audit de Conformité & Tests** : **36/36 tests unitaires passés avec succès à 100%**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
+  9. **Audit de Conformité & Tests** : **38/38 tests unitaires passés avec succès à 100% (8 suites de tests)**, 0 erreur et 0 avertissement ESLint, respect strict des guidelines Obsidian.
 - **Statut** : Validée.
 
 ### 📅 Prochaine Étape Prioritaire : Gestion des Branches Git, Workflow CI/CD & Releases GitHub
