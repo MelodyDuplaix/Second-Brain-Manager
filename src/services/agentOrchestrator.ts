@@ -4,6 +4,7 @@ import { LLMService } from './llmService';
 import { VaultContextService } from './vaultContextService';
 import { ToolRegistry, ToolCallRequest } from './toolRegistry';
 import { ActionProposal } from '../models/actions';
+import { ObsidianTask } from '../models/task';
 import { SecondBrainSettings } from '../main';
 
 export interface AgentStepEvent {
@@ -16,6 +17,7 @@ export interface AgentResponse {
 	text: string;
 	actionProposals: ActionProposal[];
 	executedTools: string[];
+	relevantTasks?: ObsidianTask[];
 }
 
 export class AgentOrchestrator {
@@ -115,6 +117,7 @@ ${toolDocs}`;
 		];
 
 		const collectedProposals: ActionProposal[] = [];
+		const collectedTasks: ObsidianTask[] = [];
 		const executedTools: string[] = [];
 		const MAX_TURNS = 3;
 		let currentTurn = 0;
@@ -173,6 +176,19 @@ ${toolDocs}`;
 					toolName: call.name
 				});
 
+				if (call.name === 'search_tasks') {
+					try {
+						const tasks = await this.vaultContext.searchTasks(call.arguments || {});
+						tasks.forEach(t => {
+							if (!collectedTasks.some(ct => ct.filePath === t.filePath && ct.lineNumber === t.lineNumber)) {
+								collectedTasks.push(t);
+							}
+						});
+					} catch {
+						// Ignorer
+					}
+				}
+
 				const res = await this.toolRegistry.executeTool(call);
 				readResults.push(`Résultat de ${call.name}(${JSON.stringify(call.arguments)}) :\n${res.output}`);
 			}
@@ -187,7 +203,8 @@ ${toolDocs}`;
 		return {
 			text: finalAnswerText,
 			actionProposals: collectedProposals,
-			executedTools
+			executedTools,
+			relevantTasks: collectedTasks
 		};
 	}
 

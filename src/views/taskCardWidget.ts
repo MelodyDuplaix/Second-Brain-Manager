@@ -1,10 +1,13 @@
 import { App, TFile, Notice, normalizePath, setIcon } from 'obsidian';
-import { ObsidianTask } from '../models/task';
+import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
-import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { MatrixAdapterFactory, MatrixQuadrant } from '../adapters/matrixAdapter';
+import { InlineMetaPopover } from './inlineMetaPopover';
 import SecondBrainPlugin from '../main';
 
 export class TaskCardWidget {
+	private static popover = new InlineMetaPopover();
+
 	public static render(
 		containerEl: HTMLElement,
 		task: ObsidianTask,
@@ -37,46 +40,193 @@ export class TaskCardWidget {
 			await TaskCardWidget.openTaskLocation(plugin.app, task);
 		});
 
-		// 2. Ligne des badges (Échéance, Énergie, Matrice, Pièces)
+		// 2. Ligne des badges modifiables (Échéance, Énergie, Priorité, Matrice, Pièces)
 		const badgesRow = cardEl.createDiv({ cls: 'sbm-chat-task-badges' });
 
-		// Échéance
+		// Échéance modifiable
 		const today = new Date().toISOString().split('T')[0];
 		const isOverdue = task.dueDate && task.dueDate < today && !task.completed;
-		const dueText = task.dueDate ? `📅 ${task.dueDate}${isOverdue ? ' (En retard)' : ''}` : '📅 Aucune date';
+		const dueText = task.dueDate ? `📅 ${task.dueDate}${isOverdue ? ' (En retard)' : ''}` : '+ 📅 Date';
 		const dueBadge = badgesRow.createSpan({
-			cls: `sbm-meta-tag due ${isOverdue ? 'is-overdue' : ''}`,
+			cls: `sbm-meta-tag due sbm-editable-tag ${isOverdue ? 'is-overdue' : ''}`,
 			text: dueText
 		});
-
-		// Énergie
-		if (task.energy) {
-			badgesRow.createSpan({
-				cls: 'sbm-meta-tag energy',
-				text: `⚡ ${task.energy}/10`
+		dueBadge.title = 'Cliquer pour modifier la date d\'échéance';
+		dueBadge.addEventListener('click', (e) => {
+			const current = task.dueDate || today;
+			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {
+				title: 'Échéance',
+				type: 'date',
+				initialValue: current,
+				onSubmit: async (val) => {
+					const newDate = val.trim() || null;
+					await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+						TaskMutator.setDueDate(line, newDate, plugin.settings)
+					);
+					task.dueDate = newDate || undefined;
+					dueBadge.setText(newDate ? `📅 ${newDate}` : '+ 📅 Date');
+					dueBadge.toggleClass('is-overdue', Boolean(newDate && newDate < today && !task.completed));
+					newNotice(`Échéance mise à jour : ${task.title}`);
+					if (onTaskUpdated) onTaskUpdated();
+				}
 			});
-		}
+		});
 
-		// Quadrant Matrice
+		// Énergie modifiable
+		const energyText = task.energy ? `⚡ ${task.energy}/10` : '+ ⚡ Énergie';
+		const energyBadge = badgesRow.createSpan({
+			cls: 'sbm-meta-tag energy sbm-editable-tag',
+			text: energyText
+		});
+		energyBadge.title = 'Cliquer pour modifier le niveau d\'énergie requis (1-10)';
+		energyBadge.addEventListener('click', (e) => {
+			const current = (task.energy || 5).toString();
+			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {
+				title: 'Niveau d\'énergie (1-10)',
+				type: 'number',
+				initialValue: current,
+				min: 1,
+				max: 10,
+				onSubmit: async (val) => {
+					const parsed = parseInt(val, 10);
+					if (isNaN(parsed)) return;
+					await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+						TaskMutator.setControlledTag(line, 'energie', parsed, plugin.settings)
+					);
+					task.energy = parsed;
+					energyBadge.setText(`⚡ ${parsed}/10`);
+					newNotice(`Énergie mise à jour : ${parsed}/10`);
+					if (onTaskUpdated) onTaskUpdated();
+				}
+			});
+		});
+
+		// Quadrant Matrice modifiable
 		const matrixAdapter = MatrixAdapterFactory.createAdapter(plugin.settings.matrixProvider, plugin.settings.customMatrixMapping);
 		const currentQuad = matrixAdapter.getQuadrant(task);
-		if (currentQuad) {
-			badgesRow.createSpan({
-				cls: 'sbm-meta-tag matrix',
-				text: `#${currentQuad.toUpperCase()}`
-			});
-		}
+		const matrixLabel = currentQuad ? `#${currentQuad.toUpperCase()}` : '+ Quadrant';
+		const matrixBadge = badgesRow.createSpan({
+			cls: 'sbm-meta-tag matrix sbm-editable-tag',
+			text: task.matrixTag || matrixLabel
+		});
+		matrixBadge.title = 'Cliquer pour changer le quadrant de matrice Eisenhower';
+		matrixBadge.addEventListener('click', async () => {
+			const order: MatrixQuadrant[] = ['q1', 'q2', 'q3', 'q4'];
+			const nextQuad = order[(order.indexOf(currentQuad || 'q4') + 1) % order.length];
+			const nextTag = matrixAdapter.formatTag(nextQuad);
 
-		// Pièces
-		if (task.pieces) {
-			badgesRow.createSpan({
-				cls: 'sbm-meta-tag pieces',
-				text: `🪙 ${task.pieces}`
+			await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+				matrixAdapter.setQuadrant(line, nextQuad)
+			);
+			task.matrixTag = nextTag;
+			matrixBadge.setText(nextTag);
+			newNotice(`Quadrant mis à jour : ${nextTag}`);
+			if (onTaskUpdated) onTaskUpdated();
+		});
+
+		// Pièces modifiables
+		const piecesText = task.pieces ? `🪙 ${task.pieces}` : '+ 🪙 Pièces';
+		const piecesBadge = badgesRow.createSpan({
+			cls: 'sbm-meta-tag pieces sbm-editable-tag',
+			text: piecesText
+		});
+		piecesBadge.title = 'Cliquer pour modifier la récompense en pièces';
+		piecesBadge.addEventListener('click', (e) => {
+			const current = (task.pieces || 1).toString();
+			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {
+				title: 'Montant en pièces',
+				type: 'number',
+				initialValue: current,
+				min: 1,
+				max: 100,
+				onSubmit: async (val) => {
+					const parsed = parseInt(val, 10);
+					if (isNaN(parsed)) return;
+					await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+						TaskMutator.setControlledTag(line, 'pieces', parsed, plugin.settings)
+					);
+					task.pieces = parsed;
+					piecesBadge.setText(`🪙 ${parsed}`);
+					newNotice(`Récompense mise à jour : 🪙 ${parsed}`);
+					if (onTaskUpdated) onTaskUpdated();
+				}
 			});
-		}
+		});
+
+		// Priorité modifiable
+		const priorityLabelMap: Record<string, string> = {
+			highest: '🔺 Highest',
+			high: '⏫ High',
+			medium: '🔼 Medium',
+			normal: '⚪ Normal',
+			low: '🔽 Low',
+			lowest: '⏬ Lowest',
+		};
+		const priorityText = task.prioritySignifier || task.priorityTag || (task.priority ? priorityLabelMap[task.priority] : '+ Priorité');
+		const priorityBadge = badgesRow.createSpan({
+			cls: 'sbm-meta-tag priority sbm-editable-tag',
+			text: priorityText
+		});
+		priorityBadge.title = 'Cliquer pour modifier la priorité';
+		priorityBadge.addEventListener('click', (e) => {
+			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {
+				title: 'Priorité',
+				type: 'priority-select',
+				initialValue: task.priority || 'normal',
+				onSubmit: async (val) => {
+					await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+						TaskMutator.setPrioritySignifier(line, val as TaskPriority)
+					);
+					task.priority = val as TaskPriority;
+					priorityBadge.setText(priorityLabelMap[val] || val);
+					newNotice(`Priorité mise à jour : ${val}`);
+					if (onTaskUpdated) onTaskUpdated();
+				}
+			});
+		});
 
 		// 3. Barre d'actions rapides
 		const actionsRow = cardEl.createDiv({ cls: 'sbm-chat-task-actions' });
+
+		// Bouton Commencer [/]
+		const startBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn start', text: '🚀 Commencer' });
+		startBtn.title = 'Passer la tâche en cours [/]';
+		startBtn.addEventListener('click', async () => {
+			await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+				TaskMutator.setStatus(line, 'in_progress', plugin.settings)
+			);
+			task.status = 'in_progress';
+			newNotice(`Tâche démarrée : ${task.title}`);
+			if (onTaskUpdated) onTaskUpdated();
+		});
+
+		// Bouton Terminer & Réclamer
+		const completeBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn complete', text: '✅ Terminer' });
+		completeBtn.title = 'Terminer la tâche et réclamer les pièces';
+		completeBtn.addEventListener('click', async () => {
+			await TaskCardWidget.setTaskCompleted(plugin, task, true);
+			checkbox.checked = true;
+			cardEl.addClass('is-completed');
+			if (onTaskUpdated) onTaskUpdated();
+		});
+
+		// Bouton Reporter à demain (+1 jour)
+		const deferBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn defer', text: '⏩ Reporter' });
+		deferBtn.title = 'Reporter l\'échéance à demain';
+		deferBtn.addEventListener('click', async () => {
+			const tomorrow = new Date();
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+			await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
+				TaskMutator.setDueDate(line, tomorrowStr, plugin.settings)
+			);
+			task.dueDate = tomorrowStr;
+			dueBadge.setText(`📅 ${tomorrowStr}`);
+			dueBadge.removeClass('is-overdue');
+			newNotice(`Tâche reportée au ${tomorrowStr} : ${task.title}`);
+			if (onTaskUpdated) onTaskUpdated();
+		});
 
 		// Bouton Ouvrir
 		const openBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn open' });
@@ -86,29 +236,11 @@ export class TaskCardWidget {
 			await TaskCardWidget.openTaskLocation(plugin.app, task);
 		});
 
-		// Bouton Reporter à demain (+1 jour)
-		const deferBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn defer', text: '⏩ Reporter à demain' });
-		deferBtn.title = 'Reporter l\'échéance à demain';
-		deferBtn.addEventListener('click', async () => {
-			const tomorrow = new Date();
-			tomorrow.setDate(tomorrow.getDate() + 1);
-			const tomorrowStr = tomorrow.toISOString().split('T')[0];
-
-			await TaskCardWidget.updateTaskDate(plugin, task, tomorrowStr);
-			dueBadge.setText(`📅 ${tomorrowStr}`);
-			dueBadge.removeClass('is-overdue');
-			new Notice(`Tâche reportée au ${tomorrowStr} : ${task.title}`);
-			if (onTaskUpdated) onTaskUpdated();
-		});
-
 		// Interaction avec la checkbox pour terminer la tâche
 		checkbox.addEventListener('change', async () => {
 			const isDone = checkbox.checked;
 			await TaskCardWidget.setTaskCompleted(plugin, task, isDone);
 			cardEl.toggleClass('is-completed', isDone);
-			if (isDone) {
-				new Notice(`Tâche accomplie : ${task.title}`);
-			}
 			if (onTaskUpdated) onTaskUpdated();
 		});
 
@@ -128,7 +260,11 @@ export class TaskCardWidget {
 		}
 	}
 
-	public static async updateTaskDate(plugin: SecondBrainPlugin, task: ObsidianTask, newDate: string): Promise<void> {
+	public static async mutateTaskLine(
+		plugin: SecondBrainPlugin,
+		task: ObsidianTask,
+		mutator: (line: string) => string
+	): Promise<void> {
 		const normalized = normalizePath(task.filePath);
 		const file = plugin.app.vault.getFileByPath(normalized) || plugin.app.vault.getAbstractFileByPath(normalized);
 		if (file instanceof TFile) {
@@ -136,11 +272,10 @@ export class TaskCardWidget {
 				const lines = content.split('\n');
 				const idx = task.lineNumber - 1;
 				if (lines[idx] !== undefined) {
-					lines[idx] = TaskMutator.setDueDate(lines[idx], newDate, plugin.settings);
+					lines[idx] = mutator(lines[idx]);
 				}
 				return lines.join('\n');
 			});
-			task.dueDate = newDate;
 		}
 	}
 
@@ -160,8 +295,15 @@ export class TaskCardWidget {
 			task.status = completed ? 'done' : 'todo';
 
 			if (completed) {
-				await plugin.gamificationService.claimTaskReward(task);
+				const earned = await plugin.gamificationService.claimTaskReward(task);
+				new Notice(`🎉 Tâche terminée ! +${earned} pièces gagnées (Total: ${plugin.gamificationService.getProfile().coins} 🪙)`);
+			} else {
+				new Notice(`Tâche réouverte : ${task.title}`);
 			}
 		}
 	}
+}
+
+function newNotice(msg: string): void {
+	new Notice(msg);
 }

@@ -1,9 +1,14 @@
-export type LLMProvider = 'gemini' | 'openai' | 'ollama' | 'lm-studio';
+import { ObsidianTask } from './task';
+import { ActionProposal } from './actions';
+
+export type LLMProvider = 'gemini' | 'openai' | 'ollama' | 'lmstudio' | 'lm-studio';
 
 export interface ChatMessage {
 	role: 'user' | 'assistant' | 'system';
 	content: string;
 	timestamp?: string;
+	tasks?: ObsidianTask[];
+	proposals?: ActionProposal[];
 }
 
 export interface LLMConfig {

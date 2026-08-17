@@ -382,7 +382,11 @@ export class ChatView extends ItemView {
 
 			// Affichage sous forme de widgets de tâches interactifs
 			if (msg.role === 'assistant') {
-				this.renderTasksInsideBubble(bubbleEl, msg.content);
+				this.renderTasksInsideBubble(bubbleEl, msg.content, msg.tasks);
+
+				if (msg.proposals && msg.proposals.length > 0) {
+					ActionPreviewWidget.render(bubbleEl, msg.proposals, this.actionExecutor);
+				}
 			}
 		}
 
@@ -452,7 +456,19 @@ export class ChatView extends ItemView {
 		return bubbleEl;
 	}
 
-	private async renderTasksInsideBubble(bubbleEl: HTMLElement, content: string): Promise<void> {
+	private async renderTasksInsideBubble(bubbleEl: HTMLElement, content: string, attachedTasks?: ObsidianTask[]): Promise<void> {
+		// 1. Si des tâches réelles du coffre sont attachées (via search_tasks), les afficher directement
+		if (attachedTasks && attachedTasks.length > 0) {
+			const tasksContainer = bubbleEl.createDiv({ cls: 'sbm-chat-tasks-container' });
+			attachedTasks.forEach(task => {
+				TaskCardWidget.render(tasksContainer, task, this.plugin, () => {
+					this.renderFullMessages();
+				});
+			});
+			return;
+		}
+
+		// 2. Sinon, détection dans le texte
 		const lines = content.split('\n');
 		const rawTaskLines: string[] = [];
 
@@ -481,10 +497,11 @@ export class ChatView extends ItemView {
 					return cleanVtTitle.includes(cleanParsedTitle) || cleanParsedTitle.includes(cleanVtTitle);
 				});
 
-				const taskToRender = matched ? matched : parsed;
-				TaskCardWidget.render(tasksContainer, taskToRender, this.plugin, () => {
-					// Callback optionnel sur modification
-				});
+				if (matched) {
+					TaskCardWidget.render(tasksContainer, matched, this.plugin, () => {
+						this.renderFullMessages();
+					});
+				}
 			});
 		} catch {
 			// En cas d'erreur de recherche, fallback silencieux
@@ -607,6 +624,16 @@ export class ChatView extends ItemView {
 				await MarkdownRenderer.render(this.app, cleanedText, textContentEl, '', this);
 				assistantMsg.content = cleanedText;
 			}
+
+			if (agentResponse.relevantTasks && agentResponse.relevantTasks.length > 0) {
+				assistantMsg.tasks = agentResponse.relevantTasks;
+			}
+			if (agentResponse.actionProposals.length > 0) {
+				assistantMsg.proposals = agentResponse.actionProposals;
+			}
+
+			// Rendu des widgets de tâches interactifs
+			await this.renderTasksInsideBubble(bubbleEl, agentResponse.text, assistantMsg.tasks);
 
 			if (agentResponse.actionProposals.length > 0) {
 				ActionPreviewWidget.render(bubbleEl, agentResponse.actionProposals, this.actionExecutor);
