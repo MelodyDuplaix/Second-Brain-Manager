@@ -28,34 +28,49 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
    - **`DashboardView` (`sbm-dashboard-view`)** :
      - Jauge d'énergie interactive (1 à 10) et bascule de mode (Économie vs Pleine Énergie).
      - 4 sections de triage : *Aujourd'hui & Urgences*, *Recommandées selon votre énergie*, *Non classées dans la matrice*, *Boîte de réception (Inbox)*.
-     - Barre de recherche en temps réel filtrant par titre, note ou tag.
      - Actions rapides : Démarrer (`🛫`), Terminer (`✅`), modification rapide de priorité par popover.
    - **`GamificationHistoryView` (`sbm-gamification-history-view`)** :
-     - Onglet *Historique des Gains* avec recherche et bouton de remboursement/annulation.
-     - Onglet *Statistiques Avancées* avec graphiques SVG natifs zéro-dépendance (Courbe d'évolution sur 14 jours, Donut des catégories avec pourcentages, Diagramme en barres quotidien).
-   - **`ChatView` (`sbm-chat-view`) — Expérience Copilot Fluide** :
-     - Dialogue avec l'IA en flux continu (streaming SSE / ReadableStream) multi-fournisseurs (Google Gemini, OpenAI, Ollama, LM Studio).
-     - **Boucle Agentique ReAct Autonome** : L'agent consulte le coffre via des outils de lecture transparents et synthétise sa réponse sans polluer le chat de JSON brut.
-     - **Découverte Automatique des Modèles (`ModelDiscoveryService`)** : Détection en temps réel des modèles API disponibles (`gemini-3.5-flash`, `gemini-3.5-pro`, `gpt-4o`, etc.) avec sélecteur direct au clic en bas à gauche de la carte de chat.
-     - **Widgets de Tâches In-Place (`TaskCardWidget`)** : Transformation directe des puces de tâches au cœur du texte Markdown avec liaison exacte à la note source.
-     - **Édition Inline & Cochage Réel** : Clic direct sur les badges pour modifier l'échéance 📅, l'énergie ⚡, le quadrant `#Q1/#Q4`, la priorité ou les pièces. Cocher la case met à jour la note et crédite instantanément les pièces 🪙.
-     - **Bouton `🚀 Commencer` / `⏳ En cours`** : Mutation instantanée du statut vers `- [/]` dans la note avec retour visuel actif.
-     - **Matching Flou Résilient (`isTaskMatch`)** : Token similarity évitant les tâches sautées lorsque le modèle reformule légèrement le titre.
+     - Onglet *Historique des Gains* avec recherche et remboursement/annulation.
+     - Onglet *Statistiques Avancées* avec graphiques SVG natifs (Courbe 14 jours, Donut des catégories, Barres quotidiennes).
+   - **`ChatView` (`sbm-chat-view`) — Expérience Copilot Fluide & Haute Performance** :
+     - Dialogue multi-fournisseurs : **Google Gemini**, **OpenAI ChatGPT**, **OpenRouter**, **Infomaniak AI Services (Souverain Suisse)**, **Ollama**, **LM Studio**.
+     - **Contournement CORS & Keep-Alive Persistant (`HttpStreamService`)** : Streaming natif Node.js `https` avec pool de connexions TLS réutilisées (gain ~150-300ms de TTFT) et TCP `setNoDelay(true)`. Fallback universel `requestUrl` sur mobile.
+     - **Boucle Agentique ReAct Autonome** : L'agent consulte le coffre via des outils transparents et synthétise sa réponse sans polluer le chat de JSON brut.
+     - **Détection Enrichie des Tâches** : Transformation in-place des tâches dans les listes (`<li>`), paragraphes (`<p>`), **blocs de code Markdown (`<pre><code>`)** et **tableaux Markdown (`<table>`)** en cartes interactives (`TaskCardWidget`).
+     - **Widgets de Tâches In-Place (`TaskCardWidget`)** : Checkbox de complétion avec crédit de pièces 🪙, modification en ligne de l'échéance 📅, énergie ⚡, priorité, matrice `#Q1/#Q4` et bouton `[ 🚀 Commencer / ⏳ En cours ]`.
+     - **Optimisation de Latence** : Fenêtre glissante des 8 derniers messages d'historique et plafonnement des notes volumineuses.
 
-4. **Paramètres Natifs & Secret Storage (`SettingsPageManager`)** :
-   - Architecture calquée sur le plugin officiel *Spaced Repetition* (Page principale `MainPage` + Sous-page `RewardsPage`).
-   - Gestion sécurisée des clés d'API via `app.secretStorage`.
-   - Menu déroulant `<select>` dynamique pour le choix du modèle IA avec bouton `🔄 Détecter via API`.
+4. **Paramètres Natifs & Gestionnaire Unifié de Secrets (`SecretsManagementModal`)** :
+   - Architecture modulaire (`SettingsPageManager` + `MainPage` + `RewardsPage`).
+   - Modal centralisée `SecretsManagementModal` pour lier, sécuriser et tester les clés Gemini, OpenAI, OpenRouter et Infomaniak.
+   - Auto-détection automatique du `product_id` Infomaniak (`GET /1/ai`) sans saisie manuelle.
 
 5. **Qualité & Tests Automatisés** :
-   - Suite de tests unitaires Vitest : **47/47 tests passés avec succès** (100% de réussite sur 9 suites de tests).
+   - Suite de tests unitaires Vitest : **59/59 tests passés avec succès** (100% de réussite sur 11 suites de tests).
    - Linting ESLint & Compilation ESBuild : **0 erreur, 0 avertissement**.
 
 ---
 
 ## 2. 📋 Feuille de Route Exhaustive : Ce qu'il reste à faire (Alignement 100% avec `Réflexion plugin.md`)
 
-Pour couvrir l'ensemble des fonctionnalités décrites dans le rapport de conception [`Réflexion plugin.md`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/docs/R%C3%A9flexion%20plugin.md), voici la feuille de route détaillée par phases et modules :
+### 🔥 Priorités Immédiates UI / UX & Robustesse LLM (Demande Utilisateur)
+
+1. **Épuration & Suppression des Redondances dans l'UI des Réglages (`MainPage.ts`)** :
+   - **Suppression des champs obsolètes** : Supprimer le champ de saisie isolé "Clé API / Secret" et le champ "Product ID Infomaniak" de la page principale des paramètres.
+   - **Point d'entrée unique & centralisé** : Toute la configuration des clés, tokens, product IDs et endpoints doit passer exclusivement par le bouton `🔑 Gérer les clés d'API et secrets` ouvrant la modal [`SecretsManagementModal`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/modals/secretsManagementModal.ts).
+   - **Clarté visuelle** : Afficher uniquement le fournisseur actif, son statut de connexion/secret lié, et les options globales indispensables.
+
+2. **Unification et Simplification de la Gestion des Modèles** :
+   - **Sélecteur unique & direct** : Harmoniser le sélecteur de modèle pour qu'il n'y ait pas de redondance ou d'ambiguïté entre les réglages généraux et le sélecteur dans le chat.
+   - **Sélection fluide** : Dans le chat, permettre de basculer de modèle via un menu épuré et synchronisé en temps réel avec les réglages du plugin.
+
+3. **Refonte Visuelle & Ergonomique de la Gestion des Erreurs dans le Chat** :
+   - **Différenciation visuelle immédiate** : Afficher les erreurs réseau/API dans une carte d'alerte stylisée (fond ambre/rouge translucide, bordure d'accent d'avertissement, icône ⚠️ explicite) pour ne jamais les confondre avec une réponse normale du LLM.
+   - **Sélection & Copie facile** : Rendre le texte de l'erreur 100% sélectionnable à la souris et ajouter un bouton direct `📋 Copier l'erreur` pour faciliter le diagnostic.
+   - **Actions correctives contextuelles** : Boutons d'action rapides intégrés dans la bulle d'erreur : `[ 🔄 Réessayer ]` et `[ 🔑 Gérer les clés d'API ]`.
+   - **Intégrité de l'historique** : Ne pas enregistrer les messages d'erreur comme des tours normaux d'assistant dans l'historique de conversation sauvegardé.
+
+---
 
 ### 🎯 Phase A : Workflows Dédiés (Briefing, Revue & Reprise)
 1. **Workflow du Briefing du Matin (`MorningBriefingWorkflow` / Commande & Modal/Vue Dédiée)** :
@@ -270,16 +285,41 @@ Pour couvrir l'ensemble des fonctionnalités décrites dans le rapport de concep
   3. **Planification CI/CD** : Mise en place prochaine des workflows GitHub Actions pour tester et builder automatiquement sur chaque commit / PR.
 - **Statut** : Validée.
 
+### 📅 2026-08-18 — Étape 3.7 : Gestionnaire Unifié de Secrets, Support OpenRouter & Auto-Détection Infomaniak
+- **Décision & Actions Réalisées** :
+  1. **Modal Centralisée [`SecretsManagementModal`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/modals/secretsManagementModal.ts)** :
+     - Interface dédiée pour lier, tester et sécuriser les clés de 4 fournisseurs (Google Gemini, OpenAI ChatGPT, OpenRouter, Infomaniak AI Services).
+     - Masquage mot de passe avec oeil de visibilité et persistance directe dans `app.secretStorage` / `localStorage`.
+  2. **Auto-Détection du `product_id` Infomaniak (`GET /1/ai`)** :
+     - Implémentation de [`InfomaniakService`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/infomaniakService.ts) interrogeant automatiquement le compte utilisateur pour extraire son identifiant produit sans saisie manuelle.
+  3. **Support Complet d'OpenRouter** :
+     - Endpoint officiel `https://openrouter.ai/api/v1` avec headers requis (`HTTP-Referer`, `X-Title`) et modèles phares.
+  4. **Correctif CSS Layout Réglages** :
+     - Troncature propre (`max-width: 240px`, `text-overflow: ellipsis`) et colonne d'info préservée (`min-width: 220px`) pour éliminer l'écrasement des libellés.
+- **Statut** : Validée.
+
 ### 📅 2026-08-18 — Étape 3.8 : Résolution Définitive des Blocages CORS Streaming (HttpStreamService)
 - **Décision & Actions Réalisées** :
   1. **Contournement CORS via [`HttpStreamService`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/httpStreamService.ts)** :
      - Utilisation native du module Node.js `https` sur Desktop (Electron) pour streamer les réponses SSE en direct sans passer par les restrictions CORS du moteur Chromium (`app://obsidian.md`).
-     - Utilisation de `requestUrl` comme fallback universel sur Mobile pour contourner les contrôles CORS sans proxy externe.
-  2. **Migration des Endpoints Infomaniak** :
-     - `POST /2/ai/{product_id}/openai/v1/chat/completions` utilise désormais `HttpStreamService.streamSSE`.
-     - `GET /2/ai/{product_id}/openai/v1/models` et `POST /2/ai/{product_id}/openai/v1/embeddings` utilisent `requestUrl`.
-  3. **Tests & Validation** : **59/59 tests unitaires passés avec 100% de succès** (11 suites de tests), 0 erreur ESLint, bundle de production re-généré.
+     - Utilisation de `requestUrl` comme fallback universel sur Mobile.
+  2. **Intégration du Catalogue Officiel Infomaniak** :
+     - Support strict des 12 modèles officiels (`qwen3`, `mistral3`, `mistral24b`, `swiss-ai/Apertus-70B-Instruct-2509`, `swiss-ai/Apertus-v1.5-70B`, `Qwen/Qwen3.5-122B-A10B-FP8`, `google/gemma-4-31B-it`, etc.).
+     - Assainissement et repli transparent sur `qwen3` si un modèle non reconnu issu d'un autre fournisseur est encore configuré.
+  3. **Tests & Validation** : **59/59 tests unitaires passés avec 100% de succès** (11 suites), 0 erreur ESLint, bundle de production validé.
 - **Statut** : Validée.
+
+### 📅 2026-08-18 — Étape 3.9 : Optimisation Latence (Keep-Alive Persistant) & Détection Enrichie des Tâches
+- **Décision & Actions Réalisées** :
+  1. **Pool de Connexions HTTPS & Keep-Alive Persistant** :
+     - Instanciation d'un `https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 10 })` persistant dans [`HttpStreamService`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/httpStreamService.ts) pour réutiliser les sessions TLS 1.3 vers Infomaniak (gain immédiat de ~150-300ms sur le TTFT).
+     - Désactivation de l'algorithme de Nagle (`setNoDelay(true)`) sur les sockets TCP.
+  2. **Fenêtre Glissante d'Historique ([`AgentOrchestrator`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/agentOrchestrator.ts))** :
+     - Limitation aux 8 derniers messages de conversation et compression des notes volumineuses pour accélérer le préfill GPU.
+  3. **Détection Enrichie des Tâches dans le Chat ([`ChatView`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/chatView.ts))** :
+     - Parsing et conversion automatique en cartes interactives des tâches contenues dans les **blocs de code Markdown (`<pre><code>`)** et dans les **tableaux Markdown (`<table>`)**.
+- **Statut** : Validée.
+
 
 
 
