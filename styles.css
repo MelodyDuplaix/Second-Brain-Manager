@@ -1665,6 +1665,304 @@ textarea.sbm-chat-textarea:focus {
 	border-color: var(--interactive-accent);
 }
 
+/* ==========================================================================
+   Paramètres IA & Protection de mise en page contre l'écrasement des libellés
+   ========================================================================== */
+
+.sbm-main-settings-page .setting-item {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 12px 0;
+}
+
+.sbm-main-settings-page .setting-item-info {
+	flex: 1 1 50%;
+	min-width: 220px;
+	max-width: 65%;
+}
+
+.sbm-main-settings-page .setting-item-control {
+	flex: 0 1 auto;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	max-width: 50%;
+}
+
+.sbm-model-setting-item .setting-item-info {
+	flex: 1 1 50%;
+	min-width: 220px;
+}
+
+.sbm-model-setting-item .setting-item-control {
+	flex: 1 1 auto;
+	max-width: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.sbm-model-setting-item .setting-item-control select.dropdown {
+	max-width: 240px;
+	min-width: 160px;
+	text-overflow: ellipsis;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+/* Badges de statut des fournisseurs configurés */
+.sbm-configured-providers-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.sbm-provider-status-pill {
+	font-size: 0.75em;
+	padding: 2px 8px;
+	border-radius: 12px;
+	border: 1px solid var(--background-modifier-border);
+	font-weight: 500;
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-provider-status-pill.active {
+	background-color: rgba(76, 175, 80, 0.12);
+	color: var(--text-success, #4caf50);
+	border-color: rgba(76, 175, 80, 0.3);
+}
+
+.sbm-provider-status-pill.inactive {
+	background-color: var(--background-secondary);
+	color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Modal Centralisé de Gestion des Clés & Secrets (SecretsManagementModal)
+   ========================================================================== */
+
+.sbm-secrets-modal {
+	padding: 18px 24px;
+	max-width: 650px;
+}
+
+.sbm-secrets-modal-header {
+	margin-bottom: 18px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sbm-secrets-modal-title-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.sbm-secrets-modal-title-row h2 {
+	margin: 0;
+	font-size: 1.25em;
+}
+
+.sbm-secrets-modal-icon {
+	color: var(--interactive-accent);
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-secrets-modal-desc {
+	font-size: 0.88em;
+	color: var(--text-muted);
+	margin: 0;
+	line-height: 1.45;
+}
+
+.sbm-secrets-providers-list {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	max-height: 60vh;
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+.sbm-secret-provider-card {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background-color: var(--background-secondary);
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.sbm-secret-provider-card.is-linked {
+	border-color: rgba(var(--interactive-accent-rgb), 0.4);
+	background-color: var(--background-secondary-alt);
+}
+
+.sbm-secret-card-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 10px;
+}
+
+.sbm-secret-card-title-left {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sbm-provider-icon {
+	color: var(--interactive-accent);
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-provider-name {
+	margin: 0;
+	font-size: 1em;
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-provider-desc {
+	font-size: 0.78em;
+	color: var(--text-muted);
+	display: block;
+}
+
+.sbm-secret-status-badge {
+	font-size: 0.78em;
+	padding: 3px 8px;
+	border-radius: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.sbm-secret-status-badge.linked {
+	background-color: rgba(76, 175, 80, 0.15);
+	color: var(--text-success, #4caf50);
+	border: 1px solid rgba(76, 175, 80, 0.35);
+}
+
+.sbm-secret-status-badge.unlinked {
+	background-color: rgba(255, 152, 0, 0.12);
+	color: var(--text-warning, #ff9800);
+	border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.sbm-secret-card-form {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--background-modifier-border);
+}
+
+.sbm-secret-input-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sbm-secret-input-label {
+	font-size: 0.8em;
+	font-weight: 600;
+	color: var(--text-muted);
+}
+
+.sbm-secret-input-wrapper {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+}
+
+.sbm-secret-input-text {
+	flex: 1;
+	padding: 7px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 0.9em;
+}
+
+.sbm-secret-input-text:focus {
+	border-color: var(--interactive-accent);
+}
+
+.sbm-secret-toggle-visibility-btn {
+	padding: 6px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+	cursor: pointer;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-secret-toggle-visibility-btn:hover {
+	color: var(--text-normal);
+	border-color: var(--interactive-accent);
+}
+
+.sbm-secret-actions-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.sbm-secret-btn {
+	font-size: 0.85em;
+	padding: 5px 14px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.sbm-secret-keyring-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.sbm-keyring-label {
+	font-size: 0.78em;
+	color: var(--text-muted);
+}
+
+.sbm-keyring-select {
+	font-size: 0.8em;
+	max-width: 250px;
+}
+
+.sbm-secrets-modal-footer {
+	margin-top: 20px;
+	padding-top: 14px;
+	border-top: 1px solid var(--background-modifier-border);
+	display: flex;
+	justify-content: flex-end;
+}
+
+.sbm-secrets-close-btn {
+	padding: 6px 18px;
+	font-size: 0.9em;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
 
 
 

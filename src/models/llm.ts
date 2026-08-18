@@ -1,7 +1,7 @@
 import { ObsidianTask } from './task';
 import { ActionProposal } from './actions';
 
-export type LLMProvider = 'gemini' | 'openai' | 'ollama' | 'lmstudio' | 'lm-studio';
+export type LLMProvider = 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lmstudio' | 'lm-studio';
 
 export interface ChatMessage {
 	role: 'user' | 'assistant' | 'system';
@@ -16,6 +16,7 @@ export interface LLMConfig {
 	endpoint: string;
 	model: string;
 	apiKey?: string;
+	productId?: string;
 	temperature?: number;
 	signal?: AbortSignal;
 }

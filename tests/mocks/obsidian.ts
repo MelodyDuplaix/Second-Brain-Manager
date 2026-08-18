@@ -1,3 +1,7 @@
+if (typeof window === 'undefined') {
+	(globalThis as unknown as { window: typeof globalThis }).window = globalThis;
+}
+
 export function normalizePath(path: string): string {
 	if (!path) return '';
 	return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
@@ -107,3 +111,31 @@ export class MarkdownRenderer {
 }
 
 export function setIcon() {}
+
+export async function requestUrl(options: { url: string; method?: string; headers?: Record<string, string>; body?: string; throw?: boolean }) {
+	const res = await window.fetch(options.url, {
+		method: options.method || 'GET',
+		headers: options.headers,
+		body: options.body
+	});
+	let text = '';
+	let json: unknown = null;
+	if (typeof res.text === 'function') {
+		text = await res.text();
+		try {
+			json = JSON.parse(text);
+		} catch {
+			json = null;
+		}
+	} else if (typeof res.json === 'function') {
+		json = await res.json();
+		text = JSON.stringify(json);
+	}
+	return {
+		status: res.status ?? 200,
+		text,
+		json,
+		headers: {}
+	};
+}
+

@@ -1,4 +1,6 @@
+import { requestUrl } from 'obsidian';
 import { LLMProvider } from '../models/llm';
+import { InfomaniakService } from './infomaniakService';
 
 export interface ModelOption {
 	id: string;
@@ -118,6 +120,134 @@ export const FALLBACK_MODELS: ModelOption[] = [
 		provider: 'lmstudio',
 		providerName: 'LM Studio (Local)',
 		desc: 'Modèle actuellement chargé dans LM Studio'
+	},
+	// Infomaniak AI Services (Souverain Suisse)
+	{
+		id: 'qwen3',
+		name: 'qwen3',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Recommandé : Qwen 3 polyvalent et rapide'
+	},
+	{
+		id: 'mistral3',
+		name: 'mistral3',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Mistral 3 optimisé en français'
+	},
+	{
+		id: 'mistral24b',
+		name: 'mistral24b',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Mistral NeMo 24B haute précision'
+	},
+	{
+		id: 'swiss-ai/Apertus-70B-Instruct-2509',
+		name: 'swiss-ai/Apertus-70B-Instruct-2509',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Modèle souverain suisse haute capacité (70B)'
+	},
+	{
+		id: 'swiss-ai/Apertus-v1.5-70B',
+		name: 'swiss-ai/Apertus-v1.5-70B',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Modèle souverain suisse Apertus v1.5 (70B)'
+	},
+	{
+		id: 'mistralai/Ministral-3-14B-Instruct-2512',
+		name: 'mistralai/Ministral-3-14B-Instruct-2512',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Ministral 3 14B compact et réactif'
+	},
+	{
+		id: 'mistralai/Mistral-Small-4-119B-2603',
+		name: 'mistralai/Mistral-Small-4-119B-2603',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Mistral Small 4 119B très haute performance'
+	},
+	{
+		id: 'Qwen/Qwen3.5-122B-A10B-FP8',
+		name: 'Qwen/Qwen3.5-122B-A10B-FP8',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Qwen 3.5 122B MoE haute capacité'
+	},
+	{
+		id: 'Qwen/Qwen3.5-397B-A17B-FP8',
+		name: 'Qwen/Qwen3.5-397B-A17B-FP8',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Qwen 3.5 397B MoE ultra-puissant'
+	},
+	{
+		id: 'google/gemma-4-31B-it',
+		name: 'google/gemma-4-31B-it',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Google Gemma 4 31B Instruct'
+	},
+	{
+		id: 'moonshotai/Kimi-K2.6',
+		name: 'moonshotai/Kimi-K2.6',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'Moonshot AI Kimi K2.6 longue fenêtre de contexte'
+	},
+	{
+		id: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8',
+		name: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI',
+		desc: 'NVIDIA Nemotron 3 Nano 30B'
+	},
+	{
+		id: 'bge_multilingual_gemma2',
+		name: 'bge_multilingual_gemma2',
+		provider: 'infomaniak',
+		providerName: 'Infomaniak AI (Embeddings)',
+		desc: 'Modèle d\'embeddings vectoriels multilingue'
+	},
+	// OpenRouter
+	{
+		id: 'anthropic/claude-3.5-sonnet',
+		name: 'anthropic/claude-3.5-sonnet',
+		provider: 'openrouter',
+		providerName: 'OpenRouter',
+		desc: 'Modèle Claude 3.5 Sonnet haute précision'
+	},
+	{
+		id: 'deepseek/deepseek-r1',
+		name: 'deepseek/deepseek-r1',
+		provider: 'openrouter',
+		providerName: 'OpenRouter',
+		desc: 'Modèle DeepSeek R1 de raisonnement approfondi'
+	},
+	{
+		id: 'meta-llama/llama-3.3-70b-instruct',
+		name: 'meta-llama/llama-3.3-70b-instruct',
+		provider: 'openrouter',
+		providerName: 'OpenRouter',
+		desc: 'Modèle open-source Meta Llama 3.3 70B'
+	},
+	{
+		id: 'google/gemini-2.5-flash',
+		name: 'google/gemini-2.5-flash',
+		provider: 'openrouter',
+		providerName: 'OpenRouter',
+		desc: 'Modèle rapide Google Gemini via OpenRouter'
+	},
+	{
+		id: 'mistralai/mistral-large-2411',
+		name: 'mistralai/mistral-large-2411',
+		provider: 'openrouter',
+		providerName: 'OpenRouter',
+		desc: 'Modèle Mistral Large 2411'
 	}
 ];
 
@@ -128,7 +258,8 @@ export class ModelDiscoveryService {
 	public static async fetchLiveModels(
 		provider: LLMProvider,
 		apiKey?: string,
-		endpoint?: string
+		endpoint?: string,
+		productId?: string
 	): Promise<ModelOption[]> {
 		try {
 			switch (provider) {
@@ -181,6 +312,75 @@ export class ModelDiscoveryService {
 						.sort((a, b) => b.name.localeCompare(a.name));
 				}
 
+				case 'openrouter': {
+					if (!apiKey) return this.getFallbackForProvider('openrouter');
+					const baseUrl = endpoint || 'https://openrouter.ai/api/v1';
+					const url = `${baseUrl.replace(/\/+$/, '')}/models`;
+					const res = await window.fetch(url, {
+						headers: { Authorization: `Bearer ${apiKey}` }
+					});
+					if (!res.ok) return this.getFallbackForProvider('openrouter');
+					const data = await res.json() as { data?: Array<{ id: string; name?: string; description?: string }> };
+					if (!data.data || !Array.isArray(data.data)) return this.getFallbackForProvider('openrouter');
+
+					return data.data
+						.slice(0, 50)
+						.map(m => ({
+							id: m.id,
+							name: m.id,
+							provider: 'openrouter' as LLMProvider,
+							providerName: 'OpenRouter',
+							desc: m.description ? m.description.slice(0, 60) : (m.name || 'Modèle OpenRouter'),
+							isLive: true
+						}));
+				}
+
+				case 'infomaniak': {
+					if (!apiKey) return this.getFallbackForProvider('infomaniak');
+					const baseUrl = endpoint || 'https://api.infomaniak.com';
+					let resolvedProductId = productId;
+					if (!resolvedProductId) {
+						resolvedProductId = await InfomaniakService.fetchProductId(apiKey, baseUrl);
+					}
+					if (!resolvedProductId) return this.getFallbackForProvider('infomaniak');
+
+					const url = `${baseUrl.replace(/\/+$/, '')}/2/ai/${resolvedProductId}/openai/v1/models`;
+					let data: unknown = null;
+
+					if (typeof requestUrl === 'function') {
+						const response = await requestUrl({
+							url,
+							method: 'GET',
+							headers: { Authorization: `Bearer ${apiKey}` },
+							throw: false
+						});
+						if (response.status === 200) {
+							data = response.json;
+						}
+					} else {
+						const res = await window.fetch(url, {
+							headers: { Authorization: `Bearer ${apiKey}` }
+						});
+						if (res.ok) {
+							data = await res.json();
+						}
+					}
+
+					if (!data) return this.getFallbackForProvider('infomaniak');
+					const json = data as { data?: Array<{ id: string; owned_by?: string }> | { id: string; owned_by?: string } };
+					if (!json.data) return this.getFallbackForProvider('infomaniak');
+
+					const modelsList = Array.isArray(json.data) ? json.data : [json.data];
+					return modelsList.map(m => ({
+						id: m.id,
+						name: m.id,
+						provider: 'infomaniak' as LLMProvider,
+						providerName: 'Infomaniak AI',
+						desc: m.owned_by ? `Modèle Infomaniak (${m.owned_by})` : 'Modèle disponible via Infomaniak AI Services',
+						isLive: true
+					})).sort((a, b) => a.name.localeCompare(b.name));
+				}
+
 				case 'ollama': {
 					const baseUrl = endpoint || 'http://localhost:11434';
 					const res = await window.fetch(`${baseUrl.replace(/\/$/, '')}/api/tags`);
@@ -198,7 +398,8 @@ export class ModelDiscoveryService {
 					}));
 				}
 
-				case 'lmstudio': {
+				case 'lmstudio':
+				case 'lm-studio': {
 					const baseUrl = endpoint || 'http://localhost:1234';
 					const res = await window.fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`);
 					if (!res.ok) return this.getFallbackForProvider('lmstudio');

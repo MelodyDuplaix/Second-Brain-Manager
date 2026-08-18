@@ -514,13 +514,92 @@ export class ChatView extends ItemView {
 			}
 		}
 
-		// 2. Recherche tous les <li> et <p> candidats
-		const candidateElements = Array.from(textContentEl.querySelectorAll('li, p'));
 		let upgradedCount = 0;
 		const usedTaskIds = new Set<string>();
 
+		// A. Traitement des blocs de code <pre> contenant des tâches Markdown
+		const preElements = Array.from(textContentEl.querySelectorAll('pre'));
+		preElements.forEach(pre => {
+			if (pre.closest('.sbm-inline-task-wrapper') || pre.closest('.sbm-chat-task-card') || pre.closest('.sbm-chat-tasks-container')) return;
+			const rawText = pre.textContent || '';
+			const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
+			const taskLines: ObsidianTask[] = [];
+			lines.forEach(line => {
+				// Recherche match dans les tâches du coffre
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(line, vt.title);
+				});
+
+				if (matched) {
+					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+					taskLines.push(matched);
+				} else if (/^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(line) || (line.includes('📅') && line.includes('#tm/'))) {
+					const cleanLine = line.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '');
+					const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
+					if (parsed) taskLines.push(parsed);
+				}
+			});
+
+			if (taskLines.length > 0) {
+				const tasksContainer = document.createElement('div');
+				tasksContainer.className = 'sbm-chat-tasks-container';
+				taskLines.forEach(t => {
+					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {
+						this.renderFullMessages();
+					});
+					upgradedCount++;
+				});
+				pre.replaceWith(tasksContainer);
+			}
+		});
+
+		// B. Traitement des tableaux markdown <table> contenant des tâches
+		const tableElements = Array.from(textContentEl.querySelectorAll('table'));
+		tableElements.forEach(table => {
+			if (table.closest('.sbm-inline-task-wrapper') || table.closest('.sbm-chat-task-card') || table.closest('.sbm-chat-tasks-container')) return;
+			const rows = Array.from(table.querySelectorAll('tbody tr, tr')).filter(r => !r.closest('thead'));
+			if (rows.length === 0) return;
+
+			const rowTasks: ObsidianTask[] = [];
+			rows.forEach(row => {
+				const cells = Array.from(row.querySelectorAll('td, th'));
+				if (cells.length === 0) return;
+				const rowText = cells.map(c => c.textContent || '').join(' ');
+
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(rowText, vt.title);
+				});
+
+				if (matched) {
+					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+					rowTasks.push(matched);
+				}
+			});
+
+			// Si au moins une ligne du tableau correspond à une tâche du coffre
+			if (rowTasks.length > 0) {
+				const tasksContainer = document.createElement('div');
+				tasksContainer.className = 'sbm-chat-tasks-container';
+				rowTasks.forEach(t => {
+					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {
+						this.renderFullMessages();
+					});
+					upgradedCount++;
+				});
+				table.replaceWith(tasksContainer);
+			}
+		});
+
+		// C. Recherche dans tous les <li> et <p> candidats
+		const candidateElements = Array.from(textContentEl.querySelectorAll('li, p'));
+
 		candidateElements.forEach(el => {
-			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card')) return;
+			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card') || el.closest('.sbm-chat-tasks-container')) return;
 
 			// Si c'est un parent <li> contenant d'autres <li>, ignorer (on ne traite que les feuilles)
 			if (el.tagName.toLowerCase() === 'li' && el.querySelector('li') !== null) return;
@@ -577,7 +656,7 @@ export class ChatView extends ItemView {
 			}
 		});
 
-		// 3. Fallback : Si des tâches spécifiques ont été trouvées mais qu'aucune n'a été matchée
+		// D. Fallback : Si des tâches spécifiques ont été trouvées mais qu'aucune n'a été matchée
 		if (upgradedCount === 0 && attachedTasks && attachedTasks.length > 0) {
 			const tasksContainer = textContentEl.createDiv({ cls: 'sbm-chat-tasks-container' });
 			attachedTasks.forEach(task => {
@@ -651,6 +730,7 @@ export class ChatView extends ItemView {
 				provider: this.plugin.settings.llmProvider,
 				endpoint: this.plugin.settings.llmEndpoint,
 				model: this.plugin.settings.llmModel,
+				productId: this.plugin.settings.infomaniakProductId,
 				apiKey,
 				signal: this.currentAbortController.signal
 			};

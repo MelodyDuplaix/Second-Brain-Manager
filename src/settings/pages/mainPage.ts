@@ -2,8 +2,9 @@ import { ButtonComponent, Setting, setIcon, Notice, normalizePath } from 'obsidi
 import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
-import { SecretSelectModal } from '../../modals/secretSelectModal';
+import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
+import { InfomaniakService } from '../../services/infomaniakService';
 
 export class MainPage extends BaseSettingsPage {
 	render(): void {
@@ -212,6 +213,38 @@ export class MainPage extends BaseSettingsPage {
 
 		// 6. Agent IA & Secret Storage
 		const aiGroup = new SettingGroup(this.containerEl).setHeading('Agent IA et clés secrètes');
+
+		// 6.1 Gestionnaire centralisé de clés d'API et secrets (Popup multi-fournisseurs)
+		aiGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Gestionnaire de clés d\'API & Secrets')
+				.setDesc('Configurez, liez ou déliez vos clés pour Gemini, OpenAI, OpenRouter et Infomaniak AI Services.')
+				.addButton((btn) => {
+					btn
+						.setButtonText('🔑 Gérer les clés d\'API...')
+						.setCta()
+						.onClick(() => {
+							new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render()).open();
+						});
+				});
+
+			// Badges récapitulatifs des fournisseurs configurés
+			const badgesEl = activeDocument.createElement('div');
+			badgesEl.addClass('sbm-configured-providers-badges');
+
+			SUPPORTED_PROVIDERS.forEach(p => {
+				const isConfigured = !!p.getSecretId(this.plugin);
+				const badge = badgesEl.createSpan({
+					cls: `sbm-provider-status-pill ${isConfigured ? 'active' : 'inactive'}`,
+					text: `${p.name}: ${isConfigured ? '✓' : '—'}`
+				});
+				badge.title = isConfigured ? `Secret lié : ${p.getSecretId(this.plugin)}` : 'Non configuré';
+			});
+
+			setting.descEl.appendChild(badgesEl);
+		});
+
+		// 6.2 Sélection du Fournisseur LLM actif
 		aiGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Fournisseur LLM')
@@ -220,15 +253,23 @@ export class MainPage extends BaseSettingsPage {
 					dropdown
 						.addOption('gemini', 'Google Gemini (Gemini 3.5 / 2.5 / 1.5)')
 						.addOption('openai', 'OpenAI ChatGPT (GPT-4o, o3-mini, o1)')
+						.addOption('openrouter', 'OpenRouter (Claude 3.5, Llama 3.3, DeepSeek R1...)')
+						.addOption('infomaniak', 'Infomaniak AI Services (Souverain / Suisse - Qwen, Mistral, Apertus)')
 						.addOption('ollama', 'Ollama (Local sans clé API)')
 						.addOption('lmstudio', 'LM Studio (Local sans clé API)')
 						.setValue(this.plugin.settings.llmProvider)
-						.onChange(async (value: 'gemini' | 'openai' | 'ollama' | 'lmstudio') => {
+						.onChange(async (value: 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lmstudio') => {
 							this.plugin.settings.llmProvider = value;
 							if (value === 'gemini') {
 								this.plugin.settings.llmModel = 'gemini-2.5-flash';
 							} else if (value === 'openai') {
 								this.plugin.settings.llmModel = 'gpt-4o-mini';
+							} else if (value === 'openrouter') {
+								this.plugin.settings.llmEndpoint = 'https://openrouter.ai/api/v1';
+								this.plugin.settings.llmModel = 'anthropic/claude-3.5-sonnet';
+							} else if (value === 'infomaniak') {
+								this.plugin.settings.llmEndpoint = 'https://api.infomaniak.com';
+								this.plugin.settings.llmModel = 'qwen3';
 							} else if (value === 'ollama') {
 								this.plugin.settings.llmEndpoint = 'http://localhost:11434';
 								this.plugin.settings.llmModel = 'llama3.2';
@@ -245,19 +286,23 @@ export class MainPage extends BaseSettingsPage {
 		const currentProvider = this.plugin.settings.llmProvider;
 		const knownModels = ModelDiscoveryService.getFallbackForProvider(currentProvider);
 
+		// 6.3 Modèle par défaut avec mise en page protégée contre l'écrasement
 		aiGroup.addSetting((setting: Setting) => {
+			setting.settingEl.addClass('sbm-model-setting-item');
 			setting
 				.setName('Modèle par défaut')
 				.setDesc('Sélectionnez le modèle IA actif ou actualisez la liste en direct depuis l\'API')
 				.addDropdown((dropdown) => {
 					let isCurrentInList = false;
 					knownModels.forEach(m => {
-						dropdown.addOption(m.name, `${m.name} (${m.desc.slice(0, 32)}...)`);
+						const label = m.name.length > 38 ? `${m.name.slice(0, 35)}...` : m.name;
+						dropdown.addOption(m.name, label);
 						if (m.name === this.plugin.settings.llmModel) isCurrentInList = true;
 					});
 
 					if (!isCurrentInList && this.plugin.settings.llmModel) {
-						dropdown.addOption(this.plugin.settings.llmModel, `⭐ ${this.plugin.settings.llmModel} (Actuel)`);
+						const currLabel = this.plugin.settings.llmModel.length > 38 ? `${this.plugin.settings.llmModel.slice(0, 35)}...` : this.plugin.settings.llmModel;
+						dropdown.addOption(this.plugin.settings.llmModel, `⭐ ${currLabel}`);
 					}
 
 					dropdown.addOption('__custom__', '✏️ Saisir un modèle personnalisé...');
@@ -285,7 +330,8 @@ export class MainPage extends BaseSettingsPage {
 								const live = await ModelDiscoveryService.fetchLiveModels(
 									this.plugin.settings.llmProvider,
 									apiKey,
-									this.plugin.settings.llmEndpoint
+									this.plugin.settings.llmEndpoint,
+									this.plugin.settings.infomaniakProductId
 								);
 								btn.setDisabled(false);
 								btn.setButtonText('🔄 Détecter via API');
@@ -319,7 +365,51 @@ export class MainPage extends BaseSettingsPage {
 			});
 		}
 
-		if (this.plugin.settings.llmProvider === 'ollama' || this.plugin.settings.llmProvider === 'lm-studio') {
+		if (this.plugin.settings.llmProvider === 'infomaniak') {
+			aiGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Product ID Infomaniak')
+					.setDesc('Identifiant numérique AI Tools. Détecté automatiquement via GET /1/ai ou modifiable manuellement (ex: 90065).')
+					.addText((text) => {
+						text
+							.setPlaceholder('Auto-détecté via GET /1/ai ou saisir ex: 90065')
+							.setValue(this.plugin.settings.infomaniakProductId || '')
+							.onChange(async (value) => {
+								this.plugin.settings.infomaniakProductId = value.trim() || undefined;
+								await this.plugin.saveSettings();
+							});
+					})
+					.addButton((btn) => {
+						btn
+							.setButtonText('🔄 Auto-détecter')
+							.setTooltip('Tester la clé et récupérer automatiquement le Product ID depuis l\'API Infomaniak')
+							.onClick(async () => {
+								btn.setDisabled(true);
+								btn.setButtonText('⏳ Test...');
+								const apiKey = await this.plugin.getSecretApiKey('infomaniak');
+								if (!apiKey) {
+									btn.setDisabled(false);
+									btn.setButtonText('🔄 Auto-détecter');
+									new Notice('⚠️ Veuillez d\'abord lier une clé API / Token Infomaniak.');
+									return;
+								}
+								const check = await InfomaniakService.testConnection(apiKey, this.plugin.settings.llmEndpoint);
+								btn.setDisabled(false);
+								btn.setButtonText('🔄 Auto-détecter');
+								if (check.success && check.productId) {
+									this.plugin.settings.infomaniakProductId = check.productId;
+									await this.plugin.saveSettings();
+									new Notice(`✓ Product ID détecté avec succès : ${check.productId}`);
+									this.render();
+								} else {
+									new Notice(`⚠️ ${check.error || 'Échec de détection automatique du Product ID'}`);
+								}
+							});
+					});
+			});
+		}
+
+		if (this.plugin.settings.llmProvider === 'ollama' || this.plugin.settings.llmProvider === 'lm-studio' || this.plugin.settings.llmProvider === 'lmstudio') {
 			aiGroup.addSetting((setting: Setting) => {
 				setting
 					.setName('URL du serveur local')
@@ -335,48 +425,40 @@ export class MainPage extends BaseSettingsPage {
 			});
 		}
 
-		if (this.plugin.settings.llmProvider === 'gemini' || this.plugin.settings.llmProvider === 'openai') {
+		// 6.4 Affichage et statut direct du secret pour le fournisseur actif
+		if (
+			this.plugin.settings.llmProvider === 'gemini' ||
+			this.plugin.settings.llmProvider === 'openai' ||
+			this.plugin.settings.llmProvider === 'openrouter' ||
+			this.plugin.settings.llmProvider === 'infomaniak'
+		) {
 			const provider = this.plugin.settings.llmProvider;
-			const currentSecretId = provider === 'gemini' ? this.plugin.settings.geminiSecretId : this.plugin.settings.openaiSecretId;
+			const providerDef = SUPPORTED_PROVIDERS.find(p => p.id === provider);
+			const currentSecretId = providerDef ? providerDef.getSecretId(this.plugin) : undefined;
+			const isLinked = !!currentSecretId;
 
 			aiGroup.addSetting((setting: Setting) => {
-				setting.setName(`Clé API ${provider.toUpperCase()}`);
+				setting.setName(`Clé API active (${providerDef?.name || provider.toUpperCase()})`);
 
-				if (!currentSecretId) {
+				if (!isLinked) {
 					setting
-						.setDesc('Aucun secret lié. Liez une clé issue du trousseau officiel Obsidian (Secret Storage API).')
+						.setDesc('⚠️ Aucun secret lié pour ce fournisseur. Cliquez sur le bouton pour coller ou lier votre clé.')
 						.addButton((btn) => {
 							btn
-								.setButtonText('Lier un secret')
+								.setButtonText('🔑 Configurer la clé...')
 								.setCta()
 								.onClick(() => {
-									new SecretSelectModal(this.plugin.app, provider, async (selectedId) => {
-										if (provider === 'gemini') {
-											this.plugin.settings.geminiSecretId = selectedId;
-										} else {
-											this.plugin.settings.openaiSecretId = selectedId;
-										}
-										await this.plugin.saveSettings();
-										this.render();
-									}).open();
+									new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render(), provider).open();
 								});
 						});
 				} else {
 					setting
-						.setDesc(`Secret lié : ${currentSecretId}`)
+						.setDesc(`✓ Secret lié : "${currentSecretId}"`)
 						.addButton((modifyBtn) => {
 							modifyBtn
-								.setButtonText('Modifier')
+								.setButtonText('Modifier / Remplacer')
 								.onClick(() => {
-									new SecretSelectModal(this.plugin.app, provider, async (selectedId) => {
-										if (provider === 'gemini') {
-											this.plugin.settings.geminiSecretId = selectedId;
-										} else {
-											this.plugin.settings.openaiSecretId = selectedId;
-										}
-										await this.plugin.saveSettings();
-										this.render();
-									}).open();
+									new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render(), provider).open();
 								});
 						})
 						.addButton((unlinkBtn) => {
@@ -384,14 +466,12 @@ export class MainPage extends BaseSettingsPage {
 								.setButtonText('Délier')
 								.setWarning()
 								.onClick(async () => {
-									if (provider === 'gemini') {
-										this.plugin.settings.geminiSecretId = undefined;
-									} else {
-										this.plugin.settings.openaiSecretId = undefined;
+									if (providerDef) {
+										providerDef.setSecretId(this.plugin, undefined);
+										await this.plugin.saveSettings();
+										new Notice(`Secret délié pour ${providerDef.name}`);
+										this.render();
 									}
-									await this.plugin.saveSettings();
-									new Notice(`Secret délié pour ${provider.toUpperCase()}`);
-									this.render();
 								});
 						});
 				}

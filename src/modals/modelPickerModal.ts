@@ -24,7 +24,8 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 			const liveModels = await ModelDiscoveryService.fetchLiveModels(
 				this.plugin.settings.llmProvider,
 				apiKey,
-				this.plugin.settings.llmEndpoint
+				this.plugin.settings.llmEndpoint,
+				this.plugin.settings.infomaniakProductId
 			);
 
 			if (liveModels.length > 0) {
@@ -83,7 +84,9 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 		this.plugin.settings.llmProvider = item.provider;
 		this.plugin.settings.llmModel = item.name;
 
-		if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
+		if (item.provider === 'infomaniak' && !this.plugin.settings.llmEndpoint) {
+			this.plugin.settings.llmEndpoint = 'https://api.infomaniak.com';
+		} else if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
 			this.plugin.settings.llmEndpoint = 'http://localhost:11434';
 		} else if (item.provider === 'lmstudio' && !this.plugin.settings.llmEndpoint) {
 			this.plugin.settings.llmEndpoint = 'http://localhost:1234';

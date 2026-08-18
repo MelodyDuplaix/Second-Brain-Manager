@@ -167,6 +167,7 @@ Pour couvrir l'ensemble des fonctionnalités décrites dans le rapport de concep
 | **Widgets de Tâches In-Place & Édition Inline (Popovers)** | ✅ Terminé | `src/views/taskCardWidget.ts`, `src/views/inlineMetaPopover.ts` |
 | **Matching Flou Intelligent Anti-Tâches Sautées** | ✅ Terminé | `src/views/chatView.ts` (`isTaskMatch`) |
 | **Gestion Sécurisée des Clés API (Secret Storage)** | ✅ Terminé | `src/modals/secretSelectModal.ts` |
+| **Fournisseur Infomaniak AI Services (Chat, Embeddings, Discovery)** | ✅ Terminé | `src/services/llmService.ts`, `src/services/modelDiscoveryService.ts` |
 | **Panneau de Réglages Natif (Style Spaced Repetition)** | ✅ Terminé | `src/settings/` (`settingsPageManager.ts`, `mainPage.ts`, `rewardsPage.ts`) |
 | **Configuration Branche Git `dev` & `main`** | ✅ Terminé | Dépôt GitHub (`origin/main`, `origin/dev`) |
 | **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
@@ -268,3 +269,18 @@ Pour couvrir l'ensemble des fonctionnalités décrites dans le rapport de concep
      - `dev` : Branche d'intégration pour les fonctionnalités en cours de développement.
   3. **Planification CI/CD** : Mise en place prochaine des workflows GitHub Actions pour tester et builder automatiquement sur chaque commit / PR.
 - **Statut** : Validée.
+
+### 📅 2026-08-18 — Étape 3.8 : Résolution Définitive des Blocages CORS Streaming (HttpStreamService)
+- **Décision & Actions Réalisées** :
+  1. **Contournement CORS via [`HttpStreamService`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/httpStreamService.ts)** :
+     - Utilisation native du module Node.js `https` sur Desktop (Electron) pour streamer les réponses SSE en direct sans passer par les restrictions CORS du moteur Chromium (`app://obsidian.md`).
+     - Utilisation de `requestUrl` comme fallback universel sur Mobile pour contourner les contrôles CORS sans proxy externe.
+  2. **Migration des Endpoints Infomaniak** :
+     - `POST /2/ai/{product_id}/openai/v1/chat/completions` utilise désormais `HttpStreamService.streamSSE`.
+     - `GET /2/ai/{product_id}/openai/v1/models` et `POST /2/ai/{product_id}/openai/v1/embeddings` utilisent `requestUrl`.
+  3. **Tests & Validation** : **59/59 tests unitaires passés avec 100% de succès** (11 suites de tests), 0 erreur ESLint, bundle de production re-généré.
+- **Statut** : Validée.
+
+
+
+

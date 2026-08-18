@@ -18,12 +18,15 @@ export interface SecondBrainSettings extends TaskSyntaxConfig {
 	inboxFolder: string;
 	dailyNotesFolder: string;
 
-	llmProvider: 'gemini' | 'openai' | 'ollama' | 'lm-studio';
+	llmProvider: 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lm-studio' | 'lmstudio';
 	llmEndpoint: string;
 	llmModel: string;
 
 	geminiSecretId?: string;
 	openaiSecretId?: string;
+	openrouterSecretId?: string;
+	infomaniakSecretId?: string;
+	infomaniakProductId?: string;
 }
 
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
@@ -46,6 +49,9 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 
 	geminiSecretId: undefined,
 	openaiSecretId: undefined,
+	openrouterSecretId: undefined,
+	infomaniakSecretId: undefined,
+	infomaniakProductId: undefined,
 };
 
 interface StoredData {
@@ -264,7 +270,16 @@ export default class SecondBrainPlugin extends Plugin {
 	 * Récupération sécurisée des clés d'API via le Secret Storage d'Obsidian (docs.obsidian.md/plugins/guides/secret-storage)
 	 */
 	async getSecretApiKey(provider: string): Promise<string | undefined> {
-		const secretId = provider === 'gemini' ? this.settings.geminiSecretId : provider === 'openai' ? this.settings.openaiSecretId : undefined;
+		let secretId: string | undefined;
+		if (provider === 'gemini') {
+			secretId = this.settings.geminiSecretId;
+		} else if (provider === 'openai') {
+			secretId = this.settings.openaiSecretId;
+		} else if (provider === 'openrouter') {
+			secretId = this.settings.openrouterSecretId;
+		} else if (provider === 'infomaniak') {
+			secretId = this.settings.infomaniakSecretId;
+		}
 
 		if (!secretId) {
 			return undefined;

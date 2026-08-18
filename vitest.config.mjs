@@ -8,6 +8,7 @@ export default {
 	test: {
 		globals: true,
 		environment: 'node',
+		setupFiles: [path.resolve(__dirname, 'tests/mocks/obsidian.ts')],
 		alias: {
 			obsidian: path.resolve(__dirname, 'tests/mocks/obsidian.ts')
 		}
