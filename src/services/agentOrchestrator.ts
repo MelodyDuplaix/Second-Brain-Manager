@@ -54,7 +54,12 @@ export class AgentOrchestrator {
 		if (attachedContextNotes && attachedContextNotes.length > 0) {
 			attachedContextText = '\n\nDOCUMENTS JOINTS EN CONTEXTE PAR L\'UTILISATEUR :\n';
 			attachedContextNotes.forEach(note => {
-				attachedContextText += `--- Début de la note "${note.title}" (${note.path}) ---\n${note.content}\n--- Fin de la note ---\n\n`;
+				const MAX_CHARS_PER_NOTE = 6000;
+				let noteContent = note.content;
+				if (noteContent.length > MAX_CHARS_PER_NOTE) {
+					noteContent = noteContent.slice(0, MAX_CHARS_PER_NOTE) + '\n... [Contenu tronqué pour optimiser la latence]';
+				}
+				attachedContextText += `--- Début de la note "${note.title}" (${note.path}) ---\n${noteContent}\n--- Fin de la note ---\n\n`;
 			});
 		}
 
@@ -111,9 +116,12 @@ ${toolDocs}`;
 		onStatusUpdate: (status: AgentStepEvent) => void,
 		onChunk: (chunk: string, fullVisibleText: string) => void
 	): Promise<AgentResponse> {
+		// Optimisation de la latence : fenêtre glissante des 8 derniers messages pour accélérer le préfill GPU
+		const trimmedHistory = conversationHistory.length > 8 ? conversationHistory.slice(-8) : conversationHistory;
+
 		const messages: ChatMessage[] = [
 			{ role: 'system', content: this.buildSystemPrompt(attachedContextNotes) },
-			...conversationHistory
+			...trimmedHistory
 		];
 
 		const collectedProposals: ActionProposal[] = [];
