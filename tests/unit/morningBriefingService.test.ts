@@ -17,7 +17,7 @@ describe('MorningBriefingService', () => {
 			dueDate: '2026-08-20',
 			energy: 6,
 			matrixTag: '#tm/q1',
-			tags: ['#tm/q1', '#energie/6']
+			domainTags: ['#tm/q1', '#energie/6']
 		},
 		{
 			title: 'Sortir les poubelles',
@@ -30,7 +30,7 @@ describe('MorningBriefingService', () => {
 			dueDate: '2026-08-24',
 			energy: 2,
 			matrixTag: '#tm/q3',
-			tags: ['#tm/q3', '#energie/2']
+			domainTags: ['#tm/q3', '#energie/2']
 		},
 		{
 			title: 'Idée en vrac',
@@ -41,7 +41,7 @@ describe('MorningBriefingService', () => {
 			rawLine: '- [ ] Idée en vrac #energie/1',
 			indentLevel: 0,
 			energy: 1,
-			tags: ['#energie/1']
+			domainTags: ['#energie/1']
 		}
 	];
 
@@ -96,7 +96,7 @@ describe('MorningBriefingService', () => {
 					filePath: '01 - Projets/Projet Jeu Vidéo.md',
 					rawLine: '- [ ] Coder le moteur physique #energie/5',
 					indentLevel: 0,
-					tags: ['#energie/5']
+					domainTags: ['#energie/5']
 				}
 			],
 			projects: ['Projet Jeu Vidéo'],
@@ -191,7 +191,7 @@ describe('MorningBriefingService', () => {
 				filePath: '01 - Projets/Acme.md',
 				rawLine: '- [ ] Maquette client',
 				indentLevel: 0,
-				tags: []
+				domainTags: []
 			}
 		];
 

@@ -188,7 +188,7 @@ export class VaultContextService {
 				if (lowerQuery) {
 					const matchTitle = task.title.toLowerCase().includes(lowerQuery);
 					const matchRaw = task.rawText.toLowerCase().includes(lowerQuery);
-					const matchTags = task.domainTags.some(t => t.toLowerCase().includes(lowerQuery));
+					const matchTags = task.domainTags && Array.isArray(task.domainTags) && task.domainTags.some(t => t.toLowerCase().includes(lowerQuery));
 					if (!matchTitle && !matchRaw && !matchTags) continue;
 				}
 

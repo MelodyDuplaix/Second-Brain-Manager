@@ -87,11 +87,11 @@ export class MorningBriefingService {
 		});
 
 		// Tâches spécifiques au projet focus si sélectionné
-		const projectTasks = focusProject
+		const projectTasks = (focusProject && focusProject !== 'all')
 			? allOpenTasks.filter(t =>
-				t.filePath.toLowerCase().includes(focusProject.toLowerCase()) ||
-				t.title.toLowerCase().includes(focusProject.toLowerCase()) ||
-				t.tags.some(tag => tag.toLowerCase().includes(focusProject.toLowerCase()))
+				(t.filePath && t.filePath.toLowerCase().includes(focusProject.toLowerCase())) ||
+				(t.title && t.title.toLowerCase().includes(focusProject.toLowerCase())) ||
+				(t.domainTags && Array.isArray(t.domainTags) && t.domainTags.some(tag => tag.toLowerCase().includes(focusProject.toLowerCase())))
 			)
 			: [];
 
