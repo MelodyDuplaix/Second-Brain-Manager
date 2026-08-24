@@ -75,7 +75,7 @@ export class BriefingView extends ItemView {
 		});
 		const capDate = todayFormatted.charAt(0).toUpperCase() + todayFormatted.slice(1);
 
-		// 1. Header du Briefing
+		// 1. Header fixe en haut
 		const headerEl = container.createEl('div', { cls: 'sbm-briefing-view-header' });
 		
 		const titleRow = headerEl.createEl('div', { cls: 'sbm-briefing-title-row' });
@@ -84,40 +84,30 @@ export class BriefingView extends ItemView {
 		const titleIcon = titleLeft.createSpan({ cls: 'sbm-briefing-header-icon' });
 		setIcon(titleIcon, 'sun');
 		
-		const titleTextGroup = titleLeft.createDiv();
+		const titleTextGroup = titleLeft.createDiv({ cls: 'sbm-briefing-title-group' });
 		titleTextGroup.createEl('h2', { text: 'Briefing du matin', cls: 'sbm-briefing-main-title' });
 		titleTextGroup.createEl('span', { text: `📅 ${capDate}`, cls: 'sbm-briefing-date-sub' });
 
-		// Bouton Régénérer en haut à droite
-		this.regenBtnEl = titleRow.createEl('button', { cls: 'sbm-briefing-regen-btn' });
-		setIcon(this.regenBtnEl, 'rotate-cw');
-		this.regenBtnEl.createSpan({ text: 'Actualiser' });
-		this.regenBtnEl.title = 'Relancer la génération du briefing';
-		this.regenBtnEl.addEventListener('click', async () => {
-			await this.triggerBriefingGeneration();
-		});
+		// Actions en haut à droite : Énergie compacte + Bouton actualiser
+		const headerActions = titleRow.createEl('div', { cls: 'sbm-briefing-header-actions' });
 
-		// 2. Barre d'Énergie Interactive
-		const energyBar = headerEl.createEl('div', { cls: 'sbm-briefing-energy-bar' });
-		const energyLeft = energyBar.createDiv({ cls: 'sbm-briefing-energy-left' });
-		
-		const energyLabel = energyLeft.createEl('label', { cls: 'sbm-briefing-energy-label' });
-		setIcon(energyLabel.createSpan({ cls: 'sbm-energy-icon' }), 'zap');
-		energyLabel.createSpan({ text: 'Votre énergie ce matin :' });
+		const energyGroup = headerActions.createDiv({ cls: 'sbm-briefing-energy-compact' });
+		const energyIconSpan = energyGroup.createSpan({ cls: 'sbm-energy-icon-span' });
+		setIcon(energyIconSpan, 'zap');
 
-		this.energySelectEl = energyLeft.createEl('select', { cls: 'dropdown sbm-energy-dropdown' });
+		this.energySelectEl = energyGroup.createEl('select', { cls: 'dropdown sbm-energy-dropdown' });
 		for (let i = 1; i <= 10; i++) {
-			const opt = this.energySelectEl.createEl('option', { value: i.toString(), text: `${i} / 10` });
+			const opt = this.energySelectEl.createEl('option', { value: i.toString(), text: `${i}/10` });
 			if (i === currentEnergy) opt.selected = true;
 		}
 
-		this.modeBadgeEl = energyBar.createDiv({
+		this.modeBadgeEl = energyGroup.createDiv({
 			cls: `sbm-mode-badge ${currentEnergy <= 3 ? 'economy' : currentEnergy <= 7 ? 'balanced' : 'full'}`,
 			text: currentEnergy <= 3
-				? '⚡ Mode Économie'
+				? 'Économie'
 				: currentEnergy <= 7
-					? '🌱 Mode Équilibré'
-					: '🔥 Plein Potentiel'
+					? 'Équilibré'
+					: 'Plein Potentiel'
 		});
 
 		this.energySelectEl.addEventListener('change', async () => {
@@ -128,19 +118,48 @@ export class BriefingView extends ItemView {
 			if (this.modeBadgeEl) {
 				this.modeBadgeEl.className = `sbm-mode-badge ${val <= 3 ? 'economy' : val <= 7 ? 'balanced' : 'full'}`;
 				this.modeBadgeEl.setText(
-					val <= 3 ? '⚡ Mode Économie' : val <= 7 ? '🌱 Mode Équilibré' : '🔥 Plein Potentiel'
+					val <= 3 ? 'Économie' : val <= 7 ? 'Équilibré' : 'Plein Potentiel'
 				);
 			}
 
-			new Notice(`Énergie mise à jour : ${val}/10. Actualisation du briefing...`);
+			new Notice(`Énergie : ${val}/10. Actualisation du briefing...`);
 			await this.triggerBriefingGeneration();
 		});
 
-		// 3. Zone de Contenu du Briefing (Carte Principale)
-		this.contentElWrapper = container.createEl('div', { cls: 'sbm-briefing-card' });
+		this.regenBtnEl = headerActions.createEl('button', { cls: 'sbm-briefing-regen-btn' });
+		setIcon(this.regenBtnEl, 'rotate-cw');
+		this.regenBtnEl.createSpan({ text: 'Actualiser' });
+		this.regenBtnEl.title = 'Relancer la génération du briefing';
+		this.regenBtnEl.addEventListener('click', async () => {
+			await this.triggerBriefingGeneration();
+		});
 
-		// 4. Zone de Réponse et de Transition vers le Chat
-		this.responseAreaEl = container.createEl('div', { cls: 'sbm-briefing-chat-transition-card' });
+		// 2. Corps central scrollable du Briefing (Document fluide et aéré)
+		const scrollBody = container.createEl('div', { cls: 'sbm-briefing-scroll-body' });
+		this.contentElWrapper = scrollBody.createEl('div', { cls: 'sbm-briefing-content-flow' });
+
+		// Délégation globale de clics : résout les wikilinks dans le briefing
+		scrollBody.addEventListener('click', async (e: MouseEvent) => {
+			const target = e.target as HTMLElement;
+			const linkEl = target.closest('a.internal-link, .sbm-clickable-link, a, code') as HTMLElement | null;
+
+			if (linkEl) {
+				let href = linkEl.getAttribute('data-href') || linkEl.getAttribute('href') || linkEl.textContent || '';
+				const wikiMatch = href.match(/\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/);
+				if (wikiMatch) {
+					href = wikiMatch[1];
+				}
+
+				if (href) {
+					e.preventDefault();
+					const cleanPath = href.replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].split('#')[0].trim();
+					await this.app.workspace.openLinkText(cleanPath, '', false);
+				}
+			}
+		});
+
+		// 3. Footer fixe en bas pour la transition fluide vers le Chat
+		this.responseAreaEl = container.createEl('div', { cls: 'sbm-briefing-footer-dock' });
 		this.renderResponseArea();
 	}
 
@@ -158,8 +177,8 @@ export class BriefingView extends ItemView {
 		if (!this.contentElWrapper) return;
 		this.contentElWrapper.empty();
 
-		// Indicateur de chargement / réflexion
-		const thinkingBox = this.contentElWrapper.createEl('div', { cls: 'sbm-thinking-box' });
+		// Indicateur de chargement / réflexion animé
+		const thinkingBox = this.contentElWrapper.createEl('div', { cls: 'sbm-thinking-box sbm-briefing-loading' });
 		const spinnerIcon = thinkingBox.createEl('div', { cls: 'sbm-thinking-spinner' });
 		spinnerIcon.createSpan({ cls: 'sbm-dot' });
 		spinnerIcon.createSpan({ cls: 'sbm-dot' });
@@ -167,7 +186,7 @@ export class BriefingView extends ItemView {
 
 		thinkingBox.createEl('span', {
 			cls: 'sbm-thinking-label',
-			text: '🧠 Analyse de votre coffre et préparation du programme du jour...'
+			text: '🧠 Analyse de votre coffre et préparation de votre programme du jour...'
 		});
 
 		const textDisplayEl = this.contentElWrapper.createEl('div', { cls: 'sbm-briefing-text-display sbm-msg-streaming' });
@@ -255,20 +274,17 @@ export class BriefingView extends ItemView {
 		if (!this.responseAreaEl) return;
 		this.responseAreaEl.empty();
 
-		const sectionTitleRow = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chat-title-row' });
-		const iconSpan = sectionTitleRow.createSpan({ cls: 'sbm-briefing-chat-icon' });
-		setIcon(iconSpan, 'message-square');
-		sectionTitleRow.createEl('h3', { text: 'Poursuivre la discussion ou ajuster le plan', cls: 'sbm-briefing-chat-title' });
+		const footerCard = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chat-dock-card' });
 
 		// 1. Boutons de réponses rapides suggérées (Chips)
-		const chipsRow = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chips-row' });
+		const chipsRow = footerCard.createDiv({ cls: 'sbm-briefing-chips-row' });
 		
 		const suggestions = [
-			{ label: '🎯 Valider ce plan et commencer', prompt: 'Ce plan me convient parfaitement ! Aide-moi à démarrer la toute première tâche prioritaire.' },
-			{ label: '⚡ Alléger mon planning aujourd\'hui', prompt: 'Je me sens plus fatigué que prévu, allège mon planning pour ne garder que le strict minimum vital.' },
-			{ label: '⏩ Reporter les tâches non urgentes', prompt: 'Peux-tu me proposer de reporter à demain toutes les tâches non urgentes (Q3/Q4) ?' },
-			{ label: '📝 Inscrire ce focus dans mon journal', prompt: 'Résume mon focus et mes tâches principales dans le journal de ma note quotidienne du jour.' },
-			{ label: '🧩 Décomposer la tâche prioritaire', prompt: 'Peux-tu décomposer la tâche prioritaire du jour en sous-tâches simples et rapides ?' }
+			{ label: '🎯 Valider ce plan', prompt: 'Ce plan me convient parfaitement ! Aide-moi à démarrer la toute première tâche prioritaire.' },
+			{ label: '⚡ Alléger mon planning', prompt: 'Je me sens plus fatigué que prévu, allège mon planning pour ne garder que le strict minimum vital.' },
+			{ label: '⏩ Reporter le non urgent', prompt: 'Peux-tu me proposer de reporter à demain toutes les tâches non urgentes (Q3/Q4) ?' },
+			{ label: '📝 Noter dans mon journal', prompt: 'Résume mon focus et mes tâches principales dans le journal de ma note quotidienne du jour.' },
+			{ label: '🧩 Décomposer la priorité', prompt: 'Peux-tu décomposer la tâche prioritaire du jour en sous-tâches simples et rapides ?' }
 		];
 
 		suggestions.forEach(s => {
@@ -278,18 +294,19 @@ export class BriefingView extends ItemView {
 			});
 		});
 
-		// 2. Champ de saisie fluide
-		const inputForm = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-input-form' });
-		const textarea = inputForm.createEl('textarea', {
+		// 2. Champ de saisie fluide Copilot-style
+		const inputCard = footerCard.createDiv({ cls: 'sbm-briefing-input-card' });
+		
+		const textarea = inputCard.createEl('textarea', {
 			cls: 'sbm-briefing-textarea',
-			placeholder: 'Poser une question sur ce plan, demander un ajustement ou affiner les priorités...'
+			placeholder: 'Répondre au briefing, demander un ajustement ou affiner votre programme...'
 		});
 
-		const bottomActions = inputForm.createDiv({ cls: 'sbm-briefing-input-actions' });
-		const submitBtn = bottomActions.createEl('button', {
-			cls: 'sbm-briefing-submit-btn mod-cta',
-			text: '💬 Continuer dans le Chat'
+		const submitBtn = inputCard.createEl('button', {
+			cls: 'sbm-briefing-send-btn mod-cta'
 		});
+		setIcon(submitBtn, 'arrow-up');
+		submitBtn.title = 'Poursuivre la discussion dans le Chat (Entrée)';
 
 		const handleSubmit = async () => {
 			const userText = textarea.value.trim();
@@ -385,6 +402,78 @@ export class BriefingView extends ItemView {
 		vaultTasks: ObsidianTask[]
 	): Promise<void> {
 		const usedTaskIds = new Set<string>();
+
+		// A. Blocs de code <pre> contenant des tâches Markdown
+		const preElements = Array.from(textContentEl.querySelectorAll('pre'));
+		preElements.forEach(pre => {
+			if (pre.closest('.sbm-inline-task-wrapper') || pre.closest('.sbm-chat-task-card') || pre.closest('.sbm-chat-tasks-container')) return;
+			const rawText = pre.textContent || '';
+			const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
+			const taskLines: ObsidianTask[] = [];
+			lines.forEach(line => {
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(line, vt.title);
+				});
+
+				if (matched) {
+					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+					taskLines.push(matched);
+				} else if (/^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(line) || (line.includes('📅') && line.includes('#tm/'))) {
+					const cleanLine = line.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '');
+					const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
+					if (parsed) taskLines.push(parsed);
+				}
+			});
+
+			if (taskLines.length > 0) {
+				const tasksContainer = document.createElement('div');
+				tasksContainer.className = 'sbm-chat-tasks-container';
+				taskLines.forEach(t => {
+					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {});
+				});
+				pre.replaceWith(tasksContainer);
+			}
+		});
+
+		// B. Tableaux markdown <table> contenant des tâches
+		const tableElements = Array.from(textContentEl.querySelectorAll('table'));
+		tableElements.forEach(table => {
+			if (table.closest('.sbm-inline-task-wrapper') || table.closest('.sbm-chat-task-card') || table.closest('.sbm-chat-tasks-container')) return;
+			const rows = Array.from(table.querySelectorAll('tbody tr, tr')).filter(r => !r.closest('thead'));
+			if (rows.length === 0) return;
+
+			const rowTasks: ObsidianTask[] = [];
+			rows.forEach(row => {
+				const cells = Array.from(row.querySelectorAll('td, th'));
+				if (cells.length === 0) return;
+				const rowText = cells.map(c => c.textContent || '').join(' ');
+
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(rowText, vt.title);
+				});
+
+				if (matched) {
+					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+					rowTasks.push(matched);
+				}
+			});
+
+			if (rowTasks.length > 0) {
+				const tasksContainer = document.createElement('div');
+				tasksContainer.className = 'sbm-chat-tasks-container';
+				rowTasks.forEach(t => {
+					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {});
+				});
+				table.replaceWith(tasksContainer);
+			}
+		});
+
+		// C. Éléments <li> et <p>
 		const candidateElements = Array.from(textContentEl.querySelectorAll('li, p'));
 
 		candidateElements.forEach(el => {
@@ -417,9 +506,12 @@ export class BriefingView extends ItemView {
 
 				const wrapper = document.createElement('div');
 				wrapper.className = 'sbm-inline-task-wrapper';
-				TaskCardWidget.render(wrapper, matched, this.plugin, () => {
-					// Actualisation visuelle au besoin
-				});
+				TaskCardWidget.render(wrapper, matched, this.plugin, () => {});
+				
+				if (el.parentElement && (el.parentElement.tagName.toLowerCase() === 'ul' || el.parentElement.tagName.toLowerCase() === 'ol')) {
+					el.parentElement.style.listStyle = 'none';
+					el.parentElement.style.paddingLeft = '0';
+				}
 				el.replaceWith(wrapper);
 			} else if (
 				/^\[[ xX/]\]/.test(text.trim()) ||
@@ -432,9 +524,12 @@ export class BriefingView extends ItemView {
 				if (parsed) {
 					const wrapper = document.createElement('div');
 					wrapper.className = 'sbm-inline-task-wrapper';
-					TaskCardWidget.render(wrapper, parsed, this.plugin, () => {
-						// Actualisation visuelle au besoin
-					});
+					TaskCardWidget.render(wrapper, parsed, this.plugin, () => {});
+					
+					if (el.parentElement && (el.parentElement.tagName.toLowerCase() === 'ul' || el.parentElement.tagName.toLowerCase() === 'ol')) {
+						el.parentElement.style.listStyle = 'none';
+						el.parentElement.style.paddingLeft = '0';
+					}
 					el.replaceWith(wrapper);
 				}
 			}
