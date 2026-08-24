@@ -77,6 +77,18 @@ export class ChatView extends ItemView {
 		return super.onClose();
 	}
 
+	/**
+	 * Charge une conversation existante et lance automatiquement la génération si autoTrigger est vrai.
+	 */
+	public async setConversation(messages: ChatMessage[], autoTrigger = false): Promise<void> {
+		this.cancelCurrentGeneration();
+		this.messages = [...messages];
+		this.renderFullMessages();
+		if (autoTrigger) {
+			await this.triggerAssistantGeneration();
+		}
+	}
+
 	private cancelCurrentGeneration(): void {
 		if (this.currentAbortController) {
 			this.currentAbortController.abort();

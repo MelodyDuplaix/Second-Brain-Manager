@@ -2079,6 +2079,273 @@ textarea.sbm-chat-textarea:focus {
 	opacity: 0.9;
 }
 
+/* ==========================================================================
+   Vue Dédiée du Briefing du Matin (Expérience Agentique & Transition Chat)
+   ========================================================================== */
+
+.sbm-briefing-view-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 16px 20px;
+	overflow-y: auto;
+	font-family: var(--font-interface);
+	box-sizing: border-box;
+	gap: 16px;
+}
+
+.sbm-briefing-view-header {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding-bottom: 14px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sbm-briefing-title-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+}
+
+.sbm-briefing-title-left {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.sbm-briefing-header-icon {
+	color: var(--text-accent, #e5a93c);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.sbm-briefing-main-title {
+	margin: 0;
+	font-size: 1.3em;
+	font-weight: 700;
+	color: var(--text-normal);
+}
+
+.sbm-briefing-date-sub {
+	font-size: 0.82em;
+	color: var(--text-muted);
+	display: block;
+	margin-top: 2px;
+}
+
+.sbm-briefing-regen-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.82em;
+	padding: 5px 12px;
+	border-radius: 6px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.sbm-briefing-regen-btn:hover {
+	border-color: var(--interactive-accent);
+	background-color: var(--background-secondary-alt);
+}
+
+.sbm-briefing-regen-btn.is-loading svg {
+	animation: sbm-spin 1s linear infinite;
+}
+
+@keyframes sbm-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.sbm-briefing-energy-bar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	padding: 8px 12px;
+	border-radius: 8px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.sbm-briefing-energy-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-briefing-energy-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.86em;
+	font-weight: 500;
+	color: var(--text-muted);
+}
+
+.sbm-energy-icon {
+	color: var(--text-accent, #e5a93c);
+	display: inline-flex;
+}
+
+.sbm-energy-dropdown {
+	font-size: 0.85em;
+	padding: 2px 8px;
+	border-radius: 6px;
+}
+
+.sbm-mode-badge.balanced {
+	background-color: rgba(76, 175, 80, 0.15);
+	color: var(--text-success, #4caf50);
+	border: 1px solid rgba(76, 175, 80, 0.35);
+}
+
+/* Carte Principale du Briefing */
+.sbm-briefing-card {
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	padding: 18px 20px;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-height: 180px;
+}
+
+.sbm-briefing-text-display {
+	line-height: 1.6;
+	color: var(--text-normal);
+}
+
+.sbm-briefing-text-display h1,
+.sbm-briefing-text-display h2,
+.sbm-briefing-text-display h3 {
+	margin-top: 14px;
+	margin-bottom: 8px;
+	color: var(--text-normal);
+}
+
+.sbm-briefing-text-display p {
+	margin-bottom: 10px;
+}
+
+.sbm-briefing-text-display ul,
+.sbm-briefing-text-display ol {
+	margin: 6px 0 10px 20px;
+	padding: 0;
+}
+
+.sbm-briefing-text-display li {
+	margin-bottom: 4px;
+}
+
+/* Carte de Transition vers le Chat */
+.sbm-briefing-chat-transition-card {
+	background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-secondary-alt) 100%);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sbm-briefing-chat-title-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-briefing-chat-icon {
+	color: var(--interactive-accent);
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-briefing-chat-title {
+	margin: 0;
+	font-size: 0.95em;
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-briefing-chips-row {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.sbm-briefing-chip-btn {
+	font-size: 0.78em;
+	padding: 4px 10px;
+	border-radius: 14px;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.sbm-briefing-chip-btn:hover {
+	color: var(--text-normal);
+	border-color: var(--interactive-accent);
+	background-color: rgba(var(--interactive-accent-rgb), 0.08);
+	transform: translateY(-1px);
+}
+
+.sbm-briefing-input-form {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sbm-briefing-input-form:focus-within {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.sbm-briefing-textarea {
+	width: 100% !important;
+	min-height: 48px !important;
+	border: none !important;
+	outline: none !important;
+	background: transparent !important;
+	padding: 0 !important;
+	resize: none !important;
+	font-family: inherit !important;
+	font-size: 0.9em !important;
+	color: var(--text-normal) !important;
+	line-height: 1.45 !important;
+}
+
+.sbm-briefing-input-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.sbm-briefing-submit-btn {
+	font-size: 0.82em;
+	padding: 5px 14px;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: 500;
+}
+
+
 
 
 

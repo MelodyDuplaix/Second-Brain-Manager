@@ -267,6 +267,17 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	/**
+	 * Ouvre le chat avec une conversation prédéfinie et déclenche la suite de la discussion.
+	 */
+	async openChatWithConversation(messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp?: string }>, autoTrigger = false): Promise<void> {
+		await this.activateChatView();
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+		if (leaf && leaf.view instanceof ChatView) {
+			await (leaf.view as ChatView).setConversation(messages, autoTrigger);
+		}
+	}
+
+	/**
 	 * Récupération sécurisée des clés d'API via le Secret Storage d'Obsidian (docs.obsidian.md/plugins/guides/secret-storage)
 	 */
 	async getSecretApiKey(provider: string): Promise<string | undefined> {

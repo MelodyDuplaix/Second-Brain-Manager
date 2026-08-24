@@ -186,8 +186,7 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
 | **Panneau de Réglages Natif (Style Spaced Repetition)** | ✅ Terminé | `src/settings/` (`settingsPageManager.ts`, `mainPage.ts`, `rewardsPage.ts`) |
 | **Configuration Branche Git `dev` & `main`** | ✅ Terminé | Dépôt GitHub (`origin/main`, `origin/dev`) |
 | **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
-| **Workflow de Release GitHub Automatisé (CD)** | ⏳ À faire | `.github/workflows/release.yml` |
-| **Workflow du Briefing du Matin (Projet Prioritaire & Énergie)** | ⏳ À faire | `src/workflows/morningBriefing.ts` |
+| **Workflow du Briefing du Matin (Projet Prioritaire & Énergie)** | ✅ Terminé | `src/views/briefingView.ts`, `src/services/morningBriefingService.ts` |
 | **Workflow de la Revue du Soir & Nettoyage Mental** | ⏳ À faire | `src/workflows/eveningReview.ts` |
 | **Workflow de Reprise après Pause** | ⏳ À faire | `src/workflows/recoveryWorkflow.ts` |
 | **Commandes Contextuelles d'Édition / Reformulation de Notes** | ⏳ À faire | `src/services/noteActionsService.ts` |
@@ -335,6 +334,23 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
      - **Actions correctives contextuelles instantanées** : Bouton `[ 🔄 Réessayer ]` pour relancer la génération et bouton `[ 🔑 Gérer les clés d'API ]` pour ouvrir directement la modal des secrets pré-ciblée sur le fournisseur actif.
      - **Préservation de l'intégrité de l'historique** : Les erreurs techniques ne sont plus injectées comme des tours de parole d'assistant dans l'historique de conversation sauvegardé.
   4. **Tests & Validation** : **59/59 tests unitaires passés avec 100% de succès**, 0 erreur ESLint, build de production validé sans avertissement.
+- **Statut** : Validée.
+
+### 📅 2026-08-24 — Étape 3.11 : Intégration Native du Workflow du Briefing du Matin & Transition Fluide vers le Chat
+- **Décision & Actions Réalisées** :
+  1. **Moteur Métier & Prompting Dédié ([`MorningBriefingService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/morningBriefingService.ts))** :
+     - Extraction automatique des tâches du coffre : tâches en retard, tâches planifiées pour aujourd'hui (`📅`, `⏳`, `🛫`), tâches prioritaires Q1/Q2, tâches en Inbox et note quotidienne du jour.
+     - Prompting avancé et bienveillant adaptant dynamiquement le programme proposé selon le niveau d'énergie (Mode Économie ≤ 3 vs Équilibré 4-7 vs Plein Potentiel 8-10).
+     - Formatage strict en tâches Markdown Tasks natives avec conservation des wikilinks `[[...]]`.
+  2. **Vue Dédiée Interactive ([`BriefingView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/briefingView.ts))** :
+     - Génération automatique en streaming au lancement avec animation de réflexion discrète.
+     - Jauge d'énergie interactive en en-tête déclenchant un recalcul dynamique du plan d'action en cas d'ajustement.
+     - Transformation *in-place* des tâches recommandées en cartes interactives (`TaskCardWidget`) permettant de lancer (`🚀 Commencer`), terminer (`✅`) ou reporter (`⏩`) directement les tâches depuis le briefing.
+  3. **Zone de Réponse & Poursuite Continue dans le Chat (`continueInChat` / `openChatWithConversation`)** :
+     - Boutons de suggestions rapides cliquables (chips) : *« 🎯 Valider ce plan et commencer »*, *« ⚡ Alléger mon planning »*, *« ⏩ Reporter les tâches non urgentes »*, *« 📝 Inscrire ce focus dans mon journal »*.
+     - Zone de saisie directe permettant de répondre au LLM ou de demander un ajustement.
+     - Transition instantanée vers la vue `ChatView` avec transfert automatique de l'historique complet et déclenchement continu de l'IA.
+  4. **Tests & Validation** : **61/61 tests unitaires passés avec 100% de succès (12 suites)**, 0 erreur ESLint, build de production validé.
 - **Statut** : Validée.
 
 
