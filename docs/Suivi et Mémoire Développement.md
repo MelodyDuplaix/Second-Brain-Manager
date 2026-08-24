@@ -21,14 +21,21 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
    - Écouteur automatique de complétion de tâches (`app.vault.on('modify')`).
    - Calcul des pièces explicites (`#pieces/N`) ou barème automatique (quadrants Q1: 8🪙, Q2: 4🪙, Q3: 2🪙, Q4: 1🪙 + bonus de difficulté).
    - Portefeuille persistant (`balance`, `lifetimeEarned`, `lifetimeSpent`).
-   - Détection d'unicité par empreinte stable pour éviter les doubles attributions.
-   - Révocation et remboursement des pièces en cas de missclick (`removeCompletion`).
-
-3. **Vues & Ergonomie Utilisateur** :
+   - Détection d'unicité par empreinte stable pour éviter les doubles attributio3. **Vues & Ergonomie Utilisateur** :
    - **`DashboardView` (`sbm-dashboard-view`)** :
      - Jauge d'énergie interactive (1 à 10) et bascule de mode (Économie vs Pleine Énergie).
      - 4 sections de triage : *Aujourd'hui & Urgences*, *Recommandées selon votre énergie*, *Non classées dans la matrice*, *Boîte de réception (Inbox)*.
      - Actions rapides : Démarrer (`🛫`), Terminer (`✅`), modification rapide de priorité par popover.
+   - **`BriefingView` (`sbm-briefing-view`) — Briefing du Matin Copilot** :
+     - En-tête fixe avec sélecteur de *Projet Prioritaire / Focus du Jour* (`📁 Acme Project`, `📁 Projet Jeu Vidéo`, etc.) et jauge d'énergie.
+     - Analyse IA automatique en streaming, cartes de tâches interactives *in-place*.
+     - Boutons 1-clic : `[ 📝 Enregistrer dans ma Daily Note ]` et `[ 📅 Planifier ces tâches pour aujourd'hui ]`.
+     - Dock de transition fluide vers le Chat avec suggestions chips (*« 🎯 Valider ce plan »*, *« ⚡ Alléger mon planning »*).
+   - **`EveningReviewView` (`sbm-evening-view-view`) — Revue du Soir & Nettoyage Mental** :
+     - Bilan bienveillant et déculpabilisant : calcul des tâches terminées, des pièces gagnées (`🪙`) et des tâches ouvertes.
+     - Badges de synthèse en temps réel (`✅ X faite(s)`, `🪙 +Y pièces`, `⏳ Z restante(s)`).
+     - Bouton direct `[ 📝 Enregistrer dans ma Daily Note ]` (`## 🌙 Revue du Soir & Bilan`).
+     - Bouton direct `[ ⏩ Reporter les tâches restantes à demain ]` modifiant atomiquement les notes sources.
    - **`GamificationHistoryView` (`sbm-gamification-history-view`)** :
      - Onglet *Historique des Gains* avec recherche et remboursement/annulation.
      - Onglet *Statistiques Avancées* avec graphiques SVG natifs (Courbe 14 jours, Donut des catégories, Barres quotidiennes).
@@ -38,15 +45,23 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
      - **Boucle Agentique ReAct Autonome** : L'agent consulte le coffre via des outils transparents et synthétise sa réponse sans polluer le chat de JSON brut.
      - **Détection Enrichie des Tâches** : Transformation in-place des tâches dans les listes (`<li>`), paragraphes (`<p>`), **blocs de code Markdown (`<pre><code>`)** et **tableaux Markdown (`<table>`)** en cartes interactives (`TaskCardWidget`).
      - **Widgets de Tâches In-Place (`TaskCardWidget`)** : Checkbox de complétion avec crédit de pièces 🪙, modification en ligne de l'échéance 📅, énergie ⚡, priorité, matrice `#Q1/#Q4` et bouton `[ 🚀 Commencer / ⏳ En cours ]`.
-     - **Optimisation de Latence** : Fenêtre glissante des 8 derniers messages d'historique et plafonnement des notes volumineuses.
+     - **Cartes d'erreurs stylisées** : Erreurs API/réseau distinctives avec code d'erreur sélectionnable, bouton `[ 📋 Copier l'erreur ]`, `[ 🔄 Réessayer ]` et `[ 🔑 Gérer les clés d'API ]`.
 
-4. **Paramètres Natifs & Gestionnaire Unifié de Secrets (`SecretsManagementModal`)** :
+4. **Commandes Contextuelles d'Édition IA sur les Notes (`NoteActionsService`)** :
+   - Accessible via palette `Ctrl+P` et **menu contextuel clic-droit** de l'éditeur Markdown :
+     - `Extraire les tâches de la note ou de la sélection` (injecte des tâches Tasks avec `#tm/qN`, `📅` et `[[LienNote]]`).
+     - `Décomposer la tâche sous le curseur` (génère 3-5 sous-tâches concrètes indentées sous la tâche active).
+     - `Résumer la note ou la sélection` (insère un callout `> [!SUMMARY] Résumé Exécutif`).
+     - `Reformuler la sélection pour améliorer la clarté`.
+
+5. **Paramètres Natifs & Gestionnaire Unifié de Secrets (`SecretsManagementModal`)** :
    - Architecture modulaire (`SettingsPageManager` + `MainPage` + `RewardsPage`).
    - Modal centralisée `SecretsManagementModal` pour lier, sécuriser et tester les clés Gemini, OpenAI, OpenRouter et Infomaniak.
    - Auto-détection automatique du `product_id` Infomaniak (`GET /1/ai`) sans saisie manuelle.
+   - Commande rapide palette : `Second Brain: Indiquer mon niveau d'énergie` (`EnergyLevelModal`, raccourcis 1-9/0).
 
-5. **Qualité & Tests Automatisés** :
-   - Suite de tests unitaires Vitest : **59/59 tests passés avec succès** (100% de réussite sur 11 suites de tests).
+6. **Qualité & Tests Automatisés** :
+   - Suite de tests unitaires Vitest : **70/70 tests passés avec 100% de succès (14 suites de tests)**.
    - Linting ESLint & Compilation ESBuild : **0 erreur, 0 avertissement**.
 
 ---
