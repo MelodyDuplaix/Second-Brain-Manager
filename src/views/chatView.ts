@@ -27,6 +27,7 @@ export class ChatView extends ItemView {
 	private actionExecutor: ActionExecutor;
 	private attachedContexts: ContextItem[] = [];
 	private editingMessageIndex: number | null = null;
+	private lastActiveFile: TFile | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
 		super(leaf);
@@ -56,6 +57,18 @@ export class ChatView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		this.registerEvent(this.app.workspace.on('file-open', (file) => {
+			if (file instanceof TFile) {
+				this.lastActiveFile = file;
+				this.renderContextInsideCard();
+			}
+		}));
+		this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => {
+			if (leaf && leaf.view instanceof MarkdownView && leaf.view.file instanceof TFile) {
+				this.lastActiveFile = leaf.view.file;
+				this.renderContextInsideCard();
+			}
+		}));
 		await this.render();
 	}
 
@@ -77,17 +90,12 @@ export class ChatView extends ItemView {
 		container.empty();
 		container.addClass('sbm-chat-container');
 
-		// Header avec titre, badge de modèle et bouton d'effacement
+		// Header avec titre et bouton d'effacement
 		const headerEl = container.createEl('div', { cls: 'sbm-chat-header' });
 		const titleRow = headerEl.createEl('div', { cls: 'sbm-chat-title-row' });
 		
 		const titleLeft = titleRow.createEl('div', { cls: 'sbm-chat-title-left' });
 		titleLeft.createEl('h2', { text: 'Assistant IA' });
-		const modelBadge = titleLeft.createEl('button', {
-			cls: 'sbm-header-model-badge',
-			text: this.plugin.settings.llmModel || 'Modèle IA'
-		});
-		modelBadge.title = `Fournisseur : ${this.plugin.settings.llmProvider} (Cliquer pour changer)`;
 
 		const clearBtn = titleRow.createEl('button', { cls: 'sbm-chat-clear-btn' });
 		setIcon(clearBtn, 'trash-2');
@@ -159,13 +167,10 @@ export class ChatView extends ItemView {
 		const openModelModal = () => {
 			new ModelPickerModal(this.app, this.plugin, (selected) => {
 				currentModelBtn.setText(`⚡ ${selected.name} ▾`);
-				modelBadge.setText(selected.name);
-				modelBadge.title = `Fournisseur : ${selected.providerName} (Cliquer pour changer)`;
 			}).open();
 		};
 
 		currentModelBtn.addEventListener('click', openModelModal);
-		modelBadge.addEventListener('click', openModelModal);
 
 		this.sendBtnEl = inputBottomBar.createEl('button', {
 			cls: 'sbm-chat-send-btn mod-cta'
@@ -215,24 +220,40 @@ export class ChatView extends ItemView {
 			}).open();
 		});
 
-		// Suggestion de la note active si ouverte
-		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (activeView && activeView.file) {
-			const activeFile = activeView.file;
-			const isAlreadyAttached = this.attachedContexts.some(c => c.path === activeFile.path);
+		// Recherche de la note active ou de la dernière note ouverte
+		let activeFile: TFile | null = this.lastActiveFile || this.app.workspace.getActiveFile();
+		if (!activeFile) {
+			const mdLeaves = this.app.workspace.getLeavesOfType('markdown');
+			for (const leaf of mdLeaves) {
+				const view = leaf.view as MarkdownView;
+				if (view && view.file instanceof TFile) {
+					activeFile = view.file;
+					break;
+				}
+			}
+		}
+		if (!activeFile) {
+			const recentFiles = this.app.vault.getMarkdownFiles();
+			if (recentFiles.length > 0) {
+				activeFile = recentFiles.sort((a, b) => b.stat.mtime - a.stat.mtime)[0];
+			}
+		}
 
+		if (activeFile) {
+			const isAlreadyAttached = this.attachedContexts.some(c => c.path === activeFile?.path);
 			if (!isAlreadyAttached) {
 				const activeNoteBtn = leftPills.createEl('button', {
 					cls: 'sbm-card-active-note-pill',
 					text: `+ Note active (${activeFile.basename})`
 				});
-				activeNoteBtn.title = 'Cliquer pour inclure cette note active dans le contexte';
+				activeNoteBtn.title = `Cliquer pour inclure [[${activeFile.basename}]] dans le contexte`;
+				const fileToAdd = activeFile;
 				activeNoteBtn.addEventListener('click', () => {
 					this.addContextItem({
 						type: 'active-note',
-						path: normalizePath(activeFile.path),
-						title: activeFile.basename,
-						desc: activeFile.path
+						path: normalizePath(fileToAdd.path),
+						title: fileToAdd.basename,
+						desc: fileToAdd.path
 					});
 				});
 			}

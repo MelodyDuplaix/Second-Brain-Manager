@@ -382,57 +382,5 @@ export class MainPage extends BaseSettingsPage {
 			});
 		}
 
-		// 6.4 Affichage et statut direct du secret pour le fournisseur actif
-		if (
-			this.plugin.settings.llmProvider === 'gemini' ||
-			this.plugin.settings.llmProvider === 'openai' ||
-			this.plugin.settings.llmProvider === 'openrouter' ||
-			this.plugin.settings.llmProvider === 'infomaniak'
-		) {
-			const provider = this.plugin.settings.llmProvider;
-			const providerDef = SUPPORTED_PROVIDERS.find(p => p.id === provider);
-			const currentSecretId = providerDef ? providerDef.getSecretId(this.plugin) : undefined;
-			const isLinked = !!currentSecretId;
-
-			aiGroup.addSetting((setting: Setting) => {
-				setting.setName(`Clé API active (${providerDef?.name || provider.toUpperCase()})`);
-
-				if (!isLinked) {
-					setting
-						.setDesc('⚠️ Aucun secret lié pour ce fournisseur. Cliquez sur le bouton pour coller ou lier votre clé.')
-						.addButton((btn) => {
-							btn
-								.setButtonText('🔑 Configurer la clé...')
-								.setCta()
-								.onClick(() => {
-									new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render(), provider).open();
-								});
-						});
-				} else {
-					setting
-						.setDesc(`✓ Secret lié : "${currentSecretId}"`)
-						.addButton((modifyBtn) => {
-							modifyBtn
-								.setButtonText('Modifier / Remplacer')
-								.onClick(() => {
-									new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render(), provider).open();
-								});
-						})
-						.addButton((unlinkBtn) => {
-							unlinkBtn
-								.setButtonText('Délier')
-								.setWarning()
-								.onClick(async () => {
-									if (providerDef) {
-										providerDef.setSecretId(this.plugin, undefined);
-										await this.plugin.saveSettings();
-										new Notice(`Secret délié pour ${providerDef.name}`);
-										this.render();
-									}
-								});
-						});
-				}
-			});
-		}
 	}
 }
