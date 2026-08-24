@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { MorningBriefingService, BriefingVaultData } from '../../src/services/morningBriefingService';
 import { ObsidianTask } from '../../src/models/task';
+import { DEFAULT_SETTINGS } from '../../src/main';
+import { TFile, App } from 'obsidian';
 
 describe('MorningBriefingService', () => {
 	const mockTasks: ObsidianTask[] = [
@@ -53,6 +55,7 @@ describe('MorningBriefingService', () => {
 			todayTasks: [mockTasks[1]],
 			priorityTasks: [mockTasks[0]],
 			inboxTasks: [mockTasks[2]],
+			projectTasks: [],
 			projects: ['Acme Project', 'Projet Jeu Vidéo'],
 			contacts: ['Claire', 'Marc Dupont']
 		};
@@ -73,22 +76,133 @@ describe('MorningBriefingService', () => {
 		expect(messages[1].content).toContain('[[Idées vrac]]');
 	});
 
-	it('should adapt system prompt instructions for low energy mode (<=3)', () => {
+	it('should integrate focus project directives when a specific project is selected', () => {
 		const data: BriefingVaultData = {
 			dateStr: '2026-08-24',
 			formattedDate: 'Lundi 24 Août 2026',
-			energy: 2,
-			modeText: 'Mode Économie',
+			energy: 7,
+			modeText: 'Mode Équilibré',
+			focusProject: 'Projet Jeu Vidéo',
 			overdueTasks: [],
 			todayTasks: [],
 			priorityTasks: [],
 			inboxTasks: [],
-			projects: [],
+			projectTasks: [
+				{
+					title: 'Coder le moteur physique',
+					completed: false,
+					status: 'todo',
+					lineNumber: 1,
+					filePath: '01 - Projets/Projet Jeu Vidéo.md',
+					rawLine: '- [ ] Coder le moteur physique #energie/5',
+					indentLevel: 0,
+					tags: ['#energie/5']
+				}
+			],
+			projects: ['Projet Jeu Vidéo'],
 			contacts: []
 		};
 
 		const messages = MorningBriefingService.buildBriefingMessages(data);
-		expect(messages[0].content).toContain('Mode Économie');
-		expect(messages[0].content).toContain('1 seule tâche essentielle');
+		expect(messages[0].content).toContain('Projet Focus Majeur');
+		expect(messages[0].content).toContain('Projet Jeu Vidéo');
+		expect(messages[1].content).toContain('PROJET PRIORITAIRE DU JOUR');
+		expect(messages[1].content).toContain('Coder le moteur physique');
+	});
+
+	it('should save briefing to daily note using vault API', async () => {
+		const files: Record<string, string> = {};
+		const mockPlugin = {
+			settings: {
+				...DEFAULT_SETTINGS,
+				dailyNotesFolder: '04 - Journal',
+				energyLevel: 6
+			}
+		};
+
+		const createMockTFile = (path: string): TFile => {
+			const f = new TFile();
+			f.path = path;
+			f.basename = path.split('/').pop()?.replace('.md', '') || '';
+			return f;
+		};
+
+		const mockApp = {
+			vault: {
+				getFolderByPath: () => ({ path: '04 - Journal' }),
+				createFolder: () => Promise.resolve(),
+				getFileByPath: (p: string) => (files[p] !== undefined ? createMockTFile(p) : null),
+				getAbstractFileByPath: () => null,
+				create: (p: string, c: string) => { files[p] = c; return Promise.resolve(createMockTFile(p)); },
+				process: async (f: TFile, cb: (content: string) => string) => {
+					files[f.path] = cb(files[f.path] || '');
+					return files[f.path];
+				}
+			}
+		} as unknown as App;
+
+		const targetPath = await MorningBriefingService.saveBriefingToDailyNote(
+			mockApp,
+			mockPlugin as any,
+			'### 🌅 Cap du Jour\nFinir le jeu vidéo.',
+			'2026-08-24'
+		);
+
+		expect(targetPath).toBe('04 - Journal/2026-08-24.md');
+		expect(files['04 - Journal/2026-08-24.md']).toContain('## 🌅 Briefing & Focus du Jour');
+		expect(files['04 - Journal/2026-08-24.md']).toContain('Finir le jeu vidéo.');
+	});
+
+	it('should plan recommended tasks for today in source files', async () => {
+		const files: Record<string, string> = {
+			'01 - Projets/Acme.md': '# Acme\n- [ ] Maquette client\n- [ ] Contrat'
+		};
+
+		const mockPlugin = {
+			settings: {
+				...DEFAULT_SETTINGS
+			}
+		};
+
+		const createMockTFile = (path: string): TFile => {
+			const f = new TFile();
+			f.path = path;
+			f.basename = path.split('/').pop()?.replace('.md', '') || '';
+			return f;
+		};
+
+		const mockApp = {
+			vault: {
+				getFileByPath: (p: string) => (files[p] !== undefined ? createMockTFile(p) : null),
+				getAbstractFileByPath: () => null,
+				process: async (f: TFile, cb: (content: string) => string) => {
+					files[f.path] = cb(files[f.path] || '');
+					return files[f.path];
+				}
+			}
+		} as unknown as App;
+
+		const tasksToPlan: ObsidianTask[] = [
+			{
+				title: 'Maquette client',
+				completed: false,
+				status: 'todo',
+				lineNumber: 2,
+				filePath: '01 - Projets/Acme.md',
+				rawLine: '- [ ] Maquette client',
+				indentLevel: 0,
+				tags: []
+			}
+		];
+
+		const count = await MorningBriefingService.planTasksForToday(
+			mockApp,
+			mockPlugin as any,
+			tasksToPlan,
+			'2026-08-24'
+		);
+
+		expect(count).toBe(1);
+		expect(files['01 - Projets/Acme.md']).toContain('📅 2026-08-24');
 	});
 });

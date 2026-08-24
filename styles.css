@@ -2403,6 +2403,149 @@ textarea.sbm-chat-textarea:focus {
 	flex-shrink: 0;
 }
 
+.sbm-briefing-project-compact {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	border-radius: 20px;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.sbm-project-icon-span {
+	color: var(--interactive-accent);
+	display: inline-flex;
+	align-items: center;
+}
+
+.sbm-project-dropdown {
+	font-size: 0.82em !important;
+	padding: 1px 4px !important;
+	border: none !important;
+	background: transparent !important;
+	font-weight: 500;
+	cursor: pointer;
+	max-width: 180px;
+}
+
+/* Barre d'Actions Rapides dans le Document Briefing */
+.sbm-briefing-document-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: center;
+	margin-bottom: 18px;
+	padding-bottom: 14px;
+	border-bottom: 1px dashed var(--background-modifier-border);
+}
+
+.sbm-doc-action-btn {
+	font-size: 0.8em;
+	padding: 5px 12px;
+	border-radius: 6px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	transition: all 0.15s ease;
+	font-weight: 500;
+}
+
+.sbm-doc-action-btn:hover {
+	border-color: var(--interactive-accent);
+	background-color: var(--background-modifier-hover);
+	color: var(--text-accent);
+	transform: translateY(-1px);
+}
+
+/* Modal Rapide d'Énergie (Palette de Commandes) */
+.sbm-energy-modal {
+	padding: 10px 6px;
+}
+
+.sbm-energy-modal .sbm-modal-title-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 8px;
+}
+
+.sbm-energy-modal .sbm-modal-title-icon {
+	color: var(--text-accent, #e5a93c);
+	display: inline-flex;
+}
+
+.sbm-energy-modal .sbm-modal-title {
+	margin: 0;
+	font-size: 1.25em;
+}
+
+.sbm-energy-modal-grid {
+	display: grid;
+	grid-template-columns: repeat(5, 1fr);
+	gap: 8px;
+	margin-top: 14px;
+}
+
+.sbm-energy-num-btn {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 10px 4px;
+	border-radius: 8px;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-secondary);
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.sbm-energy-num-val {
+	font-size: 1.2em;
+	font-weight: 700;
+	color: var(--text-normal);
+}
+
+.sbm-energy-num-sub {
+	font-size: 0.72em;
+	color: var(--text-muted);
+	margin-top: 2px;
+}
+
+.sbm-energy-num-btn.low {
+	border-color: rgba(244, 67, 54, 0.3);
+}
+
+.sbm-energy-num-btn.low:hover,
+.sbm-energy-num-btn.low.is-active {
+	background-color: rgba(244, 67, 54, 0.15);
+	border-color: var(--text-error, #f44336);
+}
+
+.sbm-energy-num-btn.med {
+	border-color: rgba(76, 175, 80, 0.3);
+}
+
+.sbm-energy-num-btn.med:hover,
+.sbm-energy-num-btn.med.is-active {
+	background-color: rgba(76, 175, 80, 0.15);
+	border-color: var(--text-success, #4caf50);
+}
+
+.sbm-energy-num-btn.high {
+	border-color: rgba(var(--interactive-accent-rgb), 0.3);
+}
+
+.sbm-energy-num-btn.high:hover,
+.sbm-energy-num-btn.high.is-active {
+	background-color: rgba(var(--interactive-accent-rgb), 0.15);
+	border-color: var(--interactive-accent);
+}
+
 
 
 

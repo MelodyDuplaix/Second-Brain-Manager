@@ -9,6 +9,7 @@ import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { Wallet, Reward, CompletionEvent } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
+import { EnergyLevelModal } from './modals/energyLevelModal';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig {
 	energyLevel: number;
@@ -134,6 +135,14 @@ export default class SecondBrainPlugin extends Plugin {
 			name: 'Ouvrir le tableau de bord',
 			callback: () => {
 				this.activateDashboardView();
+			}
+		});
+
+		this.addCommand({
+			id: 'indiquer-energie',
+			name: 'Indiquer mon niveau d\'énergie',
+			callback: () => {
+				new EnergyLevelModal(this.app, this).open();
 			}
 		});
 

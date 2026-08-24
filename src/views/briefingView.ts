@@ -4,6 +4,7 @@ import { TaskParser } from '../parsers/taskParser';
 import { TaskCardWidget } from './taskCardWidget';
 import { MorningBriefingService, BriefingVaultData } from '../services/morningBriefingService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
+import { VaultContextService } from '../services/vaultContextService';
 import { ChatMessage } from '../models/llm';
 import SecondBrainPlugin from '../main';
 
@@ -16,11 +17,13 @@ export class BriefingView extends ItemView {
 	private generatedBriefingText = '';
 	private briefingVaultData: BriefingVaultData | null = null;
 	private vaultTasks: ObsidianTask[] = [];
+	private selectedProject = 'all';
 
 	private contentElWrapper: HTMLElement | null = null;
 	private responseAreaEl: HTMLElement | null = null;
 	private energySelectEl: HTMLSelectElement | null = null;
 	private modeBadgeEl: HTMLElement | null = null;
+	private projectSelectEl: HTMLSelectElement | null = null;
 	private regenBtnEl: HTMLButtonElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
@@ -88,9 +91,35 @@ export class BriefingView extends ItemView {
 		titleTextGroup.createEl('h2', { text: 'Briefing du matin', cls: 'sbm-briefing-main-title' });
 		titleTextGroup.createEl('span', { text: `📅 ${capDate}`, cls: 'sbm-briefing-date-sub' });
 
-		// Actions en haut à droite : Énergie compacte + Bouton actualiser
+		// Actions en haut à droite : Focus Projet + Énergie compacte + Bouton actualiser
 		const headerActions = titleRow.createEl('div', { cls: 'sbm-briefing-header-actions' });
 
+		// Sélecteur de Projet Prioritaire du Jour
+		const projectGroup = headerActions.createDiv({ cls: 'sbm-briefing-project-compact' });
+		const projectIconSpan = projectGroup.createSpan({ cls: 'sbm-project-icon-span' });
+		setIcon(projectIconSpan, 'target');
+
+		this.projectSelectEl = projectGroup.createEl('select', { cls: 'dropdown sbm-project-dropdown' });
+		const allOpt = this.projectSelectEl.createEl('option', { value: 'all', text: '🎯 Tous les projets' });
+		if (this.selectedProject === 'all') allOpt.selected = true;
+
+		const vaultContext = new VaultContextService(this.app, this.plugin.settings);
+		const vaultStructure = vaultContext.getVaultStructure();
+		vaultStructure.projects.forEach(p => {
+			const opt = this.projectSelectEl?.createEl('option', { value: p, text: `📁 ${p}` });
+			if (opt && this.selectedProject === p) opt.selected = true;
+		});
+
+		this.projectSelectEl.addEventListener('change', async () => {
+			this.selectedProject = this.projectSelectEl?.value || 'all';
+			new Notice(this.selectedProject === 'all'
+				? 'Focus global activé.'
+				: `Focus projet activé : [[${this.selectedProject}]]`
+			);
+			await this.triggerBriefingGeneration();
+		});
+
+		// Jauge d'énergie compacte
 		const energyGroup = headerActions.createDiv({ cls: 'sbm-briefing-energy-compact' });
 		const energyIconSpan = energyGroup.createSpan({ cls: 'sbm-energy-icon-span' });
 		setIcon(energyIconSpan, 'zap');
@@ -184,9 +213,10 @@ export class BriefingView extends ItemView {
 		spinnerIcon.createSpan({ cls: 'sbm-dot' });
 		spinnerIcon.createSpan({ cls: 'sbm-dot' });
 
+		const focusText = this.selectedProject !== 'all' ? ` (Focus : ${this.selectedProject})` : '';
 		thinkingBox.createEl('span', {
 			cls: 'sbm-thinking-label',
-			text: '🧠 Analyse de votre coffre et préparation de votre programme du jour...'
+			text: `🧠 Analyse du coffre et préparation de votre programme du jour${focusText}...`
 		});
 
 		const textDisplayEl = this.contentElWrapper.createEl('div', { cls: 'sbm-briefing-text-display sbm-msg-streaming' });
@@ -202,7 +232,8 @@ export class BriefingView extends ItemView {
 					thinkingBox.remove();
 					const clean = fullText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
 					textDisplayEl.setText(clean);
-				}
+				},
+				this.selectedProject
 			);
 
 			this.generatedBriefingText = result.text;
@@ -213,11 +244,46 @@ export class BriefingView extends ItemView {
 			textDisplayEl.removeClass('sbm-msg-streaming');
 			textDisplayEl.empty();
 
-			const cleanedText = result.text.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
-			await MarkdownRenderer.render(this.app, cleanedText, textDisplayEl, '', this);
+			// 1. Barre d'actions d'application directe (Daily note + Planification)
+			const briefingActionBar = textDisplayEl.createDiv({ cls: 'sbm-briefing-document-actions' });
 
-			// Remplacement des tâches markdown par des widgets interactifs in-place
-			await this.upgradeTaskElementsInPlace(textDisplayEl, cleanedText, this.vaultTasks);
+			const saveDailyBtn = briefingActionBar.createEl('button', {
+				cls: 'sbm-doc-action-btn',
+				text: '📝 Enregistrer dans ma Daily Note'
+			});
+			saveDailyBtn.title = 'Inscrire ce plan dans la note quotidienne du jour';
+			saveDailyBtn.addEventListener('click', async () => {
+				const path = await MorningBriefingService.saveBriefingToDailyNote(
+					this.app,
+					this.plugin,
+					this.generatedBriefingText,
+					result.data.dateStr
+				);
+				new Notice(`Briefing enregistré dans [[${path}]] !`);
+			});
+
+			const planTasksBtn = briefingActionBar.createEl('button', {
+				cls: 'sbm-doc-action-btn',
+				text: '📅 Planifier ces tâches pour aujourd\'hui'
+			});
+			planTasksBtn.title = 'Appliquer la date du jour aux tâches recommandées dans leurs fichiers sources';
+			planTasksBtn.addEventListener('click', async () => {
+				const count = await MorningBriefingService.planTasksForToday(
+					this.app,
+					this.plugin,
+					this.vaultTasks,
+					result.data.dateStr
+				);
+				new Notice(`${count} tâche(s) planifiée(s) pour aujourd'hui !`);
+			});
+
+			// 2. Rendu du corps Markdown
+			const cleanedText = result.text.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
+			const textBodyContainer = textDisplayEl.createDiv({ cls: 'sbm-briefing-rendered-body' });
+			await MarkdownRenderer.render(this.app, cleanedText, textBodyContainer, '', this);
+
+			// 3. Remplacement des tâches markdown par des widgets interactifs in-place
+			await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
 
 		} catch (err: unknown) {
 			thinkingBox.remove();

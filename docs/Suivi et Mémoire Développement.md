@@ -353,6 +353,23 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   4. **Tests & Validation** : **61/61 tests unitaires passés avec 100% de succès (12 suites)**, 0 erreur ESLint, build de production validé.
 - **Statut** : Validée.
 
+### 📅 2026-08-24 — Étape 3.12 : Focus Projet du Jour, Inscription Daily Note, Planification 1-Clic & Modal Énergie
+- **Décision & Actions Réalisées** :
+  1. **Focus Projet Prioritaire du Jour ([`BriefingView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/briefingView.ts), [`MorningBriefingService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/morningBriefingService.ts))** :
+     - Ajout d'un sélecteur dédié `🎯 Focus Projet` dans l'en-tête du Briefing (avec détection automatique de tous les projets du coffre).
+     - Lorsque sélectionné, l'IA oriente son Cap du Jour et la majorité de ses recommandations sur ce projet spécifique.
+  2. **Persistance en 1 Clic dans la Daily Note (`saveBriefingToDailyNote`)** :
+     - Bouton d'action directe `[ 📝 Enregistrer dans ma Daily Note ]` dans le corps du briefing.
+     - Met à jour ou insère la section `## 🌅 Briefing & Focus du Jour` dans `04 - Journal/YYYY-MM-DD.md` sans briser le reste de la note quotidienne.
+  3. **Planification des Tâches en 1 Clic (`planTasksForToday`)** :
+     - Bouton d'action directe `[ 📅 Planifier ces tâches pour aujourd'hui ]`.
+     - Applique automatiquement la date du jour `📅 YYYY-MM-DD` dans les notes sources des tâches recommandées du coffre.
+  4. **Modal d'Énergie Rapide (`EnergyLevelModal.ts`)** :
+     - Nouvelle commande de palette `Second Brain: Indiquer mon niveau d'énergie` avec raccourcis clavier rapides 1 à 10.
+     - Actualisation instantanée du niveau d'énergie, de la barre d'état et des vues ouvertes.
+  5. **Tests & Validation** : **63/63 tests unitaires passés avec 100% de succès**, 0 erreur ESLint, build de production validé.
+- **Statut** : Validée.
+
 
 
 

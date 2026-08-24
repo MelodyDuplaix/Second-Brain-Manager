@@ -1,6 +1,7 @@
 import { App, normalizePath, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
@@ -12,10 +13,12 @@ export interface BriefingVaultData {
 	formattedDate: string;
 	energy: number;
 	modeText: string;
+	focusProject?: string;
 	overdueTasks: ObsidianTask[];
 	todayTasks: ObsidianTask[];
 	priorityTasks: ObsidianTask[];
 	inboxTasks: ObsidianTask[];
+	projectTasks: ObsidianTask[];
 	projects: string[];
 	contacts: string[];
 	dailyNoteContent?: string;
@@ -25,7 +28,11 @@ export class MorningBriefingService {
 	/**
 	 * Récupère et structure l'ensemble des données du coffre nécessaires pour le briefing.
 	 */
-	public static async collectBriefingData(app: App, plugin: SecondBrainPlugin): Promise<BriefingVaultData> {
+	public static async collectBriefingData(
+		app: App,
+		plugin: SecondBrainPlugin,
+		focusProject?: string
+	): Promise<BriefingVaultData> {
 		const today = new Date();
 		const dateStr = today.toISOString().split('T')[0];
 
@@ -79,6 +86,15 @@ export class MorningBriefingService {
 			return q === 'q1' || q === 'q2' || (t.priority && (t.priority === 'highest' || t.priority === 'high'));
 		});
 
+		// Tâches spécifiques au projet focus si sélectionné
+		const projectTasks = focusProject
+			? allOpenTasks.filter(t =>
+				t.filePath.toLowerCase().includes(focusProject.toLowerCase()) ||
+				t.title.toLowerCase().includes(focusProject.toLowerCase()) ||
+				t.tags.some(tag => tag.toLowerCase().includes(focusProject.toLowerCase()))
+			)
+			: [];
+
 		// Lecture de la note quotidienne du jour si elle existe
 		let dailyNoteContent: string | undefined;
 		const dailyPath = normalizePath(`${plugin.settings.dailyNotesFolder}/${dateStr}.md`);
@@ -92,10 +108,12 @@ export class MorningBriefingService {
 			formattedDate: capitalizedDate,
 			energy,
 			modeText,
+			focusProject: focusProject && focusProject !== 'all' ? focusProject : undefined,
 			overdueTasks,
 			todayTasks,
 			priorityTasks,
 			inboxTasks,
+			projectTasks,
 			projects: structure.projects,
 			contacts: structure.contacts,
 			dailyNoteContent
@@ -135,9 +153,23 @@ export class MorningBriefingService {
 			? data.inboxTasks.slice(0, 5).map(formatTaskLine).join('\n')
 			: 'Aucun élément en boîte de réception.';
 
+		let focusProjectText = '';
+		if (data.focusProject) {
+			const tasksForProject = data.projectTasks.length > 0
+				? data.projectTasks.map(formatTaskLine).join('\n')
+				: `Aucune tâche explicite trouvée pour ${data.focusProject}.`;
+			focusProjectText = `\n🎯 PROJET PRIORITAIRE DU JOUR DÉSIGNÉ PAR L'UTILISATEUR : "[[${data.focusProject}]]"\n` +
+				`TÂCHES LIÉES À CE PROJET :\n${tasksForProject}\n`;
+		}
+
 		let dailyNoteSnippet = '';
 		if (data.dailyNoteContent) {
 			dailyNoteSnippet = `\nContenu actuel de la note quotidienne du jour (${data.dateStr}) :\n${data.dailyNoteContent.slice(0, 1500)}\n`;
+		}
+
+		let focusDirectives = '';
+		if (data.focusProject) {
+			focusDirectives = `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
 		}
 
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et matrice d'Eisenhower.
@@ -150,7 +182,7 @@ CONSIGNES STRICTES DE RÉDACTION :
 2. **Adaptation au Niveau d'Énergie (${data.energy}/10 - ${data.modeText})** :
    - Si Énergie 1-3 (Mode Économie) : Protège l'utilisateur ! Recommande **1 seule tâche essentielle maximum** et propose de délester ou reporter le reste sans culpabiliser.
    - Si Énergie 4-7 (Mode Équilibré) : 1 grande tâche Q1 le matin + 2 ou 3 tâches secondaires Q2 l'après-midi.
-   - Si Énergie 8-10 (Plein Potentiel) : Focus sur les chantiers complexes, les créations de fond et les projets prioritaires.
+   - Si Énergie 8-10 (Plein Potentiel) : Focus sur les chantiers complexes, les créations de fond et les projets prioritaires.${focusDirectives}
 3. **Format des Tâches Recommandées** :
    - Écris TOUTES les tâches au format Obsidian Tasks standard : \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
    - Conserve les wikilinks vers les notes sources (ex: \`[[Acme Project]]\`, \`[[Maison]]\`).
@@ -166,7 +198,7 @@ CONSIGNES STRICTES DE RÉDACTION :
 Niveau d'énergie : ${data.energy}/10 (${data.modeText})
 Projets actifs : ${data.projects.join(', ') || 'Aucun'}
 Contacts récents : ${data.contacts.join(', ') || 'Aucun'}
-
+${focusProjectText}
 TÂCHES EN RETARD :
 ${overdueText}
 
@@ -194,9 +226,10 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui.`;
 		app: App,
 		plugin: SecondBrainPlugin,
 		signal: AbortSignal,
-		onChunk: (chunk: string, fullText: string) => void
+		onChunk: (chunk: string, fullText: string) => void,
+		focusProject?: string
 	): Promise<{ text: string; data: BriefingVaultData; allTasks: ObsidianTask[] }> {
-		const data = await this.collectBriefingData(app, plugin);
+		const data = await this.collectBriefingData(app, plugin, focusProject);
 		const messages = this.buildBriefingMessages(data);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
@@ -223,7 +256,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui.`;
 			...data.overdueTasks,
 			...data.todayTasks,
 			...data.priorityTasks,
-			...data.inboxTasks
+			...data.inboxTasks,
+			...data.projectTasks
 		];
 
 		return {
@@ -231,5 +265,89 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui.`;
 			data,
 			allTasks
 		};
+	}
+
+	/**
+	 * Enregistre ou met à jour la section Briefing du matin dans la Daily Note du jour.
+	 */
+	public static async saveBriefingToDailyNote(
+		app: App,
+		plugin: SecondBrainPlugin,
+		briefingText: string,
+		dateStr: string
+	): Promise<string> {
+		const folderPath = normalizePath(plugin.settings.dailyNotesFolder);
+		const filePath = normalizePath(`${folderPath}/${dateStr}.md`);
+
+		// Création du dossier si nécessaire
+		const folder = app.vault.getFolderByPath(folderPath);
+		if (!folder) {
+			await app.vault.createFolder(folderPath);
+		}
+
+		const cleanText = briefingText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1').trim();
+		const sectionHeader = '## 🌅 Briefing & Focus du Jour';
+		const sectionContent = `${sectionHeader}\n\n*Généré à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} (Énergie : ${plugin.settings.energyLevel}/10)*\n\n${cleanText}\n`;
+
+		const existingFile = app.vault.getFileByPath(filePath) || app.vault.getAbstractFileByPath(filePath);
+
+		if (existingFile instanceof TFile) {
+			await app.vault.process(existingFile, (content) => {
+				if (content.includes(sectionHeader)) {
+					// Remplacement de la section existante
+					const regex = new RegExp(`## 🌅 Briefing & Focus du Jour[\\s\\S]*?(?=\\n## |$)`, 'g');
+					return content.replace(regex, sectionContent.trim());
+				} else {
+					// Ajout en haut ou en fin de document
+					return `${content.trim()}\n\n${sectionContent.trim()}\n`;
+				}
+			});
+			return filePath;
+		} else {
+			const initialContent = `---\ndate: ${dateStr}\ntags: [journal, daily-note]\n---\n\n# Journal du ${dateStr}\n\n${sectionContent}\n## 📝 Notes & Pensées\n\n`;
+			await app.vault.create(filePath, initialContent);
+			return filePath;
+		}
+	}
+
+	/**
+	 * Planifie pour aujourd'hui (date due ou start) les tâches sélectionnées du briefing dans leurs notes sources.
+	 */
+	public static async planTasksForToday(
+		app: App,
+		plugin: SecondBrainPlugin,
+		tasks: ObsidianTask[],
+		dateStr: string
+	): Promise<number> {
+		let updatedCount = 0;
+		const tasksByFile = new Map<string, ObsidianTask[]>();
+
+		for (const task of tasks) {
+			if (!task.dueDate || task.dueDate < dateStr) {
+				const list = tasksByFile.get(task.filePath) || [];
+				list.push(task);
+				tasksByFile.set(task.filePath, list);
+			}
+		}
+
+		for (const [filePath, fileTasks] of tasksByFile.entries()) {
+			const normPath = normalizePath(filePath);
+			const file = app.vault.getFileByPath(normPath) || app.vault.getAbstractFileByPath(normPath);
+			if (!(file instanceof TFile)) continue;
+
+			await app.vault.process(file, (content) => {
+				const lines = content.split('\n');
+				for (const t of fileTasks) {
+					const idx = t.lineNumber - 1;
+					if (lines[idx] !== undefined) {
+						lines[idx] = TaskMutator.setDueDate(lines[idx], dateStr, plugin.settings);
+						updatedCount++;
+					}
+				}
+				return lines.join('\n');
+			});
+		}
+
+		return updatedCount;
 	}
 }
