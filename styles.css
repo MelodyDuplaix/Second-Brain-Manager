@@ -2546,6 +2546,50 @@ textarea.sbm-chat-textarea:focus {
 	border-color: var(--interactive-accent);
 }
 
+/* ==========================================================================
+   Vue Dédiée de la Revue du Soir (Bilan & Déconnexion Sereine)
+   ========================================================================== */
+
+.sbm-evening-header-icon {
+	color: var(--text-accent, #9c88ff) !important;
+}
+
+.sbm-evening-stats-badges {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.sbm-evening-badge {
+	font-size: 0.76em;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 12px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border: 1px solid var(--background-modifier-border);
+}
+
+.sbm-evening-badge.completed {
+	background-color: rgba(76, 175, 80, 0.15);
+	color: var(--text-success, #4caf50);
+	border-color: rgba(76, 175, 80, 0.3);
+}
+
+.sbm-evening-badge.coins {
+	background-color: rgba(255, 193, 7, 0.15);
+	color: var(--text-accent, #e5a93c);
+	border-color: rgba(255, 193, 7, 0.3);
+}
+
+.sbm-evening-badge.remaining {
+	background-color: rgba(var(--interactive-accent-rgb), 0.12);
+	color: var(--interactive-accent);
+	border-color: rgba(var(--interactive-accent-rgb), 0.25);
+}
+
 
 
 

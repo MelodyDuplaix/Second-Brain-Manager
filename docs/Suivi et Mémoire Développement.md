@@ -186,8 +186,7 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
 | **Panneau de Réglages Natif (Style Spaced Repetition)** | ✅ Terminé | `src/settings/` (`settingsPageManager.ts`, `mainPage.ts`, `rewardsPage.ts`) |
 | **Configuration Branche Git `dev` & `main`** | ✅ Terminé | Dépôt GitHub (`origin/main`, `origin/dev`) |
 | **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
-| **Workflow du Briefing du Matin (Projet Prioritaire & Énergie)** | ✅ Terminé | `src/views/briefingView.ts`, `src/services/morningBriefingService.ts` |
-| **Workflow de la Revue du Soir & Nettoyage Mental** | ⏳ À faire | `src/workflows/eveningReview.ts` |
+| **Workflow de la Revue du Soir & Nettoyage Mental** | ✅ Terminé | `src/views/eveningReviewView.ts`, `src/services/eveningReviewService.ts` |
 | **Workflow de Reprise après Pause** | ⏳ À faire | `src/workflows/recoveryWorkflow.ts` |
 | **Commandes Contextuelles d'Édition / Reformulation de Notes** | ⏳ À faire | `src/services/noteActionsService.ts` |
 | **Moteur de Rappels & Notifications Desktop** | ⏳ À faire | `src/services/reminderEngine.ts`, `src/services/notificationService.ts` |
@@ -368,6 +367,23 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
      - Nouvelle commande de palette `Second Brain: Indiquer mon niveau d'énergie` avec raccourcis clavier rapides 1 à 10.
      - Actualisation instantanée du niveau d'énergie, de la barre d'état et des vues ouvertes.
   5. **Tests & Validation** : **63/63 tests unitaires passés avec 100% de succès**, 0 erreur ESLint, build de production validé.
+- **Statut** : Validée.
+
+### 📅 2026-08-24 — Étape 3.13 : Intégration Native de la Revue du Soir & Nettoyage Mental
+- **Décision & Actions Réalisées** :
+  1. **Moteur Métier & Prompting Déculpabilisant ([`EveningReviewService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/eveningReviewService.ts))** :
+     - Synthèse automatique des tâches complétées aujourd'hui, des pièces gagnées (`🪙`), des tâches restantes ouvertes, des urgences en retard et des notes de l'Inbox.
+     - Prompting d'IA valorisant et serein (célébration des victoires, absence de culpabilité, options concrètes de report ou d'abandon).
+  2. **Vue Dédiée Interactive ([`EveningReviewView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/eveningReviewView.ts))** :
+     - Icône ruban `moon` et commande Obsidian `Second Brain: Ouvrir la revue du soir`.
+     - Header fixe avec badges de synthèse en direct (`✅ X faite(s)`, `🪙 +Y pièces`, `⏳ Z restante(s)`).
+     - Rendu streaming propre et widgets de tâches *in-place* (`TaskCardWidget`).
+     - Bouton direct `[ 📝 Enregistrer dans ma Daily Note ]` (section `## 🌙 Revue du Soir & Bilan`).
+     - Bouton direct `[ ⏩ Reporter les tâches restantes à demain ]` mettant à jour automatiquement les notes sources.
+  3. **Transition Fluide vers le Chat** :
+     - Chips de suggestions rapides (*« 🌙 Clôturer ma journée »*, *« ⏩ Reporter tout à demain »*, *« 🧹 Classer mes notes Inbox »*, *« 💭 Débriefer »*).
+     - Champ de saisie fluide transférant la conversation vers `ChatView` sans rupture.
+  4. **Tests & Validation** : **66/66 tests unitaires passés avec 100% de succès (13 suites)**, 0 erreur ESLint, build de production validé.
 - **Statut** : Validée.
 
 

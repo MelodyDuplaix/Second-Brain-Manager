@@ -6,6 +6,7 @@ import { DashboardView, VIEW_TYPE_DASHBOARD } from './views/dashboardView';
 import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views/gamificationHistoryView';
 import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
+import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
 import { Wallet, Reward, CompletionEvent } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
@@ -100,6 +101,11 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new BriefingView(leaf, this)
 		);
 
+		this.registerView(
+			VIEW_TYPE_EVENING_REVIEW,
+			(leaf) => new EveningReviewView(leaf, this)
+		);
+
 		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
@@ -107,6 +113,10 @@ export default class SecondBrainPlugin extends Plugin {
 
 		this.addRibbonIcon('sun', 'Briefing du matin', () => {
 			this.activateBriefingView();
+		});
+
+		this.addRibbonIcon('moon', 'Revue du soir', () => {
+			this.activateEveningReviewView();
 		});
 
 		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
@@ -151,6 +161,14 @@ export default class SecondBrainPlugin extends Plugin {
 			name: 'Ouvrir le briefing du matin',
 			callback: () => {
 				this.activateBriefingView();
+			}
+		});
+
+		this.addCommand({
+			id: 'ouvrir-revue-soir',
+			name: 'Ouvrir la revue du soir',
+			callback: () => {
+				this.activateEveningReviewView();
 			}
 		});
 
@@ -233,6 +251,23 @@ export default class SecondBrainPlugin extends Plugin {
 			if (rightLeaf) {
 				leaf = rightLeaf;
 				await leaf.setViewState({ type: VIEW_TYPE_BRIEFING, active: true });
+			}
+		}
+
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
+	}
+
+	async activateEveningReviewView() {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(VIEW_TYPE_EVENING_REVIEW)[0];
+
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				leaf = rightLeaf;
+				await leaf.setViewState({ type: VIEW_TYPE_EVENING_REVIEW, active: true });
 			}
 		}
 
