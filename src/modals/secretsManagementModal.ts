@@ -254,8 +254,8 @@ export class SecretsManagementModal extends Modal {
 					const selectedSec = keyringSelect.value;
 					if (selectedSec) {
 						provider.setSecretId(this.plugin, selectedSec);
-						if (provider.hasProductId && productIdInput) {
-							this.plugin.settings.infomaniakProductId = productIdInput.value.trim() || undefined;
+						if (provider.id === 'infomaniak' && prodInput) {
+							this.plugin.settings.infomaniakProductId = prodInput.value.trim() || undefined;
 						}
 						await this.plugin.saveSettings();
 						new Notice(`Secret "${selectedSec}" lié à ${provider.name}`);

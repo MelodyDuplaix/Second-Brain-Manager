@@ -86,6 +86,8 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 
 		if (item.provider === 'infomaniak' && !this.plugin.settings.llmEndpoint) {
 			this.plugin.settings.llmEndpoint = 'https://api.infomaniak.com';
+		} else if (item.provider === 'openrouter' && !this.plugin.settings.llmEndpoint) {
+			this.plugin.settings.llmEndpoint = 'https://openrouter.ai/api/v1';
 		} else if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
 			this.plugin.settings.llmEndpoint = 'http://localhost:11434';
 		} else if (item.provider === 'lmstudio' && !this.plugin.settings.llmEndpoint) {

@@ -8,6 +8,7 @@ import { TaskParser } from '../parsers/taskParser';
 import { VaultContextService } from '../services/vaultContextService';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { ModelPickerModal } from '../modals/modelPickerModal';
+import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_CHAT = 'sbm-chat-view';
@@ -839,9 +840,80 @@ export class ChatView extends ItemView {
 				textContentEl.setText('Génération interrompue.');
 				assistantMsg.content = 'Génération interrompue.';
 			} else {
-				new Notice(`Erreur IA : ${errorMsg}`);
-				textContentEl.setText(`Erreur : ${errorMsg}`);
-				assistantMsg.content = `Erreur : ${errorMsg}`;
+				// 1. Intégrité de l'historique : Retirer le message d'erreur de this.messages
+				const idx = this.messages.indexOf(assistantMsg);
+				if (idx !== -1) {
+					this.messages.splice(idx, 1);
+				}
+
+				// 2. Transformer la bulle en carte d'alerte stylisée
+				msgEl.addClass('sbm-chat-msg-error');
+				bubbleEl.empty();
+				bubbleEl.className = 'sbm-msg-bubble sbm-msg-error-bubble';
+
+				// Header de l'erreur
+				const errorHeader = bubbleEl.createDiv({ cls: 'sbm-error-card-header' });
+				const titleLeft = errorHeader.createDiv({ cls: 'sbm-error-title-left' });
+				const warnIcon = titleLeft.createSpan({ cls: 'sbm-error-warn-icon' });
+				setIcon(warnIcon, 'alert-triangle');
+				titleLeft.createEl('span', {
+					cls: 'sbm-error-title-text',
+					text: `Erreur (${this.plugin.settings.llmProvider.toUpperCase()})`
+				});
+
+				const closeBtn = errorHeader.createEl('button', { cls: 'sbm-error-dismiss-btn' });
+				setIcon(closeBtn, 'x');
+				closeBtn.title = 'Fermer cette alerte';
+				closeBtn.addEventListener('click', () => {
+					msgEl.remove();
+				});
+
+				// Corps du message d'erreur (sélectionnable à 100%)
+				const errorBody = bubbleEl.createDiv({ cls: 'sbm-error-message-box' });
+				errorBody.setText(errorMsg);
+
+				// Barre d'actions correctives contextuelles
+				const actionsBar = bubbleEl.createDiv({ cls: 'sbm-error-actions-bar' });
+
+				// Bouton Réessayer
+				const retryBtn = actionsBar.createEl('button', {
+					cls: 'sbm-error-action-btn mod-cta',
+					text: '🔄 Réessayer'
+				});
+				retryBtn.title = 'Relancer la génération de la réponse';
+				retryBtn.addEventListener('click', async () => {
+					msgEl.remove();
+					await this.triggerAssistantGeneration();
+				});
+
+				// Bouton Gérer les clés d'API
+				const secretsBtn = actionsBar.createEl('button', {
+					cls: 'sbm-error-action-btn',
+					text: '🔑 Gérer les clés d\'API'
+				});
+				secretsBtn.title = 'Ouvrir le gestionnaire de clés API et secrets';
+				secretsBtn.addEventListener('click', () => {
+					const curProv = this.plugin.settings.llmProvider;
+					const target = (curProv === 'gemini' || curProv === 'openai' || curProv === 'openrouter' || curProv === 'infomaniak')
+						? curProv
+						: undefined;
+					new SecretsManagementModal(this.app, this.plugin, () => {}, target).open();
+				});
+
+				// Bouton Copier l'erreur
+				const copyErrorBtn = actionsBar.createEl('button', {
+					cls: 'sbm-error-action-btn',
+					text: '📋 Copier l\'erreur'
+				});
+				copyErrorBtn.title = 'Copier le message d\'erreur dans le presse-papier';
+				copyErrorBtn.addEventListener('click', async () => {
+					await navigator.clipboard.writeText(errorMsg);
+					new Notice('Erreur copiée dans le presse-papier !');
+					copyErrorBtn.setText('✓ Copié !');
+					setTimeout(() => copyErrorBtn.setText('📋 Copier l\'erreur'), 2000);
+				});
+
+				new Notice(`Erreur IA : ${errorMsg.slice(0, 80)}...`);
 			}
 		} finally {
 			this.isGenerating = false;

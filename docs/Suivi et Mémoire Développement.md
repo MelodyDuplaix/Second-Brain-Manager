@@ -320,6 +320,23 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
      - Parsing et conversion automatique en cartes interactives des tâches contenues dans les **blocs de code Markdown (`<pre><code>`)** et dans les **tableaux Markdown (`<table>`)**.
 - **Statut** : Validée.
 
+### 📅 2026-08-24 — Étape 3.10 : Épuration des Réglages, Centralisation des Secrets & Refonte Visuelle des Erreurs dans le Chat
+- **Décision & Actions Réalisées** :
+  1. **Épuration Complète des Paramètres (`MainPage.ts`)** :
+     - Suppression définitive des champs isolés de saisie manuelle et du champ redondant de Product ID Infomaniak de la page principale.
+     - Centralisation à 100% de la configuration des clés, tokens et identifiants sur la modal [`SecretsManagementModal`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/modals/secretsManagementModal.ts).
+     - Affichage clair et épuré du statut de connexion/secret lié pour chaque fournisseur actif.
+  2. **Unification et Synchronisation des Modèles (`ModelPickerModal.ts`, `ChatView.ts`)** :
+     - Synchronisation instantanée entre la sélection de modèle dans le chat, le badge d'en-tête et les réglages globaux du plugin.
+     - Configuration automatique des endpoints par défaut lors du basculement vers OpenRouter, Infomaniak, Ollama ou LM Studio.
+  3. **Refonte Visuelle et Ergonomique des Erreurs dans le Chat (`ChatView.ts`, `styles.css`)** :
+     - **Carte d'alerte stylisée dédiée (`sbm-msg-error-bubble`)** avec bordure rouge/ambre distinctive et icône ⚠️ explicite pour différencier immédiatement les erreurs API/réseau des réponses normales de l'assistant.
+     - **Texte d'erreur 100% sélectionnable** dans un conteneur monospace dédié avec bouton direct `[ 📋 Copier l'erreur ]`.
+     - **Actions correctives contextuelles instantanées** : Bouton `[ 🔄 Réessayer ]` pour relancer la génération et bouton `[ 🔑 Gérer les clés d'API ]` pour ouvrir directement la modal des secrets pré-ciblée sur le fournisseur actif.
+     - **Préservation de l'intégrité de l'historique** : Les erreurs techniques ne sont plus injectées comme des tours de parole d'assistant dans l'historique de conversation sauvegardé.
+  4. **Tests & Validation** : **59/59 tests unitaires passés avec 100% de succès**, 0 erreur ESLint, build de production validé sans avertissement.
+- **Statut** : Validée.
+
 
 
 

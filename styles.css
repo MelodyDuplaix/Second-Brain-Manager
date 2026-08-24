@@ -1963,6 +1963,123 @@ textarea.sbm-chat-textarea:focus {
 	cursor: pointer;
 }
 
+/* ==========================================================================
+   Carte d'Alerte Stylisée des Erreurs LLM dans le Chat (Ergonomie & Diagnostic)
+   ========================================================================== */
+
+.sbm-chat-msg-error {
+	width: 100%;
+	justify-content: flex-start;
+}
+
+.sbm-msg-bubble.sbm-msg-error-bubble {
+	max-width: 90%;
+	min-width: 220px;
+	padding: 12px 14px;
+	border-radius: 8px;
+	background-color: rgba(var(--color-red-rgb, 244, 67, 54), 0.08);
+	border: 1px solid rgba(var(--color-red-rgb, 244, 67, 54), 0.4);
+	border-left: 4px solid var(--text-error, #f44336);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+	color: var(--text-normal);
+}
+
+.sbm-error-card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.sbm-error-title-left {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-error, #f44336);
+	font-weight: 600;
+	font-size: 0.92em;
+}
+
+.sbm-error-warn-icon {
+	display: inline-flex;
+	align-items: center;
+	color: var(--text-error, #f44336);
+}
+
+.sbm-error-dismiss-btn {
+	background: none;
+	border: none;
+	padding: 2px 6px;
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.sbm-error-dismiss-btn:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+.sbm-error-message-box {
+	background-color: var(--background-primary);
+	border: 1px solid rgba(var(--color-red-rgb, 244, 67, 54), 0.25);
+	border-radius: 6px;
+	padding: 8px 12px;
+	font-family: var(--font-monospace);
+	font-size: 0.84em;
+	line-height: 1.45;
+	color: var(--text-normal);
+	user-select: text !important;
+	-webkit-user-select: text !important;
+	word-break: break-word;
+	margin-bottom: 10px;
+	max-height: 150px;
+	overflow-y: auto;
+}
+
+.sbm-error-actions-bar {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.sbm-error-action-btn {
+	font-size: 0.8em;
+	padding: 4px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+	transition: all 0.15s ease;
+}
+
+.sbm-error-action-btn:hover {
+	border-color: var(--interactive-accent);
+	background-color: var(--background-secondary-alt);
+}
+
+.sbm-error-action-btn.mod-cta {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
+	font-weight: 500;
+}
+
+.sbm-error-action-btn.mod-cta:hover {
+	opacity: 0.9;
+}
+
+
 
 
 

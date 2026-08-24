@@ -4,7 +4,6 @@ import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
 import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
-import { InfomaniakService } from '../../services/infomaniakService';
 
 export class MainPage extends BaseSettingsPage {
 	render(): void {
@@ -365,49 +364,7 @@ export class MainPage extends BaseSettingsPage {
 			});
 		}
 
-		if (this.plugin.settings.llmProvider === 'infomaniak') {
-			aiGroup.addSetting((setting: Setting) => {
-				setting
-					.setName('Product ID Infomaniak')
-					.setDesc('Identifiant numérique AI Tools. Détecté automatiquement via GET /1/ai ou modifiable manuellement (ex: 90065).')
-					.addText((text) => {
-						text
-							.setPlaceholder('Auto-détecté via GET /1/ai ou saisir ex: 90065')
-							.setValue(this.plugin.settings.infomaniakProductId || '')
-							.onChange(async (value) => {
-								this.plugin.settings.infomaniakProductId = value.trim() || undefined;
-								await this.plugin.saveSettings();
-							});
-					})
-					.addButton((btn) => {
-						btn
-							.setButtonText('🔄 Auto-détecter')
-							.setTooltip('Tester la clé et récupérer automatiquement le Product ID depuis l\'API Infomaniak')
-							.onClick(async () => {
-								btn.setDisabled(true);
-								btn.setButtonText('⏳ Test...');
-								const apiKey = await this.plugin.getSecretApiKey('infomaniak');
-								if (!apiKey) {
-									btn.setDisabled(false);
-									btn.setButtonText('🔄 Auto-détecter');
-									new Notice('⚠️ Veuillez d\'abord lier une clé API / Token Infomaniak.');
-									return;
-								}
-								const check = await InfomaniakService.testConnection(apiKey, this.plugin.settings.llmEndpoint);
-								btn.setDisabled(false);
-								btn.setButtonText('🔄 Auto-détecter');
-								if (check.success && check.productId) {
-									this.plugin.settings.infomaniakProductId = check.productId;
-									await this.plugin.saveSettings();
-									new Notice(`✓ Product ID détecté avec succès : ${check.productId}`);
-									this.render();
-								} else {
-									new Notice(`⚠️ ${check.error || 'Échec de détection automatique du Product ID'}`);
-								}
-							});
-					});
-			});
-		}
+
 
 		if (this.plugin.settings.llmProvider === 'ollama' || this.plugin.settings.llmProvider === 'lm-studio' || this.plugin.settings.llmProvider === 'lmstudio') {
 			aiGroup.addSetting((setting: Setting) => {
