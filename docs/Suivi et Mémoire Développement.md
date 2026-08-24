@@ -188,7 +188,7 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
 | **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
 | **Workflow de la Revue du Soir & Nettoyage Mental** | ✅ Terminé | `src/views/eveningReviewView.ts`, `src/services/eveningReviewService.ts` |
 | **Workflow de Reprise après Pause** | ⏳ À faire | `src/workflows/recoveryWorkflow.ts` |
-| **Commandes Contextuelles d'Édition / Reformulation de Notes** | ⏳ À faire | `src/services/noteActionsService.ts` |
+| **Commandes Contextuelles d'Édition / Reformulation de Notes** | ✅ Terminé | `src/services/noteActionsService.ts` |
 | **Moteur de Rappels & Notifications Desktop** | ⏳ À faire | `src/services/reminderEngine.ts`, `src/services/notificationService.ts` |
 | **Système d'XP, Niveaux & Trophées** | ⏳ À faire | `src/services/gamificationService.ts` |
 | **Capture Vocale & Whisper Local** | ⏳ Futur | `src/services/voiceService.ts` |
@@ -384,6 +384,20 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
      - Chips de suggestions rapides (*« 🌙 Clôturer ma journée »*, *« ⏩ Reporter tout à demain »*, *« 🧹 Classer mes notes Inbox »*, *« 💭 Débriefer »*).
      - Champ de saisie fluide transférant la conversation vers `ChatView` sans rupture.
   4. **Tests & Validation** : **66/66 tests unitaires passés avec 100% de succès (13 suites)**, 0 erreur ESLint, build de production validé.
+- **Statut** : Validée.
+
+### 📅 2026-08-24 — Étape 4.1 : Commandes Contextuelles d'Édition & d'Extraction IA sur les Notes
+- **Décision & Actions Réalisées** :
+  1. **Service Métier IA ([`NoteActionsService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/noteActionsService.ts))** :
+     - `extractTasks` : Analyse un texte/compte-rendu et génère des tâches complètes au format Obsidian Tasks avec priorités (`#tm/q1..q4`), dates (`📅`), énergie (`#energie/1..10`) et wikilinks vers la note source (`[[...]]`).
+     - `breakdownTask` : Décompose instantanément la tâche sous le curseur en 3 à 5 sous-actions concrètes immédiatement actionnables.
+     - `summarizeOrRephrase` : Génère un résumé exécutif (inséré sous forme de callout `> [!SUMMARY]`) ou reformule la sélection pour plus de clarté.
+  2. **Intégration Menu Contextuel (Clic Droit) & Palette de Commandes ([`main.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/main.ts))** :
+     - Commandes : `Extraire les tâches de la note ou de la sélection`, `Décomposer la tâche sous le curseur`, `Résumer la note ou la sélection`, `Reformuler la sélection`.
+     - Événement `editor-menu` injectant intelligemment les options au clic droit (ex: `🧩 Décomposer cette tâche` n'apparaît que sur les lignes de tâches `- [ ]`).
+  3. **Méthode `generateResponse` Universelle ([`LLMService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/llmService.ts))** :
+     - Agrégation automatique du flux streaming sur tous les fournisseurs LLM.
+  4. **Tests & Validation** : **70/70 tests unitaires passés avec 100% de succès (14 suites)**, 0 erreur ESLint, build de production validé.
 - **Statut** : Validée.
 
 

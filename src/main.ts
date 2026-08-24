@@ -1,4 +1,4 @@
-import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath } from 'obsidian';
+import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView } from 'obsidian';
 import { TaskParser } from './parsers/taskParser';
 import { CustomMatrixTagMapping } from './adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from './models/syntaxConfig';
@@ -11,6 +11,7 @@ import { Wallet, Reward, CompletionEvent } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { EnergyLevelModal } from './modals/energyLevelModal';
+import { NoteActionsService } from './services/noteActionsService';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig {
 	energyLevel: number;
@@ -202,6 +203,87 @@ export default class SecondBrainPlugin extends Plugin {
 				new Notice(`Analyse terminée : ${count} tâches principales trouvées dans le coffre.`);
 			}
 		});
+
+		// Commandes contextuelles d'édition IA sur les notes
+		this.addCommand({
+			id: 'extraire-taches-note',
+			name: 'Extraire les tâches de la note ou de la sélection',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view);
+			}
+		});
+
+		this.addCommand({
+			id: 'decomposer-tache-curseur',
+			name: 'Décomposer la tâche sous le curseur',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view);
+			}
+		});
+
+		this.addCommand({
+			id: 'resumer-note-selection',
+			name: 'Résumer la note ou la sélection',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				NoteActionsService.handleSummarizeCommand(this.app, this, editor, view);
+			}
+		});
+
+		this.addCommand({
+			id: 'reformuler-selection',
+			name: 'Reformuler la sélection pour améliorer la clarté',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				NoteActionsService.handleRephraseCommand(this.app, this, editor, view);
+			}
+		});
+
+		// Intégration dans le menu contextuel clic-droit de l'éditeur Markdown
+		this.registerEvent(
+			this.app.workspace.on('editor-menu', (menu, editor, view) => {
+				menu.addSeparator();
+
+				const cursor = editor.getCursor();
+				const line = editor.getLine(cursor.line);
+				const isTaskLine = /^[-*0-9.]*\s*\[[ xX/]\]/.test(line.trim());
+
+				if (isTaskLine) {
+					menu.addItem((item) => {
+						item.setTitle('🧩 Second Brain: Décomposer cette tâche')
+							.setIcon('list-tree')
+							.onClick(() => {
+								NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view as MarkdownView);
+							});
+					});
+				}
+
+				menu.addItem((item) => {
+					item.setTitle('🧠 Second Brain: Extraire les tâches')
+						.setIcon('check-square')
+						.onClick(() => {
+							NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view as MarkdownView);
+						});
+				});
+
+				const selection = editor.getSelection();
+				if (selection.trim()) {
+					menu.addItem((item) => {
+						item.setTitle('✨ Second Brain: Reformuler la sélection')
+							.setIcon('sparkles')
+							.onClick(() => {
+								NoteActionsService.handleRephraseCommand(this.app, this, editor, view as MarkdownView);
+							});
+					});
+				}
+
+				menu.addItem((item) => {
+					item.setTitle('📝 Second Brain: Résumer')
+						.setIcon('file-text')
+						.onClick(() => {
+							NoteActionsService.handleSummarizeCommand(this.app, this, editor, view as MarkdownView);
+						});
+				});
+			})
+		);
 
 		this.addSettingTab(new SecondBrainSettingTab(this.app, this));
 	}

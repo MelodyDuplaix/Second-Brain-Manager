@@ -552,6 +552,17 @@ export class LLMService {
 
 		return fullText;
 	}
+
+	/**
+	 * Génère une réponse complète en agrégeant le flux streaming.
+	 */
+	public static async generateResponse(
+		messages: ChatMessage[],
+		config: LLMConfig
+	): Promise<{ content: string }> {
+		const fullText = await this.generateStreamingResponse(messages, config, () => {});
+		return { content: fullText };
+	}
 }
 
 
