@@ -371,9 +371,10 @@ export class RecoveryService {
 			const parsed = JSON.parse(rawJson);
 			if (Array.isArray(parsed) && parsed.length > 0) {
 				const validatedProposals: ActionProposal[] = parsed
-					.filter(p => p && typeof p === 'object' && p.type && p.targetPath)
+					.filter(p => p && typeof p === 'object' && p.type)
 					.map((p, index) => {
-						const targetPath = String(p.targetPath);
+						const rawTarget = p.targetPath || (p.folder ? `${p.folder}/${p.fileName || 'Note'}` : p.fileName) || p.description || 'Note';
+						const targetPath = String(rawTarget).replace(/[\r\n]+/g, ' ').trim();
 						const lineNum = Number(p.lineNumber || 1);
 
 						// Recherche de la tâche originale dans le coffre pour enrichir les informations
@@ -404,6 +405,7 @@ export class RecoveryService {
 						};
 
 						const prop: ActionProposal = {
+							...p,
 							id: p.id || `recovery-ai-${index}-${Date.now()}`,
 							type: p.type,
 							targetPath,
@@ -411,12 +413,6 @@ export class RecoveryService {
 							taskTitle,
 							description: p.description || `Action sur ${taskTitle}`,
 							selected: p.selected !== false,
-							newStatus: p.newStatus,
-							newDueDate: p.newDueDate,
-							newStartDate: p.newStartDate,
-							newPriority: p.newPriority,
-							newEnergy: p.newEnergy,
-							newMatrixQuadrant: p.newMatrixQuadrant,
 							diff,
 							reason
 						} as ActionProposal;

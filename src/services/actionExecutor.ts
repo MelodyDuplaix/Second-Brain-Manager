@@ -44,34 +44,63 @@ export class ActionExecutor {
 	private async executeSingleProposal(proposal: ActionProposal): Promise<ActionResult> {
 		switch (proposal.type) {
 			case 'create_note': {
-				const normalizedPath = normalizePath(proposal.targetPath);
-				const folderPath = normalizePath(proposal.folder);
+				let targetPath = proposal.targetPath;
+				let folder = proposal.folder;
+				const fileName = proposal.fileName;
 
-				// Création récursive du dossier si nécessaire
-				await this.ensureFolderExists(folderPath);
+				// Si targetPath est manquant mais folder et fileName sont fournis
+				if (!targetPath && (folder || fileName)) {
+					folder = folder || this.settings.inboxFolder || '00 - Boîte de réception';
+					const rawName = fileName || proposal.description || 'Nouvelle note';
+					targetPath = `${folder}/${rawName}`;
+				} else if (!targetPath) {
+					targetPath = `${this.settings.inboxFolder || '00 - Boîte de réception'}/${proposal.description || 'Nouvelle note'}`;
+				}
 
-				const existing = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+				// Nettoyage des sauts de ligne et caractères interdits dans le chemin
+				targetPath = targetPath.replace(/[\r\n]+/g, ' ').replace(/[\\:*?"<>|]/g, '').trim();
+				if (!targetPath.endsWith('.md')) {
+					targetPath += '.md';
+				}
+
+				// Extraction du dossier parent et du nom de fichier
+				const parts = targetPath.split('/');
+				const cleanFileName = parts.pop() || 'Note.md';
+				const folderPath = parts.length > 0 ? parts.join('/') : (folder || this.settings.inboxFolder || '');
+
+				const finalPath = normalizePath(folderPath ? `${folderPath}/${cleanFileName}` : cleanFileName);
+
+				if (folderPath) {
+					await this.ensureFolderExists(normalizePath(folderPath));
+				}
+
+				const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
 				if (existing) {
 					return {
 						proposalId: proposal.id,
 						success: false,
-						message: `La note "${normalizedPath}" existe déjà.`,
-						createdOrModifiedPath: normalizedPath
+						message: `La note "${finalPath}" existe déjà.`,
+						createdOrModifiedPath: finalPath
 					};
 				}
 
-				let fullContent = proposal.content;
+				let fullContent = typeof proposal.content === 'string' ? proposal.content : '';
+				if (!fullContent.trim()) {
+					const titleHeading = cleanFileName.replace(/\.md$/, '');
+					fullContent = `# ${titleHeading}\n\n${proposal.description ? `> ${proposal.description}\n\n` : ''}`;
+				}
+
 				if (proposal.tags && proposal.tags.length > 0) {
 					const tagsHeader = proposal.tags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
 					fullContent = `${tagsHeader}\n\n${fullContent}`;
 				}
 
-				await this.app.vault.create(normalizedPath, fullContent);
+				await this.app.vault.create(finalPath, fullContent);
 				return {
 					proposalId: proposal.id,
 					success: true,
-					message: `Note "${normalizedPath}" créée avec succès.`,
-					createdOrModifiedPath: normalizedPath
+					message: `Note "${finalPath}" créée avec succès.`,
+					createdOrModifiedPath: finalPath
 				};
 			}
 

@@ -125,4 +125,20 @@ describe('ActionExecutor', () => {
 		expect(processedFiles['01 - Projets/Jeu.md']).not.toContain('[ ] [ ]');
 		expect(processedFiles['01 - Projets/Jeu.md']).not.toContain('- [ ] - [ ]');
 	});
+
+	it('should handle create_note robustly when folder or content is omitted and clean invalid characters', async () => {
+		const proposal = {
+			id: 'act-5',
+			type: 'create_note' as const,
+			description: 'Créer un bac à sable pour toutes les idées en vrac non urgentes',
+			selected: true,
+			targetPath: '03 - Ressources/Bac à sable\npour idées.md'
+		};
+
+		const results = await executor.executeProposals([proposal]);
+		expect(results[0].success).toBe(true);
+		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toBeDefined();
+		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toContain('# Bac à sable pour idées');
+	});
 });
+
