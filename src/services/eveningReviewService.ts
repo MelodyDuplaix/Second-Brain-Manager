@@ -129,7 +129,7 @@ export class EveningReviewService {
 
 		const unfinishedText = data.unfinishedTodayTasks.length > 0
 			? data.unfinishedTodayTasks.map(formatTaskLine).join('\n')
-			: 'Toutes les tâches prévues aujourd\'hui ont été traitées ! 🎉';
+			: 'Toutes les tâches prévues aujourd\'hui ont été traitées.';
 
 		const overdueText = data.overdueTasks.length > 0
 			? data.overdueTasks.slice(0, 8).map(formatTaskLine).join('\n')
@@ -147,38 +147,41 @@ export class EveningReviewService {
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et revue sans culpabilité.
 
 TON OBJECTIF :
-Fournir une **Revue du Soir chaleureuse, déculpabilisante, constructive et apaisante** pour aider l'utilisateur à clôturer sa journée, célébrer ses victoires, trier les tâches ouvertes et libérer sa charge mentale avant la soirée.
+Fournir une Revue du Soir chaleureuse, déculpabilisante, constructive et apaisante pour aider l'utilisateur à clôturer sa journée, célébrer ses victoires, trier les tâches ouvertes et libérer sa charge mentale avant la soirée.
 
-CONSIGNES STRICTES DE RÉDACTION :
+CONSIGNE DE STYLE STRICTE :
+- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et apaisant.
+
+CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Bienveillant, positif et valorisant. Ne jamais faire de reproches sur les tâches non terminées. Clôturer la journée dans la sérénité.
-2. **Célébration des Victoires** : Valorise les tâches accomplies (${data.completedTodayTasks.length} tâche(s)) et les pièces gagnées (+${data.coinsEarnedToday} 🪙).
+2. **Célébration des Victoires** : Valorise les tâches accomplies (${data.completedTodayTasks.length} tâche(s)) et les pièces gagnées (+${data.coinsEarnedToday} pièces).
 3. **Triage Clair des Tâches Restantes** :
    - Pour les tâches non terminées, propose des options claires : *Reporter à demain* (\`📅\`), *Découper*, *Changer de quadrant*, ou *Abandonner sans regret* (\`- [-]\`).
    - Format Markdown Tasks standard : \`- [ ] Titre 📅 YYYY-MM-DD #tm/qN [[LienNote]]\` avec wikilinks.
 4. **Nettoyage Mental & Inbox** :
    - Si des notes sont dans l'Inbox, suggère brièvement où les classer (\`01 - Projets/\`, \`03 - Contacts/\`).
 5. **Structure de la Revue** :
-   - 🌙 **Bilan & Célébration de la Journée** (Ce qui a avancé, récompenses)
-   - 📋 **Triage des Tâches Restantes** (Recommandations pour demain)
-   - 🧹 **Nettoyage Mental & Boîte de Réception** (Organisation fluide)
-   - 🛌 **Mot de Clôture & Déconnexion** (Conseil bienveillant pour la soirée)`;
+   - **Bilan & Célébration de la Journée** (Ce qui a avancé, récompenses)
+   - **Triage des Tâches Restantes** (Recommandations pour demain)
+   - **Nettoyage Mental & Boîte de Réception** (Organisation fluide)
+   - **Mot de Clôture & Déconnexion** (Conseil bienveillant pour la soirée)`;
 
 		const userMessage = `Voici le bilan de mon coffre pour ce ${data.formattedDate} :
 
-TÂCHES TERMINÉES AUJOURD'HUI (${data.completedTodayTasks.length}) :
+TACHES TERMINEES AUJOURD'HUI (${data.completedTodayTasks.length}) :
 ${completedText}
-🪙 Pièces gagnées aujourd'hui : +${data.coinsEarnedToday} 🪙
+Pieces gagnees aujourd'hui : +${data.coinsEarnedToday} pieces
 
-TÂCHES PRÉVUES NON TERMINÉES (${data.unfinishedTodayTasks.length}) :
+TACHES PREVUES NON TERMINEES (${data.unfinishedTodayTasks.length}) :
 ${unfinishedText}
 
-AUTRES TÂCHES EN RETARD (${data.overdueTasks.length}) :
+AUTRES TACHES EN RETARD (${data.overdueTasks.length}) :
 ${overdueText}
 
-NOTES EN BOÎTE DE RÉCEPTION (${data.inboxNotes.length}) :
+NOTES EN BOITE DE RECEPTION (${data.inboxNotes.length}) :
 ${inboxText}
 ${dailyNoteSnippet}
-Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir.`;
+Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. N'utilise aucun émoji dans ta réponse.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },

@@ -159,8 +159,8 @@ export class MorningBriefingService {
 			const tasksForProject = data.projectTasks.length > 0
 				? data.projectTasks.map(formatTaskLine).join('\n')
 				: `Aucune tâche explicite trouvée pour ${data.focusProject}.`;
-			focusProjectText = `\n🎯 PROJET PRIORITAIRE DU JOUR DÉSIGNÉ PAR L'UTILISATEUR : "[[${data.focusProject}]]"\n` +
-				`TÂCHES LIÉES À CE PROJET :\n${tasksForProject}\n`;
+			focusProjectText = `\nPROJET PRIORITAIRE DU JOUR DESIGNE PAR L'UTILISATEUR : "[[${data.focusProject}]]"\n` +
+				`TACHES LIEES A CE PROJET :\n${tasksForProject}\n`;
 		}
 
 		let dailyNoteSnippet = '';
@@ -176,12 +176,15 @@ export class MorningBriefingService {
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et matrice d'Eisenhower.
 
 TON OBJECTIF :
-Fournir un **Briefing du Matin clair, motivant, ultra-structuré et sur-mesure** pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie.
+Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie.
 
-CONSIGNES STRICTES DE RÉDACTION :
+CONSIGNE DE STYLE STRICTE :
+- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et professionnel.
+
+CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.
 2. **Adaptation au Niveau d'Énergie (${data.energy}/10 - ${data.modeText})** :
-   - Si Énergie 1-3 (Mode Économie) : Protège l'utilisateur ! Recommande **1 seule tâche essentielle maximum** et propose de délester ou reporter le reste sans culpabiliser.
+   - Si Énergie 1-3 (Mode Économie) : Protège l'utilisateur ! Recommande 1 seule tâche essentielle maximum et propose de délester ou reporter le reste sans culpabiliser.
    - Si Énergie 4-7 (Mode Équilibré) : 1 grande tâche Q1 le matin + 2 ou 3 tâches secondaires Q2 l'après-midi.
    - Si Énergie 8-10 (Plein Potentiel) : Focus sur les chantiers complexes, les créations de fond et les projets prioritaires.${focusDirectives}
 3. **Format des Tâches Recommandées** :
@@ -189,10 +192,10 @@ CONSIGNES STRICTES DE RÉDACTION :
    - Conserve les wikilinks vers les notes sources (ex: \`[[Acme Project]]\`, \`[[Maison]]\`).
    - N'entoure JAMAIS les wikilinks de backticks (\`[[...]]\`).
 4. **Structure du Briefing** :
-   - 🌅 **Cap du Jour** (Le focus ou projet n°1 incontournable)
-   - ⚡ **Plan de Journée Recommandé** (Les tâches sélectionnées et ordonnées selon l'énergie)
-   - ⏰ **Alertes & Points d'Attention** (Urgences réelles ou tâches en souffrance à traiter ou reporter)
-   - 💡 **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)`;
+   - **Cap du Jour** (Le focus ou projet n°1 incontournable)
+   - **Plan de Journée Recommandé** (Les tâches sélectionnées et ordonnées selon l'énergie)
+   - **Alertes & Points d'Attention** (Urgences réelles ou tâches en souffrance à traiter ou reporter)
+   - **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)`;
 
 		const userMessage = `Voici l'état actuel de mon coffre pour ce ${data.formattedDate} :
 
@@ -200,19 +203,19 @@ Niveau d'énergie : ${data.energy}/10 (${data.modeText})
 Projets actifs : ${data.projects.join(', ') || 'Aucun'}
 Contacts récents : ${data.contacts.join(', ') || 'Aucun'}
 ${focusProjectText}
-TÂCHES EN RETARD :
+TACHES EN RETARD :
 ${overdueText}
 
-TÂCHES PLANIFIÉES POUR AUJOURD'HUI :
+TACHES PLANIFIEES POUR AUJOURD'HUI :
 ${todayText}
 
-TÂCHES PRIORITAIRES (Q1 / Q2) :
+TACHES PRIORITAIRES (Q1 / Q2) :
 ${priorityText}
 
-TÂCHES EN BOÎTE DE RÉCEPTION (INBOX) :
+TACHES EN BOITE DE RECEPTION (INBOX) :
 ${inboxText}
 ${dailyNoteSnippet}
-Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui.`;
+Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'utilise aucun émoji dans ta réponse.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },

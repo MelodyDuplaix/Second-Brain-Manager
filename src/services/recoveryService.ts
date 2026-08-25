@@ -446,7 +446,7 @@ export class RecoveryService {
 			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
-			if (t.priority) line += ` (Priorité: ${t.priority})`;
+			if (t.priority) line += ` (Priorite: ${t.priority})`;
 			if (t.energy) line += ` #energie/${t.energy}`;
 			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
 			if (noteBasename) line += ` [[${noteBasename}]]`;
@@ -456,11 +456,11 @@ export class RecoveryService {
 
 		const oneThingText = data.oneThingTask
 			? formatTaskDetailed(data.oneThingTask)
-			: 'Aucune tâche majeure détectée.';
+			: 'Aucune tache majeure detectee.';
 
 		const quickWinsText = data.quickWinTasks.length > 0
 			? data.quickWinTasks.map(formatTaskDetailed).join('\n')
-			: 'Aucune tâche rapide identifiée.';
+			: 'Aucune tache rapide identifiee.';
 
 		const overdueText = data.overdueTasks.length > 0
 			? data.overdueTasks.slice(0, 12).map(formatTaskDetailed).join('\n')
@@ -468,83 +468,86 @@ export class RecoveryService {
 
 		const staleText = data.staleTasks.length > 0
 			? data.staleTasks.slice(0, 10).map(formatTaskDetailed).join('\n')
-			: 'Aucune tâche ancienne en souffrance.';
+			: 'Aucune tache ancienne en souffrance.';
 
 		const inboxText = data.inboxNotes.length > 0
 			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
 			: 'Inbox vide.';
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et allègement intelligent de charge mentale.
+		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine apres pause (Soft Landing) et allegement intelligent de charge mentale.
 
 TON OBJECTIF :
-Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan déculpabilisant, et proposer un **véritable plan de tri et d'allègement de ses tâches en souffrance**.
+Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan deculpabilisant, et proposer un plan de tri et d'allegement structure de ses taches en souffrance.
 
-DISCERNEMENT SÉMANTIQUE ET SÉCURITÉ :
+CONSIGNE DE STYLE STRICTE :
+- N'utilise AUCUN emoji dans ta reponse textuelle. Reste sobre, clair, direct et bienveillant.
+
+DISCERNEMENT SEMANTIQUE ET SECURITE :
 - Fais preuve d'un discernement contextuel approfondi :
-  - Identifie les **obligations à conséquences réelles** (ex: paiements obligatoires comme le loyer/factures, engagements contractuels, démarches administratives avec délais stricts, impératifs de santé). Pour ces tâches, **ne propose jamais de supprimer l'échéance ni d'annuler**, mais propose un report prioritaire à aujourd'hui (${data.dateStr}).
-  - Réserve le **délestage d'échéances** (\`newDueDate: null\`) et les **rétrogradations** aux tâches secondaires, lectures, recherches ou projets de fond sans contrainte critique.
+  - Identifie les obligations a consequences reelles (ex: paiements obligatoires comme le loyer/factures, engagements contractuels, demarches administratives avec delais stricts, imperatifs de sante). Pour ces taches, ne propose jamais de supprimer l'echeance ni d'annuler, mais propose un report prioritaire a aujourd'hui (${data.dateStr}).
+  - Reserve le delestage d'echeances (\`newDueDate: null\`) et les retrogradations aux taches secondaires, lectures, recherches ou projets de fond sans contrainte critique.
 
-VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
-1. 🔽 **Rétrogradation de quadrant** (ex: passer de Q1 à Q2 ou Q3 des tâches qui ne sont pas de véritables urgences pour alléger la pression).
-2. 🔺 **Priorisation / Promotion** (ex: passer en Q1 une urgence vitale).
-3. ⏩ **Report de date** (décaler à aujourd'hui ${data.dateStr} les tâches encore d'actualité).
-4. ❌ **Annulation / Obsolescence** (passer en \`newStatus: "cancelled"\` les réunions ou tâches périmées depuis longtemps sans impact).
-5. 🧹 **Délestage d'échéances** (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les tâches de fond non urgentes).
-6. ⚡ **Ajustement d'énergie** (réduire l'énergie estimée pour faciliter le passage à l'action).
+VARIETE D'ACTIONS A PROPOSER DANS LE PLAN :
+1. Retrogradation de quadrant (ex: passer de Q1 a Q2 ou Q3 des taches qui ne sont pas de veritables urgences pour alleger la pression).
+2. Priorisation / Promotion (ex: passer en Q1 une urgence vitale).
+3. Report de date (decaler a aujourd'hui ${data.dateStr} les taches encore d'actualite).
+4. Annulation / Obsolescence (passer en \`newStatus: "cancelled"\` les reunions ou taches perimees depuis longtemps sans impact).
+5. Delestage d'echeances (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les taches de fond non urgentes).
+6. Ajustement d'energie (reduire l'energie estimee pour faciliter le passage a l'action).
 
-STRUCTURE DE TA RÉPONSE :
-1. **☕ Accueil & Philosophie de reprise** (2 phrases déculpabilisantes).
-2. **🚀 Étape 1 : Le Quick Win pour amorcer le mouvement** (1 tâche ultra-simple de 5 min au format \`- [ ] ... [[Note]]\`).
-3. **🎯 Étape 2 : The One Thing** (La seule tâche prioritaire et stratégique du jour au format \`- [ ] ... [[Note]]\`).
-4. **🧹 Étape 3 : Plan d'Allègement & Tri Détaillé** :
-   - Explique et justifie les rétrogradations, annulations et reports proposés avec discernement.
-5. **🌱 Conseil de démarrage** (1 phrase motivante).
+STRUCTURE DE TA REPONSE :
+1. Accueil & Philosophie de reprise (2 phrases deculpabilisantes).
+2. Etape 1 : Le Quick Win pour amorcer le mouvement (1 micro-tache simple de 5 min au format \`- [ ] ... [[Note]]\`).
+3. Etape 2 : The One Thing (La seule tache prioritaire et strategique du jour au format \`- [ ] ... [[Note]]\`).
+4. Etape 3 : Plan d'Allegement & Tri Detaille :
+   - Explique et justifie les retrogradations, annulations et reports proposes avec discernement.
+5. Conseil de demarrage (1 phrase motivante).
 
-BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
-À la toute fin de ton message, inclus un bloc de code JSON strictement balisé \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions :
+BLOC D'ACTIONS STRUCTUREES (OBLIGATOIRE A LA FIN DU MESSAGE) :
+A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions :
 \`\`\`json:actions
 [
   {
     "type": "update_task",
     "targetPath": "01 - Projets/Acme.md",
     "lineNumber": 12,
-    "taskTitle": "Rédiger le rapport",
-    "description": "🔽 Rétrograder en Q2 et replanifier : Rédiger le rapport",
+    "taskTitle": "Rediger le rapport",
+    "description": "Retrograder en Q2 et replanifier : Rediger le rapport",
     "newMatrixQuadrant": "q2",
     "newDueDate": "${data.dateStr}",
-    "reason": "Tâche non urgente, rétrogradée pour soulager la reprise"
+    "reason": "Tache non urgente, retrogradee pour soulager la reprise"
   },
   {
     "type": "update_task",
     "targetPath": "02 - Domaines/Maison.md",
     "lineNumber": 5,
-    "taskTitle": "Réunion du 10 août",
-    "description": "❌ Marquer comme obsolète / annulée",
+    "taskTitle": "Reunion du 10 aout",
+    "description": "Marquer comme obsolete / annulee",
     "newStatus": "cancelled",
-    "reason": "Réunion passée non pertinente"
+    "reason": "Reunion passee non pertinente"
   }
 ]
 \`\`\`
-Utilise les chemins exacts et numéros de ligne fournis.`;
+Utilise les chemins exacts et numeros de ligne fournis.`;
 
-		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Date du jour : ${data.dateStr}, Énergie : ${data.energy}/10) :
+		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Date du jour : ${data.dateStr}, Energie : ${data.energy}/10) :
 
-🌟 TÂCHE MAJEURE DÉTECTÉE (THE ONE THING) :
+TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
 
-⚡ QUICK WINS DISPONIBLES :
+QUICK WINS DISPONIBLES :
 ${quickWinsText}
 
-⏰ TÂCHES EN RETARD (${data.overdueTasks.length} au total) :
+TACHES EN RETARD (${data.overdueTasks.length} au total) :
 ${overdueText}
 
-⏳ TÂCHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
+TACHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
 ${staleText}
 
-📥 BOÎTE DE RÉCEPTION (INBOX) :
+BOITE DE RECEPTION (INBOX) :
 ${inboxText}
 
-Prépare-moi un plan de reprise complet avec un vrai tri et allègement sécurisé des tâches, accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
+Prepare-moi un plan de reprise complet avec un vrai tri et allegement securise des taches, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },

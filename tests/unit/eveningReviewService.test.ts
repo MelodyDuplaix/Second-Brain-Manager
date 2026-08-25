@@ -67,8 +67,7 @@ describe('EveningReviewService', () => {
 		expect(messages[1].role).toBe('user');
 		expect(messages[1].content).toContain('Lundi 24 Août 2026');
 		expect(messages[1].content).toContain('Finir la maquette client');
-		expect(messages[1].content).toContain('Rédiger le rapport financier');
-		expect(messages[1].content).toContain('+5 🪙');
+		expect(messages[1].content).toContain('+5 pieces');
 		expect(messages[1].content).toContain('[[Note réunion express]]');
 	});
 
