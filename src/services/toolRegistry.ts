@@ -1,5 +1,6 @@
 import { VaultContextService } from './vaultContextService';
 import { ToolDefinition, ActionProposal } from '../models/actions';
+import { TaskMutator } from '../mutators/taskMutator';
 import { normalizePath } from 'obsidian';
 
 export interface ToolCallRequest {
@@ -124,7 +125,7 @@ export class ToolRegistry {
 				type: 'object',
 				properties: {
 					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche.' },
-					taskTitle: { type: 'string', description: 'Intitulé de la tâche.' },
+					taskTitle: { type: 'string', description: 'Intitulé brut de la tâche, sans case à cocher ni puce de liste (ex: "Rédiger le rapport").' },
 					dueDate: { type: 'string', description: 'Date d\'échéance (YYYY-MM-DD).' },
 					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },
 					priority: { type: 'string', description: 'Priorité', enum: ['highest', 'high', 'medium', 'normal', 'low', 'lowest'] },
@@ -164,7 +165,7 @@ export class ToolRegistry {
 					parentLineNumber: { type: 'number', description: 'Ligne de la tâche parente.' },
 					subtasks: {
 						type: 'array',
-						description: 'Liste des sous-tâches décomposées.',
+						description: 'Liste des intitulés bruts des sous-tâches décomposées, sans cases à cocher "- [ ]" ni puces (ex: ["Étape 1", "Étape 2"]).',
 						items: { type: 'string' }
 					}
 				},
@@ -350,7 +351,8 @@ export class ToolRegistry {
 
 			case 'propose_create_task': {
 				const targetPath = normalizePath(String(args.filePath || ''));
-				const taskTitle = String(args.taskTitle || '');
+				const rawTitle = String(args.taskTitle || '');
+				const taskTitle = TaskMutator.cleanTaskPrefix(rawTitle);
 				const dueDate = args.dueDate ? String(args.dueDate) : undefined;
 				const startDate = args.startDate ? String(args.startDate) : undefined;
 				const priority = args.priority as 'highest' | 'high' | 'medium' | 'normal' | 'low' | 'lowest' | undefined;
@@ -412,7 +414,9 @@ export class ToolRegistry {
 				const parentLineNumber = Number(args.parentLineNumber || 1);
 				const subtaskStrings = Array.isArray(args.subtasks) ? args.subtasks.map(String) : [];
 
-				const subtasks = subtaskStrings.map(title => ({ title }));
+				const subtasks = subtaskStrings
+					.map(title => ({ title: TaskMutator.cleanTaskPrefix(title) }))
+					.filter(st => st.title.length > 0);
 
 				const proposal: ActionProposal = {
 					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,

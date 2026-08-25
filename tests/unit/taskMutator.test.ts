@@ -84,4 +84,28 @@ describe('TaskMutator', () => {
 		const nestedSubtask = TaskMutator.createSubtaskLine(1, 'Sous-étape 1.1');
 		expect(nestedSubtask).toBe('    - [ ] Sous-étape 1.1');
 	});
+
+	it('should clean duplicate checkboxes, list bullets, and numbers with cleanTaskPrefix', () => {
+		expect(TaskMutator.cleanTaskPrefix('- [ ] - [ ] Isoler le script')).toBe('Isoler le script');
+		expect(TaskMutator.cleanTaskPrefix('[ ] [ ] Lister les mécaniques')).toBe('Lister les mécaniques');
+		expect(TaskMutator.cleanTaskPrefix('  - [ ] - [ ] Isoler le script')).toBe('Isoler le script');
+		expect(TaskMutator.cleanTaskPrefix('1. - [ ] Créer une première version')).toBe('Créer une première version');
+		expect(TaskMutator.cleanTaskPrefix('1. [ ] Dessiner un croquis')).toBe('Dessiner un croquis');
+		expect(TaskMutator.cleanTaskPrefix('* [x] Implémenter le niveau')).toBe('Implémenter le niveau');
+		expect(TaskMutator.cleanTaskPrefix('- [/] Tester et ajuster')).toBe('Tester et ajuster');
+		expect(TaskMutator.cleanTaskPrefix('- Simple tâche')).toBe('Simple tâche');
+		expect(TaskMutator.cleanTaskPrefix('\t- [ ] [ ] Sous-tâche imbriquée')).toBe('Sous-tâche imbriquée');
+		expect(TaskMutator.cleanTaskPrefix('Tâche déjà propre')).toBe('Tâche déjà propre');
+	});
+
+	it('should create subtask lines without doubling checkboxes even when subtaskTitle has checkboxes', () => {
+		const subtask1 = TaskMutator.createSubtaskLine(0, '- [ ] - [ ] Isoler le script');
+		expect(subtask1).toBe('  - [ ] Isoler le script');
+
+		const subtask2 = TaskMutator.createSubtaskLine('    ', '[ ] [ ] Dessiner un croquis');
+		expect(subtask2).toBe('    - [ ] Dessiner un croquis');
+
+		const subtask3 = TaskMutator.createSubtaskLine('\t\t', '1. - [ ] Implémenter le niveau');
+		expect(subtask3).toBe('\t\t- [ ] Implémenter le niveau');
+	});
 });

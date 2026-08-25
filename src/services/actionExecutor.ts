@@ -205,7 +205,8 @@ export class ActionExecutor {
 			};
 		}
 
-		let taskLine = `- [ ] ${proposal.taskTitle}`;
+		const cleanTitle = TaskMutator.cleanTaskPrefix(proposal.taskTitle);
+		let taskLine = `- [ ] ${cleanTitle}`;
 
 		if (proposal.dueDate) {
 			taskLine = TaskMutator.setDueDate(taskLine, proposal.dueDate, this.settings);
@@ -322,8 +323,14 @@ export class ActionExecutor {
 			const lineIdx = proposal.parentLineNumber - 1;
 
 			if (lines[lineIdx] !== undefined) {
+				const parentLine = lines[lineIdx];
+				const indentMatch = parentLine.match(/^(\s*)/);
+				const parentIndent = indentMatch ? indentMatch[1] : '';
+				const indentStep = parentIndent.includes('\t') ? '\t' : '  ';
+				const childIndent = parentIndent + indentStep;
+
 				const subtaskLines = proposal.subtasks.map((st) => {
-					let line = TaskMutator.createSubtaskLine(0, st.title);
+					let line = TaskMutator.createSubtaskLine(childIndent, st.title);
 					if (st.energy !== undefined) {
 						line = TaskMutator.setControlledTag(line, 'energie', st.energy, this.settings);
 					}

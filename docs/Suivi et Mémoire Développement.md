@@ -61,7 +61,7 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
    - Commande rapide palette : `Second Brain: Indiquer mon niveau d'énergie` (`EnergyLevelModal`, raccourcis 1-9/0).
 
 6. **Qualité & Tests Automatisés** :
-   - Suite de tests unitaires Vitest : **70/70 tests passés avec 100% de succès (14 suites de tests)**.
+   - Suite de tests unitaires Vitest : **75/75 tests passés avec 100% de succès (14 suites de tests)**.
    - Linting ESLint & Compilation ESBuild : **0 erreur, 0 avertissement**.
 
 ---
@@ -413,6 +413,28 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   3. **Méthode `generateResponse` Universelle ([`LLMService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/llmService.ts))** :
      - Agrégation automatique du flux streaming sur tous les fournisseurs LLM.
   4. **Tests & Validation** : **70/70 tests unitaires passés avec 100% de succès (14 suites)**, 0 erreur ESLint, build de production validé.
+- **Statut** : Validée.
+
+### 📅 2026-08-25 — Étape 4.2 : Assainissement et Robustesse de la Gestion des Tâches et Sous-Tâches par LLM (Anti-Doublons Checkbox)
+- **Problème Identifié** :
+  1. Lors de la commande « Décomposer la tâche » ou des propositions d'actions agentiques (`propose_decompose_task`), certaines réponses du LLM contenant déjà des puces ou des crochets (`[ ]`, `- [ ]`, `1. - [ ]`) généraient des lignes malformées avec des cases à cocher en double (`- [ ] - [ ]` ou `[ ] [ ]`).
+  2. Les métadonnées complètes (tags, dates, émojis) étaient injectées dans le prompt de décomposition, induisant le LLM en erreur.
+  3. L'indentation des sous-tâches était parfois hardcodée sans respecter l'indentation réelle (espaces vs tabulations) de la tâche parente.
+- **Décision & Actions Réalisées** :
+  1. **Fonction Universelle d'Assainissement ([`TaskMutator.cleanTaskPrefix`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/mutators/taskMutator.ts#L117-L133))** :
+     - Élimination récursive et robuste de tous les préfixes résiduels (`- [ ]`, `[ ]`, `[x]`, `[/]`, `-`, `*`, `1. - [ ]`, etc.).
+     - Mise à jour de [`TaskMutator.createSubtaskLine`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/mutators/taskMutator.ts#L135-L141) pour accepter une indentation sous forme de chaîne (`string`) ou de niveau (`number`) et garantir un seul `- [ ]` final.
+  2. **Sécurisation de la Décomposition et Extraction IA ([`NoteActionsService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/noteActionsService.ts))** :
+     - `breakdownTask` : Nettoyage préalable du titre envoyé au prompt LLM (extraction de l'intitulé pur sans métadonnées parasites) et assainissement systématique des lignes de sous-tâches renvoyées.
+     - `handleBreakdownTaskCommand` : Détection et respect dynamique de l'indentation parente (tabulations ou espaces).
+     - `extractTasks` : Filtrage et normalisation stricte de chaque ligne extraite.
+  3. **Sécurisation de l'Exécution Agentique ([`ActionExecutor.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/actionExecutor.ts), [`ToolRegistry.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/toolRegistry.ts), [`AgentOrchestrator.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/agentOrchestrator.ts))** :
+     - Nettoyage automatique des champs `taskTitle` et `subtasks` dans les propositions d'outils.
+     - Calcul dynamique de l'indentation relative de la tâche parente dans `executeDecomposeTask`.
+     - Cadrage explicite du prompt système interdisant l'insertion de `- [ ]` dans les arguments d'outils et les doublons de cases.
+  4. **Immunisation du Parser & Vues ([`TaskParser.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/parsers/taskParser.ts), [`ChatView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/chatView.ts), [`BriefingView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/briefingView.ts), [`EveningReviewView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/eveningReviewView.ts))** :
+     - `TaskParser.cleanTitle` filtre désormais toute case à cocher parasite pour empêcher la propagation de doublons dans les vues et les cartes de tâches.
+  5. **Tests & Validation** : **75/75 tests unitaires passés avec 100% de succès (14 suites)**, 0 erreur ESLint, build de production validé.
 - **Statut** : Validée.
 
 

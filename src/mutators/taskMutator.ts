@@ -114,9 +114,31 @@ export class TaskMutator {
 		return this.insertMetaBeforeBlockId(updatedLine, tagString);
 	}
 
-	public static createSubtaskLine(parentIndentLevel: number, subtaskTitle: string): string {
-		const indent = '  '.repeat(parentIndentLevel + 1);
-		return `${indent}- [ ] ${subtaskTitle}`;
+	/**
+	 * Nettoie rigoureusement tous les préfixes de listes, numérotations et cases à cocher (simples ou dupliqués).
+	 * Exemple : "- [ ] - [ ] Faire X" -> "Faire X", "[ ] [ ] Faire X" -> "Faire X", "1. - [ ] Faire X" -> "Faire X"
+	 */
+	public static cleanTaskPrefix(rawText: string): string {
+		if (!rawText) return '';
+		let text = rawText.trim();
+		let prev = '';
+		while (prev !== text) {
+			prev = text;
+			text = text
+				.replace(/^[-*+]\s+/, '')
+				.replace(/^\d+[\.\)]\s+/, '')
+				.replace(/^\[[- xX/!?b>]?\]\s*/, '')
+				.trim();
+		}
+		return text;
+	}
+
+	public static createSubtaskLine(parentIndent: number | string, subtaskTitle: string): string {
+		const cleanTitle = this.cleanTaskPrefix(subtaskTitle);
+		const indent = typeof parentIndent === 'number'
+			? '  '.repeat(parentIndent + 1)
+			: parentIndent;
+		return `${indent}- [ ] ${cleanTitle}`;
 	}
 
 	private static insertMetaBeforeBlockId(line: string, metaString: string): string {

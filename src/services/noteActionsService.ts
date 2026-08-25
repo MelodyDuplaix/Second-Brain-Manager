@@ -1,6 +1,8 @@
 import { App, Editor, MarkdownView, Notice } from 'obsidian';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
+import { TaskMutator } from '../mutators/taskMutator';
+import { TaskParser } from '../parsers/taskParser';
 import SecondBrainPlugin from '../main';
 
 export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase';
@@ -44,7 +46,7 @@ CONSIGNES STRICTES DE FORMATAGE :
    - #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4.
    - #energie/1 à 10 : estimation de l'effort cognitif (1 = très rapide, 10 = tâche complexe).
    - Toujours terminer la ligne par le lien vers la note source [[${noteBasename}]].
-4. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches commencant par "- [ ]".
+4. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches.
 5. Si aucune action n'est identifiable, renvoie exactement: "Aucune action concrète identifiée."`;
 
 		const userPrompt = `Texte à analyser :\n\n${text}`;
@@ -55,7 +57,26 @@ CONSIGNES STRICTES DE FORMATAGE :
 		];
 
 		const response = await LLMService.generateResponse(messages, config);
-		return response.content.trim();
+		const rawContent = response.content.replace(/```(?:markdown)?/g, '').trim();
+
+		if (rawContent.includes('Aucune action')) {
+			return 'Aucune action concrète identifiée.';
+		}
+
+		// Nettoyage et normalisation de chaque ligne de tâche extraite
+		const lines = rawContent.split('\n').map(l => l.trim()).filter(Boolean);
+		const formattedLines: string[] = [];
+
+		for (const line of lines) {
+			if (!line || line.startsWith('#') || line.startsWith('>') || line.startsWith('|')) continue;
+			const cleanLine = TaskMutator.cleanTaskPrefix(line);
+			if (cleanLine.length > 0) {
+				const normalized = cleanLine.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
+				formattedLines.push(`- [ ] ${normalized}`);
+			}
+		}
+
+		return formattedLines.length > 0 ? formattedLines.join('\n') : 'Aucune action concrète identifiée.';
 	}
 
 	/**
@@ -64,19 +85,19 @@ CONSIGNES STRICTES DE FORMATAGE :
 	public static async breakdownTask(
 		taskLine: string,
 		noteBasename: string,
-		plugin: SecondBrainPlugin
+		plugin: SecondBrainPlugin,
+		indent = '\t'
 	): Promise<string[]> {
-		const cleanTitle = taskLine.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '').trim();
+		const parsed = TaskParser.parseLine(taskLine, '', 1, plugin.settings);
+		const cleanTitle = parsed?.title || TaskMutator.cleanTaskPrefix(taskLine);
 		const config = await this.getLLMConfig(plugin);
 
 		const systemPrompt = `Tu es un expert GTD de l'assistant "Second Brain Manager".
 TON OBJECTIF : Décomposer la tâche complexe suivante en 3 à 5 sous-étapes simples, chronologiques et immédiatement actionnables ("Next Actions").
 
 CONSIGNES STRICTES :
-1. Chaque sous-étape doit commencer par un verbe d'action clair (ex: "Appeler...", "Rédiger...", "Vérifier...", "Envoyer...").
-2. Format strict : chaque ligne doit être une sous-tâche formatée :
-   \t- [ ] Sous-action concrète
-3. Renvoie UNIQUEMENT les 3 à 5 lignes de sous-tâches, sans aucun texte d'introduction ni de conclusion, sans bloc de code markdown.`;
+1. Chaque sous-étape doit commencer par un verbe d'action clair à l'infinitif (ex: "Appeler...", "Rédiger...", "Vérifier...", "Envoyer...").
+2. Renvoie UNIQUEMENT les 3 à 5 lignes d'intitulés des sous-tâches, sans texte d'introduction ni de conclusion, sans bloc de code markdown.`;
 
 		const userPrompt = `Tâche à décomposer : "${cleanTitle}" (provenant de [[${noteBasename}]])`;
 
@@ -86,16 +107,18 @@ CONSIGNES STRICTES :
 		];
 
 		const response = await LLMService.generateResponse(messages, config);
-		const rawLines = response.content.split('\n').map(l => l.trim()).filter(Boolean);
+		const rawLines = response.content
+			.replace(/```(?:markdown)?/g, '')
+			.split('\n')
+			.map(l => l.trim())
+			.filter(Boolean);
 
-		// Formatage avec tabulation pour sous-tâche
-		return rawLines.map(line => {
-			let formatted = line.replace(/^[0-9]+[.)]\s*/, '').trim();
-			if (!formatted.startsWith('- [ ]')) {
-				formatted = `- [ ] ${formatted.replace(/^[-*]\s*/, '')}`;
-			}
-			return `\t${formatted}`;
-		});
+		return rawLines
+			.map(line => {
+				const cleanSubtask = TaskMutator.cleanTaskPrefix(line);
+				return cleanSubtask ? `${indent}- [ ] ${cleanSubtask}` : '';
+			})
+			.filter(Boolean);
 	}
 
 	/**
@@ -206,7 +229,13 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		const notice = new Notice('🧩 Décomposition de la tâche en cours...', 0);
 
 		try {
-			const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin);
+			// Déterminer l'indentation appropriée par rapport à la ligne parente
+			const indentMatch = currentLine.match(/^(\s*)/);
+			const parentIndent = indentMatch ? indentMatch[1] : '';
+			const indentStep = parentIndent.includes('\t') ? '\t' : (parentIndent.length > 0 ? '  ' : '\t');
+			const childIndent = parentIndent + indentStep;
+
+			const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin, childIndent);
 			notice.hide();
 
 			if (subtasks.length === 0) {

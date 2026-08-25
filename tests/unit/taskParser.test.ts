@@ -100,5 +100,16 @@ Voici comment écrire une tâche :
 		expect(tasks[0].title).toBe('Vraie tâche active');
 		expect(tasks[0].dueDate).toBe('2026-08-15');
 	});
+
+	it('should clean residual checkboxes from title when parsing malformed lines with duplicate checkboxes', () => {
+		const task1 = TaskParser.parseLine('  - [ ] - [ ] Isoler le script de collision 📅 2026-08-17', 'test.md', 1);
+		expect(task1).not.toBeNull();
+		expect(task1?.title).toBe('Isoler le script de collision');
+		expect(task1?.dueDate).toBe('2026-08-17');
+
+		const task2 = TaskParser.parseLine('\t- [ ] [ ] Lister les mécaniques de gameplay', 'test.md', 2);
+		expect(task2).not.toBeNull();
+		expect(task2?.title).toBe('Lister les mécaniques de gameplay');
+	});
 });
 

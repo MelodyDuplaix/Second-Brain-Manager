@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, setIcon } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
 import { MorningBriefingService, BriefingVaultData } from '../services/morningBriefingService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
@@ -488,7 +489,7 @@ export class BriefingView extends ItemView {
 					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
 					taskLines.push(matched);
 				} else if (/^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(line) || (line.includes('📅') && line.includes('#tm/'))) {
-					const cleanLine = line.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '');
+					const cleanLine = TaskMutator.cleanTaskPrefix(line);
 					const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
 					if (parsed) taskLines.push(parsed);
 				}
@@ -585,7 +586,7 @@ export class BriefingView extends ItemView {
 				el.querySelector('input[type="checkbox"]') !== null ||
 				(text.includes('📅') && (text.includes('⚡') || text.includes('#tm/')))
 			) {
-				const cleanLine = text.replace(/^[-*0-9.\s]+/, '').replace(/^\[[ xX/]\]\s*/, '');
+				const cleanLine = TaskMutator.cleanTaskPrefix(text);
 				const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
 				if (parsed) {
 					const wrapper = document.createElement('div');

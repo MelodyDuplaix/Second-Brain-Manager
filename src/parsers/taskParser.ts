@@ -1,6 +1,7 @@
 import { ObsidianTask, TaskStatus, TaskPriority } from '../models/task';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import { DynamicRegexBuilder } from './regexBuilder';
+import { TaskMutator } from '../mutators/taskMutator';
 
 export class TaskParser {
 	private static readonly BLOCK_ID_REGEX = /\^([a-zA-Z0-9_-]+)$/;
@@ -222,6 +223,7 @@ export class TaskParser {
 		regexes.forEach(regex => {
 			result = result.replace(regex, '');
 		});
-		return result.replace(/\s+/g, ' ').trim();
+		const rawTitle = result.replace(/\s+/g, ' ').trim();
+		return TaskMutator.cleanTaskPrefix(rawTitle);
 	}
 }

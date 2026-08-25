@@ -99,4 +99,30 @@ describe('ActionExecutor', () => {
 		const results = await executor.executeProposals([proposal]);
 		expect(results.length).toBe(0);
 	});
+
+	it('should execute decompose_task proposal and clean subtask titles without duplicate checkboxes', async () => {
+		createdFiles['01 - Projets/Jeu.md'] = '- [ ] Réparer le bug de collision\n- [ ] Autre tâche';
+
+		const proposal = {
+			id: 'act-4',
+			type: 'decompose_task' as const,
+			description: 'Décomposer tâche',
+			selected: true,
+			targetPath: '01 - Projets/Jeu.md',
+			parentLineNumber: 1,
+			subtasks: [
+				{ title: '- [ ] - [ ] Isoler le script de collision' },
+				{ title: '[ ] [ ] Identifier la fonction en cause' },
+				{ title: 'Tester la correction' }
+			]
+		};
+
+		const results = await executor.executeProposals([proposal]);
+		expect(results[0].success).toBe(true);
+		expect(processedFiles['01 - Projets/Jeu.md']).toContain('  - [ ] Isoler le script de collision');
+		expect(processedFiles['01 - Projets/Jeu.md']).toContain('  - [ ] Identifier la fonction en cause');
+		expect(processedFiles['01 - Projets/Jeu.md']).toContain('  - [ ] Tester la correction');
+		expect(processedFiles['01 - Projets/Jeu.md']).not.toContain('[ ] [ ]');
+		expect(processedFiles['01 - Projets/Jeu.md']).not.toContain('- [ ] - [ ]');
+	});
 });

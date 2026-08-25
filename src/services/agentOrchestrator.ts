@@ -92,6 +92,10 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
    - Écris TOUJOURS les wikilinks directs : [[NomNote]] ou [[Dossier/NomNote]].
    - NE METS JAMAIS de backticks autour des wikilinks (Écris [[Claire]] et JAMAIS \\\`[[Claire]]\\\`).
 
+4. RÈGLE ESSENTIELLE SUR LE FORMAT DES TÂCHES ET SOUS-TÂCHES :
+   - Lorsque tu appelles \`propose_create_task\` ou \`propose_decompose_task\`, fournis UNIQUEMENT le texte brut de l'intitulé dans \`taskTitle\` ou dans la liste \`subtasks\`, SANS ajouter "- [ ]" ni "[ ]" ni puces au début (ex: "Rédiger le plan", et JAMAIS "- [ ] Rédiger le plan").
+   - Si tu rédiges une liste de tâches dans ton texte Markdown de réponse, chaque tâche doit commencer par un seul et unique "- [ ] " (ex: "- [ ] Titre", et JAMAIS "- [ ] - [ ] Titre" ni "- [ ] [ ] Titre").
+
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :
 \`\`\`json
 [

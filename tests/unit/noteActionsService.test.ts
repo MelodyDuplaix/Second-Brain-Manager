@@ -51,6 +51,27 @@ describe('NoteActionsService', () => {
 		expect(subtasks[2]).toBe('\t- [ ] Mettre en page le rapport final');
 	});
 
+	it('should sanitize dirty LLM outputs with doubled checkboxes in breakdownTask', async () => {
+		const mockResponse = {
+			content: '- [ ] - [ ] Isoler le script de collision\n[ ] [ ] Lister les mécaniques\n1. - [ ] Créer les assets visuels'
+		};
+		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue(mockResponse as any);
+
+		const subtasks = await NoteActionsService.breakdownTask(
+			'- [ ] Designer le niveau 2 ⏳ 2026-08-08 #design #energie/6 #tm/q2',
+			'Projet Jeu Vidéo',
+			mockPlugin as any,
+			'  '
+		);
+
+		expect(subtasks).toHaveLength(3);
+		expect(subtasks[0]).toBe('  - [ ] Isoler le script de collision');
+		expect(subtasks[1]).toBe('  - [ ] Lister les mécaniques');
+		expect(subtasks[2]).toBe('  - [ ] Créer les assets visuels');
+		expect(subtasks[0]).not.toContain('[ ] [ ]');
+		expect(subtasks[0]).not.toContain('- [ ] - [ ]');
+	});
+
 	it('should generate a summary with summarize mode', async () => {
 		const mockResponse = {
 			content: 'Voici le résumé synthétique des décisions prises lors de la session.'
