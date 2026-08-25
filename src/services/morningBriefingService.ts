@@ -7,6 +7,7 @@ import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { VaultContextService } from './vaultContextService';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
+import { GamificationService } from './gamificationService';
 import SecondBrainPlugin from '../main';
 
 export interface BriefingVaultData {
@@ -310,8 +311,19 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'util
 		} else {
 			const initialContent = `---\ndate: ${dateStr}\ntags: [journal, daily-note]\n---\n\n# Journal du ${dateStr}\n\n${sectionContent}\n## 📝 Notes & Pensées\n\n`;
 			await app.vault.create(filePath, initialContent);
-			return filePath;
 		}
+
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'morning_briefing');
+			await plugin.savePluginData();
+			if (newlyUnlocked && newlyUnlocked.length > 0) {
+				for (const b of newlyUnlocked) {
+					new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${b.name} !\n${b.description}`, 7000);
+				}
+			}
+		}
+
+		return filePath;
 	}
 
 	/**

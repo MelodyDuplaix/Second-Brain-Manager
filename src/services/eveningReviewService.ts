@@ -6,6 +6,7 @@ import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { VaultContextService } from './vaultContextService';
+import { GamificationService } from './gamificationService';
 import SecondBrainPlugin from '../main';
 
 export interface EveningVaultData {
@@ -270,8 +271,19 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		} else {
 			const initialContent = `---\ndate: ${dateStr}\ntags: [journal, daily-note]\n---\n\n# Journal du ${dateStr}\n\n${sectionContent}\n## 📝 Notes & Pensées\n\n`;
 			await app.vault.create(filePath, initialContent);
-			return filePath;
 		}
+
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'evening_review');
+			await plugin.savePluginData();
+			if (newlyUnlocked && newlyUnlocked.length > 0) {
+				for (const b of newlyUnlocked) {
+					new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${b.name} !\n${b.description}`, 7000);
+				}
+			}
+		}
+
+		return filePath;
 	}
 
 	/**

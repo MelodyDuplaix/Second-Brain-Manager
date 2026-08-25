@@ -8,7 +8,7 @@ import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
 import { RecoveryView, VIEW_TYPE_RECOVERY } from './views/recoveryView';
-import { Wallet, Reward, CompletionEvent } from './models/gamification';
+import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { EnergyLevelModal } from './modals/energyLevelModal';
@@ -63,6 +63,9 @@ interface StoredData {
 	wallet: Wallet;
 	rewards: Reward[];
 	completionEvents: Record<string, CompletionEvent>;
+	streak?: StreakData;
+	badges?: Record<string, UserBadge>;
+	workflowCounts?: WorkflowCounts;
 	lastActiveSession?: string;
 }
 
@@ -73,7 +76,15 @@ const DEFAULT_STORED_DATA: StoredData = {
 		{ id: 'pause-jeu', name: '30 minutes de jeu', description: 'Une pause choisie sans culpabilité', cost: 20, enabled: true },
 		{ id: 'pause-cafe', name: 'Pause Café Gourmet', description: 'Prendre le temps d\'une vraie pause', cost: 10, enabled: true }
 	],
-	completionEvents: {}
+	completionEvents: {},
+	streak: { currentStreak: 0, longestStreak: 0 },
+	badges: {},
+	workflowCounts: {
+		morningBriefings: 0,
+		eveningReviews: 0,
+		recoveries: 0,
+		notesMovedOrCleaned: 0
+	}
 };
 
 export default class SecondBrainPlugin extends Plugin {
@@ -320,7 +331,12 @@ export default class SecondBrainPlugin extends Plugin {
 				const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider);
 				if (res.rewardGranted) {
 					await this.savePluginData();
-					new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙)`);
+					new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
+					if (res.newlyUnlockedBadges && res.newlyUnlockedBadges.length > 0) {
+						for (const badge of res.newlyUnlockedBadges) {
+							new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${badge.name} !\n${badge.description}`, 7000);
+						}
+					}
 				}
 			}
 		}
@@ -485,8 +501,19 @@ export default class SecondBrainPlugin extends Plugin {
 			wallet: raw.wallet || DEFAULT_STORED_DATA.wallet,
 			rewards: raw.rewards || DEFAULT_STORED_DATA.rewards,
 			completionEvents: raw.completionEvents || DEFAULT_STORED_DATA.completionEvents,
+			streak: raw.streak || DEFAULT_STORED_DATA.streak || { currentStreak: 0, longestStreak: 0 },
+			badges: raw.badges || DEFAULT_STORED_DATA.badges || {},
+			workflowCounts: raw.workflowCounts || DEFAULT_STORED_DATA.workflowCounts || {
+				morningBriefings: 0,
+				eveningReviews: 0,
+				recoveries: 0,
+				notesMovedOrCleaned: 0
+			},
 			lastActiveSession: raw.lastActiveSession
 		};
+
+		GamificationService.ensureDataStructures(this.pluginData);
+		GamificationService.checkAndUnlockBadges(this.pluginData);
 	}
 
 	async savePluginData() {
@@ -495,6 +522,9 @@ export default class SecondBrainPlugin extends Plugin {
 			wallet: this.pluginData.wallet,
 			rewards: this.pluginData.rewards,
 			completionEvents: this.pluginData.completionEvents,
+			streak: this.pluginData.streak,
+			badges: this.pluginData.badges,
+			workflowCounts: this.pluginData.workflowCounts,
 			lastActiveSession: this.pluginData.lastActiveSession
 		};
 		await this.saveData(dataToStore);

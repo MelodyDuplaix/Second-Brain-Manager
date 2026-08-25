@@ -9,6 +9,7 @@ import { ActionProposal, UpdateTaskActionProposal, TaskDiffMetadata } from '../m
 import { VaultContextService } from './vaultContextService';
 import { TaskSafetyGuard } from './taskSafetyGuard';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
+import { GamificationService } from './gamificationService';
 import SecondBrainPlugin from '../main';
 
 export interface RecoveryVaultData {
@@ -691,6 +692,16 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement securise d
 			}
 			const initialContent = `# ${today}\n\n${sectionContent}`;
 			await app.vault.create(dailyPath, initialContent);
+		}
+
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'recovery');
+			await plugin.savePluginData();
+			if (newlyUnlocked && newlyUnlocked.length > 0) {
+				for (const b of newlyUnlocked) {
+					new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${b.name} !\n${b.description}`, 7000);
+				}
+			}
 		}
 
 		return dailyPath;

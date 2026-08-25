@@ -281,6 +281,18 @@ export class ActionPreviewWidget {
 		} else if (prop.type === 'decompose_task') {
 			badge.addClass('type-decompose');
 			badge.setText('🧩 Décomposer');
+		} else if (prop.type === 'move_note') {
+			badge.addClass('type-move');
+			badge.setText('📁 Ranger note');
+		} else if (prop.type === 'link_notes') {
+			badge.addClass('type-link');
+			badge.setText('🔗 Lier notes');
+		} else if (prop.type === 'create_note') {
+			badge.addClass('type-create-note');
+			badge.setText('📝 Créer note');
+		} else if (prop.type === 'append_to_note') {
+			badge.addClass('type-append');
+			badge.setText('📌 Ajouter à note');
 		} else {
 			badge.setText('📄 Note');
 		}
