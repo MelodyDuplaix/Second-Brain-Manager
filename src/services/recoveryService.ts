@@ -253,27 +253,49 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 	}
 
 	/**
-	 * Diffuse la génération du plan de reprise via le service LLM configuré.
+	 * Exécute la génération de reprise en streaming avec gestion des clés d'API et du modèle.
 	 */
-	public static async streamRecovery(
+	public static async generateRecovery(
 		app: App,
 		plugin: SecondBrainPlugin,
-		messages: ChatMessage[],
-		onChunk: (chunk: string) => void,
-		signal?: AbortSignal
-	): Promise<string> {
-		const llmConfig: LLMConfig = {
+		signal: AbortSignal,
+		onChunk: (chunk: string, fullText: string) => void
+	): Promise<{ text: string; data: RecoveryVaultData; allTasks: ObsidianTask[] }> {
+		const data = await this.collectRecoveryData(app, plugin);
+		const messages = this.buildRecoveryMessages(data);
+
+		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
+		const config: LLMConfig = {
 			provider: plugin.settings.llmProvider,
 			endpoint: plugin.settings.llmEndpoint,
 			model: plugin.settings.llmModel,
-			geminiSecretId: plugin.settings.geminiSecretId,
-			openaiSecretId: plugin.settings.openaiSecretId,
-			openrouterSecretId: plugin.settings.openrouterSecretId,
-			infomaniakSecretId: plugin.settings.infomaniakSecretId,
-			infomaniakProductId: plugin.settings.infomaniakProductId,
+			productId: plugin.settings.infomaniakProductId,
+			apiKey,
+			signal
 		};
 
-		return await LLMService.streamChat(llmConfig, messages, onChunk, signal);
+		let generatedText = '';
+		await LLMService.generateStreamingResponse(
+			messages,
+			config,
+			(chunk, full) => {
+				generatedText = full;
+				onChunk(chunk, full);
+			}
+		);
+
+		const allTasks = [
+			...(data.oneThingTask ? [data.oneThingTask] : []),
+			...data.quickWinTasks,
+			...data.overdueTasks,
+			...data.staleTasks
+		];
+
+		return {
+			text: generatedText,
+			data,
+			allTasks
+		};
 	}
 
 	/**
@@ -281,6 +303,7 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 	 */
 	public static async postponeOverdueTasks(
 		app: App,
+		plugin: SecondBrainPlugin,
 		tasks: ObsidianTask[],
 		targetDateStr?: string
 	): Promise<number> {
@@ -321,9 +344,10 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 	public static async saveRecoveryToDailyNote(
 		app: App,
 		plugin: SecondBrainPlugin,
-		recoveryMarkdown: string
-	): Promise<void> {
-		const today = new Date().toISOString().split('T')[0];
+		recoveryMarkdown: string,
+		dateStr?: string
+	): Promise<string> {
+		const today = dateStr || new Date().toISOString().split('T')[0];
 		const dailyFolder = normalizePath(plugin.settings.dailyNotesFolder);
 		const dailyPath = normalizePath(`${dailyFolder}/${today}.md`);
 
@@ -342,12 +366,14 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 				}
 			});
 		} else {
-			const folder = app.vault.getAbstractFileByPath(dailyFolder);
+			const folder = (typeof app.vault.getFolderByPath === 'function' ? app.vault.getFolderByPath(dailyFolder) : null) || app.vault.getAbstractFileByPath(dailyFolder);
 			if (!folder) {
 				await app.vault.createFolder(dailyFolder);
 			}
 			const initialContent = `# ${today}\n\n${sectionContent}`;
 			await app.vault.create(dailyPath, initialContent);
 		}
+
+		return dailyPath;
 	}
 }

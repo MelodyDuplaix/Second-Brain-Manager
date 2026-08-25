@@ -20,7 +20,7 @@ export class RecoveryView extends ItemView {
 
 	private contentElWrapper: HTMLElement | null = null;
 	private responseAreaEl: HTMLElement | null = null;
-	private inactivityBadgeEl: HTMLElement | null = null;
+	private badgesContainerEl: HTMLElement | null = null;
 	private energyContainerEl: HTMLElement | null = null;
 	private regenBtnEl: HTMLButtonElement | null = null;
 
@@ -91,7 +91,7 @@ export class RecoveryView extends ItemView {
 		// Actions & Badges en haut à droite
 		const headerActions = titleRow.createEl('div', { cls: 'sbm-briefing-header-actions' });
 
-		this.inactivityBadgeEl = headerActions.createDiv({ cls: 'sbm-evening-stats-badges' });
+		this.badgesContainerEl = headerActions.createDiv({ cls: 'sbm-evening-stats-badges' });
 		this.renderHeaderBadges();
 
 		this.regenBtnEl = headerActions.createEl('button', { cls: 'sbm-briefing-regen-btn' });
@@ -141,19 +141,19 @@ export class RecoveryView extends ItemView {
 		this.renderContentFlow();
 
 		// 3. Footer fixe d'interaction & transition vers le chat
-		this.renderFooterDock(container);
+		this.renderFooterDock();
 	}
 
 	private renderHeaderBadges(): void {
-		if (!this.inactivityBadgeEl) return;
-		this.inactivityBadgeEl.empty();
+		if (!this.badgesContainerEl) return;
+		this.badgesContainerEl.empty();
 
 		const text = this.recoveryVaultData?.inactivityText || 'Reprise de session';
-		const badge = this.inactivityBadgeEl.createDiv({ cls: 'sbm-evening-stat-pill sbm-evening-stat-coins' });
+		const badge = this.badgesContainerEl.createDiv({ cls: 'sbm-evening-stat-pill sbm-evening-stat-coins' });
 		badge.createSpan({ text: `☕ ${text}` });
 
 		if (this.recoveryVaultData && this.recoveryVaultData.overdueTasks.length > 0) {
-			const overdueBadge = this.inactivityBadgeEl.createDiv({ cls: 'sbm-evening-stat-pill sbm-evening-stat-remaining' });
+			const overdueBadge = this.badgesContainerEl.createDiv({ cls: 'sbm-evening-stat-pill sbm-evening-stat-remaining' });
 			overdueBadge.createSpan({ text: `⏳ ${this.recoveryVaultData.overdueTasks.length} en retard` });
 		}
 	}
@@ -190,46 +190,54 @@ export class RecoveryView extends ItemView {
 		if (!this.contentElWrapper) return;
 		this.contentElWrapper.empty();
 
-		// Zone de génération du plan de reprise
 		this.responseAreaEl = this.contentElWrapper.createEl('div', { cls: 'sbm-briefing-ai-response' });
 
 		if (this.generatedRecoveryText) {
-			this.renderMarkdownWithTaskCards(this.responseAreaEl, this.generatedRecoveryText);
-			this.renderDirectActionsBar(this.contentElWrapper);
-		} else if (this.isGenerating) {
-			this.renderLoadingPlaceholder(this.responseAreaEl);
+			this.renderRenderedResponse(this.generatedRecoveryText);
 		}
 	}
 
-	private renderDirectActionsBar(parentEl: HTMLElement): void {
-		const actionsRow = parentEl.createEl('div', { cls: 'sbm-briefing-direct-actions-row' });
+	private async renderRenderedResponse(text: string): Promise<void> {
+		if (!this.responseAreaEl) return;
+		this.responseAreaEl.empty();
 
-		// Bouton : Enregistrer dans la Daily Note
-		const saveNoteBtn = actionsRow.createEl('button', { cls: 'sbm-briefing-action-btn sbm-action-primary' });
-		setIcon(saveNoteBtn, 'calendar');
-		saveNoteBtn.createSpan({ text: 'Enregistrer dans ma Daily Note' });
-		saveNoteBtn.addEventListener('click', async () => {
+		// 1. Barre d'actions directes
+		const actionsRow = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-document-actions' });
+
+		const saveDailyBtn = actionsRow.createEl('button', {
+			cls: 'sbm-doc-action-btn',
+			text: '📝 Enregistrer dans ma Daily Note'
+		});
+		saveDailyBtn.title = 'Consigner ce plan de reprise dans la note quotidienne du jour';
+		saveDailyBtn.addEventListener('click', async () => {
 			try {
-				await RecoveryService.saveRecoveryToDailyNote(this.app, this.plugin, this.generatedRecoveryText);
-				new Notice('Plan de reprise consigné avec succès dans votre Daily Note !');
+				const path = await RecoveryService.saveRecoveryToDailyNote(
+					this.app,
+					this.plugin,
+					this.generatedRecoveryText,
+					this.recoveryVaultData?.dateStr
+				);
+				new Notice(`Plan de reprise enregistré dans [[${path}]] !`);
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
 				new Notice(`Erreur lors de l'enregistrement : ${message}`);
 			}
 		});
 
-		// Bouton : Reporter les tâches en retard à aujourd'hui
 		if (this.recoveryVaultData && this.recoveryVaultData.overdueTasks.length > 0) {
-			const postponeBtn = actionsRow.createEl('button', { cls: 'sbm-briefing-action-btn' });
-			setIcon(postponeBtn, 'fast-forward');
-			postponeBtn.createSpan({ text: `Reporter les retards (${this.recoveryVaultData.overdueTasks.length}) à aujourd'hui` });
+			const postponeBtn = actionsRow.createEl('button', {
+				cls: 'sbm-doc-action-btn',
+				text: `⏩ Reporter les retards (${this.recoveryVaultData.overdueTasks.length}) à aujourd'hui`
+			});
+			postponeBtn.title = 'Appliquer la date d\'aujourd\'hui aux tâches en retard';
 			postponeBtn.addEventListener('click', async () => {
 				try {
 					const count = await RecoveryService.postponeOverdueTasks(
 						this.app,
+						this.plugin,
 						this.recoveryVaultData?.overdueTasks || []
 					);
-					new Notice(`${count} tâche(s) reportée(s) avec succès à aujourd'hui !`);
+					new Notice(`${count} tâche(s) reportée(s) à aujourd'hui !`);
 					await this.triggerRecoveryGeneration();
 				} catch (err: unknown) {
 					const message = err instanceof Error ? err.message : String(err);
@@ -237,71 +245,68 @@ export class RecoveryView extends ItemView {
 				}
 			});
 		}
+
+		// 2. Rendu du corps Markdown
+		const cleanedText = text.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
+		const textBodyContainer = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-rendered-body' });
+		await MarkdownRenderer.render(this.app, cleanedText, textBodyContainer, '', this);
+
+		// 3. Remplacement des tâches markdown par des widgets interactifs
+		await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
 	}
 
-	private renderLoadingPlaceholder(container: HTMLElement): void {
-		container.empty();
-		const loader = container.createEl('div', { cls: 'sbm-briefing-loader' });
-		const spinner = loader.createDiv({ cls: 'sbm-briefing-spinner' });
-		setIcon(spinner, 'coffee');
-		loader.createEl('p', {
-			cls: 'sbm-briefing-loading-text',
-			text: 'Préparation bienveillante de votre reprise en douceur...'
-		});
-	}
+	private renderFooterDock(): void {
+		if (!this.responseAreaEl) return;
 
-	private renderFooterDock(container: HTMLElement): void {
-		const dockEl = container.createEl('div', { cls: 'sbm-briefing-footer-dock' });
+		const footerCard = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chat-dock-card' });
 
-		// Suggestions rapides en puces cliquables
-		const chipsRow = dockEl.createEl('div', { cls: 'sbm-briefing-chips-row' });
+		// Suggestions rapides en chips
+		const chipsRow = footerCard.createDiv({ cls: 'sbm-briefing-chips-row' });
 
-		const chips = [
-			{ text: '🚀 Démarrer le Quick Win', prompt: 'Je vais commencer tout de suite par le Quick Win. Donne-moi des instructions très concrètes pour le boucler en 5 minutes chrono.' },
-			{ text: '🎯 Se concentrer sur The One Thing', prompt: 'Je choisis de consacrer toute mon énergie disponible à ma tâche majeure aujourd\'hui. Aide-moi à la découper.' },
-			{ text: '⏩ Reporter tout le reste à demain', prompt: 'Je souhaite reporter en masse toutes mes autres tâches en retard à demain pour garder l\'esprit léger.' },
-			{ text: '📥 Classer mon Inbox', prompt: 'Aide-moi à trier rapidement les notes de ma boîte de réception.' }
+		const suggestions = [
+			{ label: '🚀 Démarrer le Quick Win', prompt: 'Je vais commencer tout de suite par le Quick Win. Donne-moi des instructions très concrètes pour le boucler en 5 minutes chrono.' },
+			{ label: '🎯 Se concentrer sur The One Thing', prompt: 'Je choisis de consacrer toute mon énergie disponible à ma tâche majeure aujourd\'hui. Aide-moi à la découper.' },
+			{ label: '⏩ Reporter tout le reste à demain', prompt: 'Je souhaite reporter en masse toutes mes autres tâches en retard à demain pour garder l\'esprit léger.' },
+			{ label: '📥 Classer mon Inbox', prompt: 'Aide-moi à trier et classer les notes prises en vrac dans ma boîte de réception.' }
 		];
 
-		chips.forEach(chip => {
-			const chipBtn = chipsRow.createEl('button', {
-				cls: 'sbm-briefing-chip',
-				text: chip.text
-			});
+		suggestions.forEach(s => {
+			const chipBtn = chipsRow.createEl('button', { cls: 'sbm-briefing-chip-btn', text: s.label });
 			chipBtn.addEventListener('click', async () => {
-				await this.continueInChat(chip.prompt);
+				await this.continueInChat(s.prompt);
 			});
 		});
 
-		// Zone de saisie pour poser une question / ajuster la reprise
-		const inputRow = dockEl.createEl('div', { cls: 'sbm-briefing-input-row' });
-		const textInput = inputRow.createEl('input', {
-			type: 'text',
-			cls: 'sbm-briefing-input-field',
-			placeholder: 'Une question, un blocage ou un ajustement sur votre reprise...'
+		// Champ de saisie Copilot-style
+		const inputCard = footerCard.createDiv({ cls: 'sbm-briefing-input-card' });
+		const textarea = inputCard.createEl('textarea', {
+			cls: 'sbm-briefing-textarea',
+			placeholder: 'Répondre au plan de reprise, poser une question ou ajuster vos priorités...'
 		});
 
-		const sendBtn = inputRow.createEl('button', { cls: 'sbm-briefing-send-btn' });
-		setIcon(sendBtn, 'send');
-		sendBtn.title = 'Discuter avec l\'assistant IA dans le Chat';
+		const submitBtn = inputCard.createEl('button', {
+			cls: 'sbm-briefing-send-btn mod-cta'
+		});
+		setIcon(submitBtn, 'arrow-up');
+		submitBtn.title = 'Poursuivre la discussion dans le Chat (Entrée)';
 
-		const submitAction = async () => {
-			const query = textInput.value.trim();
-			if (!query) return;
-			textInput.value = '';
-			await this.continueInChat(query);
+		const handleSubmit = async () => {
+			const userText = textarea.value.trim();
+			if (!userText) return;
+			await this.continueInChat(userText);
 		};
 
-		sendBtn.addEventListener('click', submitAction);
-		textInput.addEventListener('keydown', async (e) => {
-			if (e.key === 'Enter') {
-				await submitAction();
+		submitBtn.addEventListener('click', handleSubmit);
+		textarea.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				handleSubmit();
 			}
 		});
 	}
 
 	public async triggerRecoveryGeneration(): Promise<void> {
-		if (this.isGenerating) return;
+		if (this.isGenerating || !this.contentElWrapper) return;
 
 		this.cancelCurrentGeneration();
 		this.isGenerating = true;
@@ -312,55 +317,41 @@ export class RecoveryView extends ItemView {
 			this.regenBtnEl.addClass('is-loading');
 		}
 
-		if (this.responseAreaEl) {
-			this.renderLoadingPlaceholder(this.responseAreaEl);
-		}
+		this.contentElWrapper.empty();
+
+		// Indicateur de réflexion discret
+		const thinkingBox = this.contentElWrapper.createDiv({ cls: 'sbm-briefing-thinking-card' });
+		const thinkingSpinner = thinkingBox.createDiv({ cls: 'sbm-briefing-thinking-dots' });
+		thinkingSpinner.createSpan();
+		thinkingSpinner.createSpan();
+		thinkingSpinner.createSpan();
+		const thinkingText = thinkingBox.createSpan({ cls: 'sbm-briefing-thinking-text' });
+		thinkingText.setText('Analyse du coffre et préparation bienveillante de votre reprise en douceur...');
+
+		// Conteneur de streaming
+		const textDisplayEl = this.contentElWrapper.createDiv({ cls: 'sbm-briefing-streaming-text sbm-msg-streaming' });
+
+		this.currentAbortController = new AbortController();
 
 		try {
-			// 1. Collecter les données
-			this.recoveryVaultData = await RecoveryService.collectRecoveryData(this.app, this.plugin);
-			this.renderHeaderBadges();
-
-			// Lecture de toutes les tâches pour les widgets in-place
-			const files = this.app.vault.getMarkdownFiles();
-			this.vaultTasks = [];
-			for (const file of files) {
-				const content = await this.app.vault.read(file);
-				this.vaultTasks.push(...TaskParser.parseFile(content, file.path, this.plugin.settings));
-			}
-
-			// 2. Préparer les messages
-			const messages = RecoveryService.buildRecoveryMessages(this.recoveryVaultData);
-
-			// 3. Diffuser le streaming
-			this.currentAbortController = new AbortController();
-
-			let accumulatedText = '';
-			let lastRenderTime = 0;
-
-			await RecoveryService.streamRecovery(
+			const result = await RecoveryService.generateRecovery(
 				this.app,
 				this.plugin,
-				messages,
-				(chunk: string) => {
-					accumulatedText += chunk;
-					this.generatedRecoveryText = accumulatedText;
-
-					const now = Date.now();
-					if (now - lastRenderTime > 80 && this.responseAreaEl) {
-						lastRenderTime = now;
-						this.responseAreaEl.empty();
-						this.renderMarkdownWithTaskCards(this.responseAreaEl, accumulatedText);
-					}
-				},
-				this.currentAbortController.signal
+				this.currentAbortController.signal,
+				(chunk, full) => {
+					this.generatedRecoveryText = full;
+					textDisplayEl.setText(full);
+					this.contentElWrapper?.scrollTo({ top: this.contentElWrapper.scrollHeight, behavior: 'smooth' });
+				}
 			);
 
-			// Rendu final propre
-			if (this.responseAreaEl) {
-				this.responseAreaEl.empty();
-				this.renderMarkdownWithTaskCards(this.responseAreaEl, this.generatedRecoveryText);
-			}
+			this.generatedRecoveryText = result.text;
+			this.recoveryVaultData = result.data;
+			this.vaultTasks = result.allTasks;
+			this.renderHeaderBadges();
+
+			thinkingBox.remove();
+			textDisplayEl.remove();
 
 			// Mise à jour de la session active
 			if (this.plugin.pluginData) {
@@ -368,15 +359,48 @@ export class RecoveryView extends ItemView {
 				await this.plugin.savePluginData();
 			}
 
-			if (this.contentElWrapper) {
-				this.renderDirectActionsBar(this.contentElWrapper);
-			}
+			// Rendu propre
+			this.renderContentFlow();
+			this.renderFooterDock();
+
 		} catch (err: unknown) {
-			if (this.currentAbortController?.signal.aborted) {
+			thinkingBox.remove();
+			textDisplayEl.remove();
+
+			const errorMsg = err instanceof Error ? err.message : String(err);
+			const isAborted = err instanceof DOMException && err.name === 'AbortError';
+
+			if (isAborted) {
+				this.contentElWrapper.createEl('p', { cls: 'sbm-empty-text', text: 'Génération interrompue.' });
 				return;
 			}
-			const message = err instanceof Error ? err.message : String(err);
-			this.renderErrorCard(message);
+
+			// Carte d'erreur stylisée
+			const errorCard = this.contentElWrapper.createDiv({ cls: 'sbm-msg-bubble sbm-msg-error-bubble' });
+			const errorHeader = errorCard.createDiv({ cls: 'sbm-error-card-header' });
+			const titleLeft = errorHeader.createDiv({ cls: 'sbm-error-title-left' });
+			const warnIcon = titleLeft.createSpan({ cls: 'sbm-error-warn-icon' });
+			setIcon(warnIcon, 'alert-triangle');
+			titleLeft.createEl('span', { text: `Erreur IA (${this.plugin.settings.llmProvider.toUpperCase()})` });
+
+			const errorBody = errorCard.createDiv({ cls: 'sbm-error-message-box' });
+			errorBody.setText(errorMsg);
+
+			const actionsBar = errorCard.createDiv({ cls: 'sbm-error-actions-bar' });
+
+			const retryBtn = actionsBar.createEl('button', { cls: 'sbm-error-action-btn mod-cta', text: '🔄 Réessayer' });
+			retryBtn.addEventListener('click', async () => {
+				await this.triggerRecoveryGeneration();
+			});
+
+			const secretsBtn = actionsBar.createEl('button', { cls: 'sbm-error-action-btn', text: '🔑 Gérer les clés d\'API' });
+			secretsBtn.addEventListener('click', () => {
+				new SecretsManagementModal(
+					this.app,
+					this.plugin,
+					this.plugin.settings.llmProvider
+				).open();
+			});
 		} finally {
 			this.isGenerating = false;
 			this.currentAbortController = null;
@@ -387,157 +411,193 @@ export class RecoveryView extends ItemView {
 		}
 	}
 
-	private renderMarkdownWithTaskCards(container: HTMLElement, markdownText: string): void {
-		container.empty();
+	private isTaskMatch(text: string, vaultTitle: string): boolean {
+		const stopWords = new Set([
+			'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'a', 'à', 'pour', 'dans', 'en', 'par',
+			'sur', 'et', 'ou', 'ce', 'cette', 'ces', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son',
+			'sa', 'ses', 'the', 'of', 'in', 'to', 'for', 'with', 'on', 'at', 'from', 'by', 'about'
+		]);
 
-		const tempDiv = document.createElement('div');
-		tempDiv.addClass('sbm-briefing-rendered-markdown');
+		const clean = (str: string) =>
+			str
+				.toLowerCase()
+				.replace(/\[\[([^\]]+)\]\]/g, '$1')
+				.replace(/#[\w/_-]+/g, '')
+				.replace(/📅[^\s]+|⚡[^\s]+|\(énergie\s*:[^)]+\)/gi, '')
+				.replace(/[^\p{L}\p{N}]+/gu, ' ')
+				.trim();
 
-		MarkdownRenderer.render(
-			this.app,
-			markdownText,
-			tempDiv,
-			'',
-			this
-		);
+		const cleanText = clean(text);
+		const cleanVault = clean(vaultTitle);
 
-		this.enrichTasksWithWidgets(tempDiv);
-		container.appendChild(tempDiv);
+		if (!cleanText || !cleanVault) return false;
+
+		const getWords = (s: string) =>
+			s.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
+
+		const wordsA = getWords(cleanText);
+		const wordsB = getWords(cleanVault);
+
+		if (wordsA.length === 0 || wordsB.length === 0) return false;
+
+		if (wordsA.length > 25 && wordsA.length > wordsB.length * 3) return false;
+
+		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
+
+		const common = wordsA.filter(w => wordsB.includes(w));
+		const matchRatio = common.length / wordsB.length;
+
+		return matchRatio >= 0.6 || (common.length >= 2 && wordsB.length <= 3 && matchRatio >= 0.5);
 	}
 
-	private enrichTasksWithWidgets(renderedContainer: HTMLElement): void {
+	private async upgradeTaskElementsInPlace(
+		textContentEl: HTMLElement,
+		content: string,
+		vaultTasks: ObsidianTask[]
+	): Promise<void> {
 		const usedTaskIds = new Set<string>();
 
-		const matchTaskFromVault = (text: string): ObsidianTask | null => {
-			const cleanText = text
-				.replace(/^[-*0-9.\s]+/, '')
-				.replace(/^\[[ xX/]\]\s*/, '')
-				.replace(/📅\s*\d{4}-\d{2}-\d{2}/, '')
-				.replace(/⏳\s*\d{4}-\d{2}-\d{2}/, '')
-				.replace(/🛫\s*\d{4}-\d{2}-\d{2}/, '')
-				.replace(/#\S+/g, '')
-				.replace(/\[\[.*?\]\]/g, '')
-				.trim()
-				.toLowerCase();
+		// A. Blocs de code <pre> contenant des tâches Markdown
+		const preElements = Array.from(textContentEl.querySelectorAll('pre'));
+		preElements.forEach(pre => {
+			if (pre.closest('.sbm-inline-task-wrapper') || pre.closest('.sbm-chat-task-card') || pre.closest('.sbm-chat-tasks-container')) return;
+			const rawText = pre.textContent || '';
+			const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
-			if (!cleanText || cleanText.length < 3) return null;
+			const taskLines: ObsidianTask[] = [];
+			lines.forEach(line => {
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(line, vt.title);
+				});
 
-			for (const task of this.vaultTasks) {
-				const taskKey = `${task.filePath}:${task.lineNumber}`;
-				if (usedTaskIds.has(taskKey)) continue;
-
-				const cleanVaultTitle = task.title.trim().toLowerCase();
-				if (cleanVaultTitle === cleanText || cleanVaultTitle.includes(cleanText) || cleanText.includes(cleanVaultTitle)) {
-					return task;
-				}
-			}
-			return null;
-		};
-
-		// 1. Traitement des listes
-		const listItems = renderedContainer.querySelectorAll('li');
-		listItems.forEach((li) => {
-			const text = li.textContent || '';
-			const isCheckbox = li.querySelector('input[type="checkbox"]') !== null || /^\[[ xX/]\]/.test(text.trim());
-
-			if (isCheckbox || (text.includes('📅') && text.includes('#'))) {
-				const matched = matchTaskFromVault(text);
 				if (matched) {
 					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
-					const card = new TaskCardWidget(matched, this.plugin, () => {
-						// Rechargement après action si nécessaire
-					});
-					const cardEl = card.render();
-					li.empty();
-					li.appendChild(cardEl);
-					li.addClass('sbm-briefing-injected-task');
-				} else {
-					const cleanLine = TaskMutator.cleanTaskPrefix(text);
+					taskLines.push(matched);
+				} else if (/^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(line) || (line.includes('📅') && line.includes('#tm/'))) {
+					const cleanLine = TaskMutator.cleanTaskPrefix(line);
 					const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
-					if (parsed) {
-						const card = new TaskCardWidget(parsed, this.plugin);
-						const cardEl = card.render();
-						li.empty();
-						li.appendChild(cardEl);
-						li.addClass('sbm-briefing-injected-task');
-					}
+					if (parsed) taskLines.push(parsed);
 				}
+			});
+
+			if (taskLines.length > 0 && taskLines.length === lines.length) {
+				const container = document.createElement('div');
+				container.addClass('sbm-chat-tasks-container');
+				taskLines.forEach(task => {
+					const widget = new TaskCardWidget(task, this.plugin);
+					container.appendChild(widget.render());
+				});
+				pre.replaceWith(container);
 			}
 		});
 
-		// 2. Traitement des blocs de code et tableaux contenant des tâches
-		const inlineElements = renderedContainer.querySelectorAll('p, pre code, td');
-		inlineElements.forEach((el) => {
-			const text = el.textContent || '';
-			if (
+		// B. Tableaux <table> contenant des tâches
+		const tableElements = Array.from(textContentEl.querySelectorAll('table'));
+		tableElements.forEach(table => {
+			if (table.closest('.sbm-inline-task-wrapper') || table.closest('.sbm-chat-task-card') || table.closest('.sbm-chat-tasks-container')) return;
+			const rows = Array.from(table.querySelectorAll('tr'));
+			const taskLines: ObsidianTask[] = [];
+			let totalDataRows = 0;
+
+			rows.forEach(tr => {
+				const tds = Array.from(tr.querySelectorAll('td'));
+				if (tds.length === 0) return;
+				totalDataRows++;
+				const rowText = tr.textContent || '';
+
+				const matched = vaultTasks.find(vt => {
+					const taskId = `${vt.filePath}:${vt.lineNumber}`;
+					if (usedTaskIds.has(taskId)) return false;
+					return this.isTaskMatch(rowText, vt.title);
+				});
+
+				if (matched) {
+					usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+					taskLines.push(matched);
+				} else if (/^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(rowText.trim()) || (rowText.includes('📅') && rowText.includes('#tm/'))) {
+					const cleanLine = TaskMutator.cleanTaskPrefix(rowText);
+					const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
+					if (parsed) taskLines.push(parsed);
+				}
+			});
+
+			if (taskLines.length > 0 && taskLines.length >= totalDataRows * 0.7) {
+				const container = document.createElement('div');
+				container.addClass('sbm-chat-tasks-container');
+				taskLines.forEach(task => {
+					const widget = new TaskCardWidget(task, this.plugin);
+					container.appendChild(widget.render());
+				});
+				table.replaceWith(container);
+			}
+		});
+
+		// C. Éléments de liste <li> et paragraphes <p>
+		const elements = Array.from(textContentEl.querySelectorAll('li, p'));
+		elements.forEach(el => {
+			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card') || el.closest('.sbm-chat-tasks-container')) return;
+			if (el.tagName === 'LI' && el.querySelector('li')) return;
+
+			const rawText = el.textContent || '';
+			const isTaskSyntax = /^\[[ xX/]\]|^[-*0-9.]+\s*\[[ xX/]\]/.test(rawText.trim()) ||
 				el.querySelector('input[type="checkbox"]') !== null ||
-				(text.includes('📅') && (text.includes('⚡') || text.includes('#tm/')))
-			) {
-				const cleanLine = TaskMutator.cleanTaskPrefix(text);
+				(rawText.includes('📅') && (rawText.includes('⚡') || rawText.includes('#tm/')));
+
+			if (!isTaskSyntax) return;
+
+			const matched = vaultTasks.find(vt => {
+				const taskId = `${vt.filePath}:${vt.lineNumber}`;
+				if (usedTaskIds.has(taskId)) return false;
+				return this.isTaskMatch(rawText, vt.title);
+			});
+
+			if (matched) {
+				usedTaskIds.add(`${matched.filePath}:${matched.lineNumber}`);
+				const widget = new TaskCardWidget(matched, this.plugin);
+				const wrapper = document.createElement('div');
+				wrapper.addClass('sbm-inline-task-wrapper');
+				wrapper.appendChild(widget.render());
+				el.replaceWith(wrapper);
+			} else {
+				const cleanLine = TaskMutator.cleanTaskPrefix(rawText);
 				const parsed = TaskParser.parseLine(`- [ ] ${cleanLine}`, 'Coffre', 1, this.plugin.settings);
 				if (parsed) {
+					const widget = new TaskCardWidget(parsed, this.plugin);
 					const wrapper = document.createElement('div');
-					const card = new TaskCardWidget(parsed, this.plugin);
-					wrapper.appendChild(card.render());
+					wrapper.addClass('sbm-inline-task-wrapper');
+					wrapper.appendChild(widget.render());
 					el.replaceWith(wrapper);
 				}
 			}
 		});
 	}
 
-	private renderErrorCard(errorMessage: string): void {
-		if (!this.responseAreaEl) return;
-		this.responseAreaEl.empty();
-
-		const errorBox = this.responseAreaEl.createEl('div', { cls: 'sbm-msg-error-bubble' });
-		const header = errorBox.createEl('div', { cls: 'sbm-msg-error-header' });
-		const titleGroup = header.createEl('div', { cls: 'sbm-msg-error-title' });
-		const iconSpan = titleGroup.createSpan({ cls: 'sbm-msg-error-icon' });
-		setIcon(iconSpan, 'alert-triangle');
-		titleGroup.createSpan({ text: 'Erreur lors de la préparation de votre reprise' });
-
-		const errorTextEl = errorBox.createEl('div', { cls: 'sbm-msg-error-text', text: errorMessage });
-
-		const actionsRow = errorBox.createEl('div', { cls: 'sbm-msg-error-actions' });
-
-		const retryBtn = actionsRow.createEl('button', { cls: 'sbm-msg-error-btn sbm-btn-retry' });
-		setIcon(retryBtn, 'rotate-cw');
-		retryBtn.createSpan({ text: 'Réessayer' });
-		retryBtn.addEventListener('click', async () => {
-			await this.triggerRecoveryGeneration();
-		});
-
-		const copyBtn = actionsRow.createEl('button', { cls: 'sbm-msg-error-btn' });
-		setIcon(copyBtn, 'copy');
-		copyBtn.createSpan({ text: 'Copier l\'erreur' });
-		copyBtn.addEventListener('click', () => {
-			navigator.clipboard.writeText(errorTextEl.innerText);
-			new Notice('Erreur copiée dans le presse-papiers');
-		});
-
-		const secretsBtn = actionsRow.createEl('button', { cls: 'sbm-msg-error-btn' });
-		setIcon(secretsBtn, 'key');
-		secretsBtn.createSpan({ text: 'Gérer les clés d\'API' });
-		secretsBtn.addEventListener('click', () => {
-			new SecretsManagementModal(this.app, this.plugin, this.plugin.settings.llmProvider).open();
-		});
-	}
-
 	private async continueInChat(userMessage: string): Promise<void> {
-		const history: ChatMessage[] = [];
+		const conversation: ChatMessage[] = [];
 
 		if (this.generatedRecoveryText) {
-			history.push({
+			conversation.push({
 				role: 'assistant',
-				content: `### ☕ Reprise en Douceur\n\n${this.generatedRecoveryText}`
+				content: this.generatedRecoveryText,
+				timestamp: new Date().toISOString()
+			});
+		} else {
+			conversation.push({
+				role: 'assistant',
+				content: 'Bon retour ! Je suis à votre écoute pour vous accompagner dans votre reprise en douceur.',
+				timestamp: new Date().toISOString()
 			});
 		}
 
-		history.push({
+		conversation.push({
 			role: 'user',
-			content: userMessage
+			content: userMessage,
+			timestamp: new Date().toISOString()
 		});
 
-		await this.plugin.openChatWithConversation(history);
+		await this.plugin.openChatWithConversation(conversation, true);
+		new Notice('Transition vers l\'Assistant IA...');
 	}
 }

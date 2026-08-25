@@ -151,7 +151,11 @@ describe('RecoveryService', () => {
 				}
 			];
 
-			const count = await RecoveryService.postponeOverdueTasks(mockApp, tasksToPostpone, '2026-08-25');
+			const mockPlugin = {
+				settings: DEFAULT_SETTINGS
+			};
+
+			const count = await RecoveryService.postponeOverdueTasks(mockApp, mockPlugin as any, tasksToPostpone, '2026-08-25');
 
 			expect(count).toBe(2);
 			expect(files['01 - Projets/Strategie.md']).toContain('📅 2026-08-25');
@@ -180,6 +184,7 @@ describe('RecoveryService', () => {
 				vault: {
 					getFileByPath: (p: string) => (files[p] !== undefined ? createMockTFile(p) : null),
 					getAbstractFileByPath: () => null,
+					getFolderByPath: () => null,
 					createFolder: () => Promise.resolve(),
 					create: (p: string, c: string) => { files[p] = c; return Promise.resolve(createMockTFile(p)); },
 					process: async (f: TFile, cb: (content: string) => string) => {
