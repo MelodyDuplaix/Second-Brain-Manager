@@ -5,6 +5,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
+import { ActionProposal, UpdateTaskActionProposal } from '../models/actions';
 import { VaultContextService } from './vaultContextService';
 import SecondBrainPlugin from '../main';
 
@@ -126,7 +127,6 @@ export class RecoveryService {
 			.slice(0, 3);
 
 		// Identification de la tâche majeure (The One Thing)
-		// Priorité : Tâche Q1 en retard ou prévue aujourd'hui, sinon Q2 haute priorité
 		let oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
 		if (!oneThingTask) {
 			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
@@ -166,73 +166,180 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Construit le prompt système et utilisateur optimisé pour un réembarquement doux.
+	 * Génère automatiquement des propositions structurées d'allègement et de triage
+	 * (décalage à aujourd'hui, annulation des tâches obsolètes, suppression d'échéances non prioritaires).
+	 */
+	public static generateDefaultLighteningProposals(data: RecoveryVaultData): ActionProposal[] {
+		const proposals: ActionProposal[] = [];
+		const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+		data.overdueTasks.forEach((task, idx) => {
+			const isVeryStale = task.dueDate && task.dueDate <= fourteenDaysAgo;
+			const isMeeting = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
+
+			if (isVeryStale || isMeeting) {
+				// Proposition 1 : Annulation / Archivage des tâches obsolètes
+				const prop: UpdateTaskActionProposal = {
+					id: `recovery-cancel-${idx}-${Date.now()}`,
+					type: 'update_task',
+					targetPath: task.filePath,
+					lineNumber: task.lineNumber,
+					description: `❌ Marquer comme obsolète / annulée : "${task.title}" (${task.filePath})`,
+					selected: true,
+					newStatus: 'cancelled'
+				};
+				proposals.push(prop);
+			} else if (task.dueDate && task.dueDate < data.dateStr) {
+				// Proposition 2 : Report des retards récents à aujourd'hui
+				const prop: UpdateTaskActionProposal = {
+					id: `recovery-postpone-${idx}-${Date.now()}`,
+					type: 'update_task',
+					targetPath: task.filePath,
+					lineNumber: task.lineNumber,
+					description: `⏩ Reporter à aujourd'hui (${data.dateStr}) : "${task.title}"`,
+					selected: true,
+					newDueDate: data.dateStr
+				};
+				proposals.push(prop);
+			}
+		});
+
+		return proposals;
+	}
+
+	/**
+	 * Extrait les propositions d'actions JSON retournées par l'IA et nettoie le texte affiché.
+	 */
+	public static extractProposalsFromResponse(
+		responseText: string,
+		defaultProposals: ActionProposal[]
+	): { cleanText: string; proposals: ActionProposal[] } {
+		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
+
+		if (!jsonMatch) {
+			return {
+				cleanText: responseText.trim(),
+				proposals: defaultProposals
+			};
+		}
+
+		const rawJson = jsonMatch[1].trim();
+		const cleanText = responseText.replace(jsonMatch[0], '').trim();
+
+		try {
+			const parsed = JSON.parse(rawJson);
+			if (Array.isArray(parsed) && parsed.length > 0) {
+				const validatedProposals: ActionProposal[] = parsed
+					.filter(p => p && typeof p === 'object' && p.type && p.targetPath)
+					.map((p, index) => ({
+						id: p.id || `recovery-ai-${index}-${Date.now()}`,
+						type: p.type,
+						targetPath: p.targetPath,
+						lineNumber: Number(p.lineNumber || 1),
+						description: p.description || `Action sur ${p.targetPath}`,
+						selected: p.selected !== false,
+						newStatus: p.newStatus,
+						newDueDate: p.newDueDate,
+						newStartDate: p.newStartDate,
+						newPriority: p.newPriority,
+						newEnergy: p.newEnergy,
+						newMatrixQuadrant: p.newMatrixQuadrant
+					} as ActionProposal));
+
+				if (validatedProposals.length > 0) {
+					return {
+						cleanText,
+						proposals: validatedProposals
+					};
+				}
+			}
+		} catch {
+			// En cas d'erreur de parsing JSON, on conserve les propositions par défaut
+		}
+
+		return {
+			cleanText,
+			proposals: defaultProposals
+		};
+	}
+
+	/**
+	 * Construit le prompt système et utilisateur optimisé pour un réembarquement doux et un allègement structuré.
 	 */
 	public static buildRecoveryMessages(data: RecoveryVaultData): ChatMessage[] {
-		const formatTaskLine = (t: ObsidianTask): string => {
+		const formatTaskDetailed = (t: ObsidianTask): string => {
 			let line = `- [ ] ${t.title}`;
 			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
-			if (t.startDate) line += ` 🛫 ${t.startDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
 			if (t.energy) line += ` #energie/${t.energy}`;
-			if (t.pieces) line += ` #pieces/${t.pieces}`;
 			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
 			if (noteBasename) line += ` [[${noteBasename}]]`;
+			line += ` (Fichier: "${t.filePath}", Ligne: ${t.lineNumber})`;
 			return line;
 		};
 
 		const oneThingText = data.oneThingTask
-			? formatTaskLine(data.oneThingTask)
+			? formatTaskDetailed(data.oneThingTask)
 			: 'Aucune tâche majeure détectée.';
 
 		const quickWinsText = data.quickWinTasks.length > 0
-			? data.quickWinTasks.map(formatTaskLine).join('\n')
+			? data.quickWinTasks.map(formatTaskDetailed).join('\n')
 			: 'Aucune tâche rapide identifiée.';
 
 		const overdueText = data.overdueTasks.length > 0
-			? data.overdueTasks.slice(0, 6).map(formatTaskLine).join('\n')
+			? data.overdueTasks.slice(0, 10).map(formatTaskDetailed).join('\n')
 			: 'Aucune urgence en retard.';
 
 		const staleText = data.staleTasks.length > 0
-			? data.staleTasks.slice(0, 5).map(formatTaskLine).join('\n')
+			? data.staleTasks.slice(0, 8).map(formatTaskDetailed).join('\n')
 			: 'Aucune tâche ancienne en souffrance.';
 
 		const inboxText = data.inboxNotes.length > 0
 			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
 			: 'Inbox vide.';
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et productivité déculpabilisante.
+		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et délestage d'esprit.
 
 TON OBJECTIF :
-Aider l'utilisateur à **reprendre en douceur après une période d'inactivité ou de pause** (${data.inactivityText}), sans aucune surcharge cognitive, sans intimidation et sans culpabilité.
+Accueillir chaleureusement l'utilisateur (${data.inactivityText}), établir un bilan de reprise sans culpabilité, et proposer un **véritable plan de tri et d'allègement de ses tâches en souffrance**.
 
-PHILOSOPHIE FONDAMENTALE :
-1. **Zéro culpabilité** : Les pauses sont normales et nécessaires. Ne reproche jamais les retards accumulés.
-2. **Action immédiate sans friction (Quick Win)** : Proposer d'abord une micro-victoire rapide (5-10 min) pour amorcer le momentum.
-3. **Le Cap Unique (The One Thing)** : Isoler 1 SEULE tâche importante pour la journée.
-4. **Allègement radical** : Encourager à délester, reporter en masse à demain/plus tard ou éliminer les tâches obsolètes.
+STRUCTURE DE TA RÉPONSE :
+1. **☕ Accueil & Philosophie de reprise** (2 phrases déculpabilisantes).
+2. **🚀 Étape 1 : Le Quick Win pour amorcer le mouvement** (1 tâche ultra-simple de 5 min au format \`- [ ] ... [[Note]]\`).
+3. **🎯 Étape 2 : The One Thing** (La seule tâche prioritaire et stratégique du jour au format \`- [ ] ... [[Note]]\`).
+4. **🧹 Étape 3 : Plan d'Allègement & Tri des tâches** :
+   - Explique clairement quelles tâches sont décalées à aujourd'hui (${data.dateStr}), quelles tâches périmées/obsolètes doivent être annulées/abandonnées, et quelles tâches doivent être délestées de leur échéance.
+5. **🌱 Conseil de démarrage** (1 phrase motivante).
 
-STRUCTURE STRICTE DE TA RÉPONSE :
-1. **☕ Mot d'accueil chaleureux & bienveillant** (2-3 phrases valorisantes sur le retour).
-2. **🚀 Étape 1 : Le Quick Win pour se lancer** (Présenter 1 micro-tâche concrète et simple au format \`- [ ] ... [[Note]]\`).
-3. **🎯 Étape 2 : The One Thing (La tâche prioritaire du jour)** (Présenter la seule tâche clé à accomplir au format \`- [ ] ... [[Note]]\`).
-4. **🧹 Étape 3 : Triage & Allègement sans stress** :
-   - Proposer de reporter en masse les tâches en retard.
-   - Mentionner brièvement les ${data.inboxNotes.length} élément(s) en Inbox s'il y en a.
-5. **🌱 Conseil de démarrage** : Une phrase courte et motivante pour se mettre en mouvement.
+BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
+À la toute fin de ton message, inclus un bloc de code JSON strictement balisé \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions pour que l'utilisateur puisse appliquer toutes les modifications en 1 clic :
+\`\`\`json:actions
+[
+  {
+    "type": "update_task",
+    "targetPath": "chemin/vers/fichier.md",
+    "lineNumber": 12,
+    "description": "⏩ Reporter à aujourd'hui : Titre de la tâche",
+    "newDueDate": "${data.dateStr}"
+  },
+  {
+    "type": "update_task",
+    "targetPath": "chemin/vers/fichier.md",
+    "lineNumber": 5,
+    "description": "❌ Marquer comme obsolète / annulée : Titre",
+    "newStatus": "cancelled"
+  }
+]
+\`\`\`
+Utilise les chemins exacts et numéros de ligne fournis.`;
 
-FORMAT DES TÂCHES OBLIGATOIRE :
-Toute tâche proposée DOIT être rédigée sur une seule ligne au format Markdown Obsidian Tasks standard avec son lien source :
-\`- [ ] Intitulé de la tâche 📅 YYYY-MM-DD #energie/X [[NomDeLaNote]]\`
-Ne jamais inventer de fausses tâches si le coffre en contient déjà.`;
-
-		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Niveau d'énergie actuel : ${data.energy}/10) :
+		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Date du jour : ${data.dateStr}, Énergie : ${data.energy}/10) :
 
 🌟 TÂCHE MAJEURE DÉTECTÉE (THE ONE THING) :
 ${oneThingText}
 
-⚡ QUICK WINS DISPONIBLES (TÂCHES LÉGÈRES) :
+⚡ QUICK WINS DISPONIBLES :
 ${quickWinsText}
 
 ⏰ TÂCHES EN RETARD (${data.overdueTasks.length} au total) :
@@ -241,10 +348,10 @@ ${overdueText}
 ⏳ TÂCHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
 ${staleText}
 
-📥 ÉLÉMENTS EN BOÎTE DE RÉCEPTION (INBOX) :
+📥 BOÎTE DE RÉCEPTION (INBOX) :
 ${inboxText}
 
-Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer aujourd'hui sans stress.`;
+Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâches, accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -260,9 +367,10 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 		plugin: SecondBrainPlugin,
 		signal: AbortSignal,
 		onChunk: (chunk: string, fullText: string) => void
-	): Promise<{ text: string; data: RecoveryVaultData; allTasks: ObsidianTask[] }> {
+	): Promise<{ text: string; data: RecoveryVaultData; allTasks: ObsidianTask[]; proposals: ActionProposal[] }> {
 		const data = await this.collectRecoveryData(app, plugin);
 		const messages = this.buildRecoveryMessages(data);
+		const defaultProposals = this.generateDefaultLighteningProposals(data);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
 		const config: LLMConfig = {
@@ -274,15 +382,17 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 			signal
 		};
 
-		let generatedText = '';
+		let rawGeneratedText = '';
 		await LLMService.generateStreamingResponse(
 			messages,
 			config,
 			(chunk, full) => {
-				generatedText = full;
+				rawGeneratedText = full;
 				onChunk(chunk, full);
 			}
 		);
+
+		const { cleanText, proposals } = this.extractProposalsFromResponse(rawGeneratedText, defaultProposals);
 
 		const allTasks = [
 			...(data.oneThingTask ? [data.oneThingTask] : []),
@@ -292,9 +402,10 @@ Prépare-moi un plan de reprise doux, minimaliste et direct pour redémarrer auj
 		];
 
 		return {
-			text: generatedText,
+			text: cleanText,
 			data,
-			allTasks
+			allTasks,
+			proposals
 		};
 	}
 

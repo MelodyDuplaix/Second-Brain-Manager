@@ -272,7 +272,11 @@ export class ActionExecutor {
 				let line = lines[lineIdx];
 
 				if (proposal.newStatus !== undefined) {
-					line = TaskMutator.setCompleted(line, proposal.newStatus === 'done', undefined, this.settings);
+					if (proposal.newStatus === 'done' || proposal.newStatus === 'completed') {
+						line = TaskMutator.setCompleted(line, true, undefined, this.settings);
+					} else {
+						line = TaskMutator.setStatus(line, proposal.newStatus, this.settings);
+					}
 				}
 				if (proposal.newDueDate !== undefined) {
 					line = TaskMutator.setDueDate(line, proposal.newDueDate, this.settings);

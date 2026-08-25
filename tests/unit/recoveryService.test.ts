@@ -203,4 +203,70 @@ describe('RecoveryService', () => {
 			expect(files[expectedPath]).toContain('> [!NOTE] Bon retour !');
 		});
 	});
+
+	describe('generateDefaultLighteningProposals', () => {
+		it('should generate proposals to postpone recent tasks and cancel very stale tasks', () => {
+			const data: RecoveryVaultData = {
+				dateStr: '2026-08-25',
+				formattedDate: 'Mardi 25 Août 2026',
+				inactivityText: 'Reprise après 5 jours de pause',
+				inactivityDays: 5,
+				quickWinTasks: [mockTasks[0]],
+				overdueTasks: [
+					{
+						...mockTasks[1],
+						dueDate: '2026-08-23' // Retard de 2 jours
+					},
+					{
+						...mockTasks[2],
+						dueDate: '2026-08-01' // Retard de > 14 jours
+					}
+				],
+				staleTasks: [mockTasks[2]],
+				inboxNotes: [],
+				projects: [],
+				energy: 5
+			};
+
+			const proposals = RecoveryService.generateDefaultLighteningProposals(data);
+
+			expect(proposals).toHaveLength(2);
+			// 1. Report de la tâche récente
+			expect(proposals[0].type).toBe('update_task');
+			expect((proposals[0] as any).newDueDate).toBe('2026-08-25');
+
+			// 2. Annulation de la tâche obsolète (> 14j)
+			expect(proposals[1].type).toBe('update_task');
+			expect((proposals[1] as any).newStatus).toBe('cancelled');
+		});
+	});
+
+	describe('extractProposalsFromResponse', () => {
+		it('should extract JSON action proposals from LLM response and clean Markdown text', () => {
+			const rawLLMResponse = `Voici votre plan de reprise :
+- [ ] Faire le point [[Projet]]
+
+\`\`\`json:actions
+[
+  {
+    "type": "update_task",
+    "targetPath": "01 - Projets/Acme.md",
+    "lineNumber": 4,
+    "description": "Reporter à aujourd'hui",
+    "newDueDate": "2026-08-25"
+  }
+]
+\`\`\``;
+
+			const defaultProposals: any[] = [];
+			const result = RecoveryService.extractProposalsFromResponse(rawLLMResponse, defaultProposals);
+
+			expect(result.cleanText).not.toContain('```json:actions');
+			expect(result.cleanText).toContain('Voici votre plan de reprise');
+			expect(result.proposals).toHaveLength(1);
+			expect(result.proposals[0].targetPath).toBe('01 - Projets/Acme.md');
+			expect((result.proposals[0] as any).newDueDate).toBe('2026-08-25');
+		});
+	});
 });
+

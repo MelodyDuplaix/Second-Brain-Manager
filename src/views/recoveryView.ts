@@ -3,6 +3,9 @@ import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
+import { ActionPreviewWidget } from './actionPreviewWidget';
+import { ActionExecutor } from '../services/actionExecutor';
+import { ActionProposal, ActionResult } from '../models/actions';
 import { RecoveryService, RecoveryVaultData } from '../services/recoveryService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import { ChatMessage } from '../models/llm';
@@ -17,6 +20,7 @@ export class RecoveryView extends ItemView {
 	private generatedRecoveryText = '';
 	private recoveryVaultData: RecoveryVaultData | null = null;
 	private vaultTasks: ObsidianTask[] = [];
+	private proposals: ActionProposal[] = [];
 
 	private contentElWrapper: HTMLElement | null = null;
 	private responseAreaEl: HTMLElement | null = null;
@@ -224,34 +228,43 @@ export class RecoveryView extends ItemView {
 			}
 		});
 
-		if (this.recoveryVaultData && this.recoveryVaultData.overdueTasks.length > 0) {
-			const postponeBtn = actionsRow.createEl('button', {
-				cls: 'sbm-doc-action-btn',
-				text: `⏩ Reporter les retards (${this.recoveryVaultData.overdueTasks.length}) à aujourd'hui`
+		// Bouton d'application directe de tout le plan d'allègement
+		if (this.proposals.length > 0) {
+			const applyAllBtn = actionsRow.createEl('button', {
+				cls: 'sbm-doc-action-btn mod-cta',
+				text: `⚡ Appliquer tout le plan d'allègement (${this.proposals.length})`
 			});
-			postponeBtn.title = 'Appliquer la date d\'aujourd\'hui aux tâches en retard';
-			postponeBtn.addEventListener('click', async () => {
-				try {
-					const count = await RecoveryService.postponeOverdueTasks(
-						this.app,
-						this.plugin,
-						this.recoveryVaultData?.overdueTasks || []
-					);
-					new Notice(`${count} tâche(s) reportée(s) à aujourd'hui !`);
-					await this.triggerRecoveryGeneration();
-				} catch (err: unknown) {
-					const message = err instanceof Error ? err.message : String(err);
-					new Notice(`Erreur lors du report : ${message}`);
-				}
+			applyAllBtn.title = 'Exécuter toutes les modifications d\'allègement (reports, annulations, suppressions d\'échéances)';
+			applyAllBtn.addEventListener('click', async () => {
+				applyAllBtn.disabled = true;
+				applyAllBtn.setText('Application du plan...');
+				const executor = new ActionExecutor(this.app, this.plugin.settings);
+				const results = await executor.executeProposals(this.proposals);
+				const successes = results.filter(r => r.success).length;
+				new Notice(`Second Brain : ${successes}/${results.length} action(s) appliquée(s) avec succès !`);
+				await this.triggerRecoveryGeneration();
 			});
 		}
 
-		// 2. Rendu du corps Markdown
+		// 2. Widget interactif de prévisualisation et sélection des actions d'allègement
+		if (this.proposals.length > 0) {
+			const executor = new ActionExecutor(this.app, this.plugin.settings);
+			ActionPreviewWidget.render(
+				this.responseAreaEl,
+				this.proposals,
+				executor,
+				async (_results: ActionResult[]) => {
+					await this.triggerRecoveryGeneration();
+				}
+			);
+		}
+
+		// 3. Rendu du corps Markdown
 		const cleanedText = text.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
 		const textBodyContainer = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-rendered-body' });
 		await MarkdownRenderer.render(this.app, cleanedText, textBodyContainer, '', this);
 
-		// 3. Remplacement des tâches markdown par des widgets interactifs
+		// 4. Remplacement des tâches markdown par des widgets interactifs
 		await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
 	}
 
@@ -266,7 +279,7 @@ export class RecoveryView extends ItemView {
 		const suggestions = [
 			{ label: '🚀 Démarrer le Quick Win', prompt: 'Je vais commencer tout de suite par le Quick Win. Donne-moi des instructions très concrètes pour le boucler en 5 minutes chrono.' },
 			{ label: '🎯 Se concentrer sur The One Thing', prompt: 'Je choisis de consacrer toute mon énergie disponible à ma tâche majeure aujourd\'hui. Aide-moi à la découper.' },
-			{ label: '⏩ Reporter tout le reste à demain', prompt: 'Je souhaite reporter en masse toutes mes autres tâches en retard à demain pour garder l\'esprit léger.' },
+			{ label: '⏩ Reporter tout le reste à demain', prompt: 'Peux-tu reporter à demain toutes les tâches en retard sans culpabilité ?' },
 			{ label: '📥 Classer mon Inbox', prompt: 'Aide-moi à trier et classer les notes prises en vrac dans ma boîte de réception.' }
 		];
 
@@ -311,6 +324,7 @@ export class RecoveryView extends ItemView {
 		this.cancelCurrentGeneration();
 		this.isGenerating = true;
 		this.generatedRecoveryText = '';
+		this.proposals = [];
 
 		if (this.regenBtnEl) {
 			this.regenBtnEl.disabled = true;
@@ -326,7 +340,7 @@ export class RecoveryView extends ItemView {
 		thinkingSpinner.createSpan();
 		thinkingSpinner.createSpan();
 		const thinkingText = thinkingBox.createSpan({ cls: 'sbm-briefing-thinking-text' });
-		thinkingText.setText('Analyse du coffre et préparation bienveillante de votre reprise en douceur...');
+		thinkingText.setText('Analyse du coffre et préparation du plan de reprise et d\'allègement...');
 
 		// Conteneur de streaming
 		const textDisplayEl = this.contentElWrapper.createDiv({ cls: 'sbm-briefing-streaming-text sbm-msg-streaming' });
@@ -338,7 +352,7 @@ export class RecoveryView extends ItemView {
 				this.app,
 				this.plugin,
 				this.currentAbortController.signal,
-				(chunk, full) => {
+				(_chunk, full) => {
 					this.generatedRecoveryText = full;
 					textDisplayEl.setText(full);
 					this.contentElWrapper?.scrollTo({ top: this.contentElWrapper.scrollHeight, behavior: 'smooth' });
@@ -348,6 +362,7 @@ export class RecoveryView extends ItemView {
 			this.generatedRecoveryText = result.text;
 			this.recoveryVaultData = result.data;
 			this.vaultTasks = result.allTasks;
+			this.proposals = result.proposals;
 			this.renderHeaderBadges();
 
 			thinkingBox.remove();
@@ -460,7 +475,7 @@ export class RecoveryView extends ItemView {
 		// A. Blocs de code <pre> contenant des tâches Markdown
 		const preElements = Array.from(textContentEl.querySelectorAll('pre'));
 		preElements.forEach(pre => {
-			if (pre.closest('.sbm-inline-task-wrapper') || pre.closest('.sbm-chat-task-card') || pre.closest('.sbm-chat-tasks-container')) return;
+			if (pre.closest('.sbm-inline-task-wrapper') || pre.closest('.sbm-chat-task-card') || pre.closest('.sbm-chat-tasks-container') || pre.closest('.sbm-action-preview-card')) return;
 			const rawText = pre.textContent || '';
 			const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
@@ -496,7 +511,7 @@ export class RecoveryView extends ItemView {
 		// B. Tableaux <table> contenant des tâches
 		const tableElements = Array.from(textContentEl.querySelectorAll('table'));
 		tableElements.forEach(table => {
-			if (table.closest('.sbm-inline-task-wrapper') || table.closest('.sbm-chat-task-card') || table.closest('.sbm-chat-tasks-container')) return;
+			if (table.closest('.sbm-inline-task-wrapper') || table.closest('.sbm-chat-task-card') || table.closest('.sbm-chat-tasks-container') || table.closest('.sbm-action-preview-card')) return;
 			const rows = Array.from(table.querySelectorAll('tr'));
 			const taskLines: ObsidianTask[] = [];
 			let totalDataRows = 0;
@@ -537,7 +552,7 @@ export class RecoveryView extends ItemView {
 		// C. Éléments de liste <li> et paragraphes <p>
 		const elements = Array.from(textContentEl.querySelectorAll('li, p'));
 		elements.forEach(el => {
-			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card') || el.closest('.sbm-chat-tasks-container')) return;
+			if (el.closest('.sbm-inline-task-wrapper') || el.closest('.sbm-chat-task-card') || el.closest('.sbm-chat-tasks-container') || el.closest('.sbm-action-preview-card')) return;
 			if (el.tagName === 'LI' && el.querySelector('li')) return;
 
 			const rawText = el.textContent || '';
