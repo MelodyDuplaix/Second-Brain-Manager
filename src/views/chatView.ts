@@ -420,7 +420,7 @@ export class ChatView extends ItemView {
 				this.upgradeTaskElementsInPlace(textContentEl, msg.content, msg.tasks);
 
 				if (msg.proposals && msg.proposals.length > 0) {
-					ActionPreviewWidget.render(bubbleEl, msg.proposals, this.actionExecutor);
+					ActionPreviewWidget.render(bubbleEl, msg.proposals, this.actionExecutor, this.app);
 				}
 			}
 		}

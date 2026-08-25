@@ -1,4 +1,4 @@
-import { Notice } from 'obsidian';
+import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { ActionProposal, ActionResult, UpdateTaskActionProposal } from '../models/actions';
 import { ActionExecutor } from '../services/actionExecutor';
 
@@ -7,6 +7,7 @@ export class ActionPreviewWidget {
 		containerEl: HTMLElement,
 		proposals: ActionProposal[],
 		executor: ActionExecutor,
+		app?: App,
 		onExecuted?: (results: ActionResult[]) => void
 	): HTMLElement {
 		const widgetEl = containerEl.createDiv({ cls: 'sbm-action-preview-card' });
@@ -81,14 +82,37 @@ export class ActionPreviewWidget {
 				taskTitle = prop.description;
 			}
 
+			// Fonction d'ouverture de la note source à la ligne exacte
+			const openTaskLocation = async () => {
+				if (!app) return;
+				const normalized = normalizePath(prop.targetPath);
+				const file = app.vault.getFileByPath(normalized) || app.vault.getAbstractFileByPath(normalized);
+				if (file instanceof TFile) {
+					const leaf = app.workspace.getLeaf ? app.workspace.getLeaf(false) : app.workspace.activeLeaf;
+					if (leaf) {
+						await leaf.openFile(file, { eState: { line: Math.max(0, lineNumber - 1) } });
+					}
+				} else {
+					new Notice(`Fichier introuvable : ${prop.targetPath}`);
+				}
+			};
+
 			const titleSpan = itemHeader.createSpan({ cls: 'sbm-preview-task-title', text: taskTitle });
-			titleSpan.title = taskTitle;
+			titleSpan.title = `Ouvrir ${prop.targetPath}${lineNumber ? ` à la ligne ${lineNumber}` : ''}`;
+			titleSpan.addEventListener('click', async (e) => {
+				e.stopPropagation();
+				await openTaskLocation();
+			});
 
 			const filePill = itemHeader.createSpan({ 
 				cls: 'sbm-preview-file-pill', 
 				text: `📁 [[${fileBasename}]]${lineNumber ? ` : L${lineNumber}` : ''}` 
 			});
-			filePill.title = `Fichier : ${prop.targetPath}`;
+			filePill.title = `Ouvrir ${prop.targetPath}${lineNumber ? ` à la ligne ${lineNumber}` : ''}`;
+			filePill.addEventListener('click', async (e) => {
+				e.stopPropagation();
+				await openTaskLocation();
+			});
 
 			// B. Ligne des Diffs & Métadonnées comparées (Ancienne vs Nouvelle valeur)
 			if (prop.type === 'update_task') {

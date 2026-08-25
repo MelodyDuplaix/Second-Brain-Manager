@@ -253,6 +253,7 @@ export class RecoveryView extends ItemView {
 				this.responseAreaEl,
 				this.proposals,
 				executor,
+				this.app,
 				async (_results: ActionResult[]) => {
 					await this.triggerRecoveryGeneration();
 				}
