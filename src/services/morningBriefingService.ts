@@ -6,6 +6,7 @@ import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { VaultContextService } from './vaultContextService';
+import { DailyNoteFormatter } from './dailyNoteFormatter';
 import SecondBrainPlugin from '../main';
 
 export interface BriefingVaultData {
@@ -285,7 +286,7 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui.`;
 			await app.vault.createFolder(folderPath);
 		}
 
-		const cleanText = briefingText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1').trim();
+		const cleanText = DailyNoteFormatter.formatForDailyNote(briefingText);
 		const sectionHeader = '## 🌅 Briefing & Focus du Jour';
 		const sectionContent = `${sectionHeader}\n\n*Généré à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} (Énergie : ${plugin.settings.energyLevel}/10)*\n\n${cleanText}\n`;
 

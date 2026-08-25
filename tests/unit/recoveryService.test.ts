@@ -239,6 +239,42 @@ describe('RecoveryService', () => {
 			expect(proposals[1].type).toBe('update_task');
 			expect((proposals[1] as any).newStatus).toBe('cancelled');
 		});
+
+		it('should never cancel or remove due date on critical tasks like rent or bills', () => {
+			const data: RecoveryVaultData = {
+				dateStr: '2026-08-25',
+				formattedDate: 'Mardi 25 Août 2026',
+				inactivityText: 'Reprise',
+				inactivityDays: 10,
+				quickWinTasks: [],
+				overdueTasks: [
+					{
+						title: 'Payer le loyer',
+						completed: false,
+						status: 'todo',
+						lineNumber: 12,
+						filePath: '02 - Domaines/Finances.md',
+						rawLine: '- [ ] Payer le loyer 📅 2026-08-01',
+						indentLevel: 0,
+						dueDate: '2026-08-01', // Plus de 14j de retard
+						domainTags: []
+					}
+				],
+				staleTasks: [],
+				inboxNotes: [],
+				projects: [],
+				energy: 5
+			};
+
+			const proposals = RecoveryService.generateDefaultLighteningProposals(data);
+
+			expect(proposals).toHaveLength(1);
+			const prop = proposals[0] as any;
+			expect(prop.newStatus).not.toBe('cancelled');
+			expect(prop.newDueDate).toBe('2026-08-25'); // Forcé à aujourd'hui
+			expect(prop.newMatrixQuadrant).toBe('q1'); // Forcé en Q1
+			expect(prop.description).toContain('CRITIQUE');
+		});
 	});
 
 	describe('extractProposalsFromResponse', () => {

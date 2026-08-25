@@ -4,6 +4,7 @@ import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
+import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { VaultContextService } from './vaultContextService';
 import SecondBrainPlugin from '../main';
 
@@ -247,7 +248,7 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir.`
 			await app.vault.createFolder(folderPath);
 		}
 
-		const cleanText = reviewText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1').trim();
+		const cleanText = DailyNoteFormatter.formatForDailyNote(reviewText);
 		const sectionHeader = '## 🌙 Revue du Soir & Bilan';
 		const sectionContent = `${sectionHeader}\n\n*Clôturé à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}*\n\n${cleanText}\n`;
 

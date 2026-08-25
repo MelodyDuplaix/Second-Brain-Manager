@@ -478,6 +478,20 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   3. **Tests & Validation** : **84/84 tests unitaires passés avec 100% de succès (15 suites)**, 0 erreur ESLint, bundle de production compilé.
 - **Statut** : Validée.
 
+### 📅 2026-08-25 — Étape 4.5 : Garde-Fou des Tâches Critiques (TaskSafetyGuard) & Anti-Doublon Daily Note (DailyNoteFormatter)
+- **Décision & Actions Réalisées** :
+  1. **Garde-Fou des Tâches Incompressibles ([`TaskSafetyGuard.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/taskSafetyGuard.ts))** :
+     - Détection stricte par mots-clés et tags des tâches sensibles : **Finances & Factures** (*loyer, facture EDF, impôts, taxe, URSSAF, virement, crédit, salaire*), **Légal & Administratif** (*contrat, bail, résiliation, passeport, carte d'identité, visa*), **Santé & Médical** (*médecin, docteur, ordonnance, pharmacie, dentiste, hôpital*).
+     - Règle de protection absolue : Interdiction de supprimer l'échéance (`newDueDate: null`) ou d'annuler (`newStatus: 'cancelled'`) une tâche critique.
+     - Conversion et sanitarisation automatique des propositions en **report prioritaire en Q1 à la date du jour** (`🚨 [CRITIQUE] Reporter impérativement en Q1 à aujourd'hui`).
+  2. **Formatage Anti-Doublon de Tâches pour la Daily Note ([`DailyNoteFormatter.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/dailyNoteFormatter.ts))** :
+     - Résolution du problème des tâches dupliquées dans Obsidian Tasks :
+       - Standardisation dans toutes les vues ([`MorningBriefingService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/morningBriefingService.ts), [`EveningReviewService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/eveningReviewService.ts), [`RecoveryService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/recoveryService.ts)).
+       - Conversion automatique de toute ligne de tâche `- [ ]` en référence non indexée (`* 📌 Titre 📅 Date [[Note]]` ou embed de bloc `![[Note#^blockId]]`).
+       - Les tâches restent 100% lisibles et cliquables dans le journal sans être comptées deux fois par le plugin Obsidian Tasks.
+  3. **Tests & Validation** : **94/94 tests unitaires passés avec 100% de succès (17 suites de tests)**, 0 erreur ESLint, bundle de production validé.
+- **Statut** : Validée.
+
 
 
 

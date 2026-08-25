@@ -7,6 +7,8 @@ import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { ActionProposal, UpdateTaskActionProposal, TaskDiffMetadata } from '../models/actions';
 import { VaultContextService } from './vaultContextService';
+import { TaskSafetyGuard } from './taskSafetyGuard';
+import { DailyNoteFormatter } from './dailyNoteFormatter';
 import SecondBrainPlugin from '../main';
 
 export interface RecoveryVaultData {
@@ -116,9 +118,11 @@ export class RecoveryService {
 		const overdueTasks = allOpenTasks.filter(t => t.dueDate && t.dueDate < dateStr);
 		const staleTasks = overdueTasks.filter(t => t.dueDate && t.dueDate <= sevenDaysAgo);
 
-		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie)
+		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, NON critiques)
 		const quickWinTasks = allOpenTasks
 			.filter(t => {
+				const isCritical = TaskSafetyGuard.isCriticalTask(t);
+				if (isCritical) return false;
 				const isLowEnergy = t.energy !== undefined && t.energy <= 3;
 				const isEasy = t.difficulty && t.difficulty.toLowerCase() === 'facile';
 				const isQ3orQ4 = matrixAdapter.getQuadrant(t) === 'q3' || matrixAdapter.getQuadrant(t) === 'q4';
@@ -126,8 +130,11 @@ export class RecoveryService {
 			})
 			.slice(0, 3);
 
-		// Identification de la tâche majeure (The One Thing)
-		let oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+		// Identification de la tâche majeure (The One Thing) : priorité aux urgences critiques
+		let oneThingTask = allOpenTasks.find(t => TaskSafetyGuard.isCriticalTask(t) && t.dueDate && t.dueDate <= dateStr);
+		if (!oneThingTask) {
+			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+		}
 		if (!oneThingTask) {
 			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
 		}
@@ -167,7 +174,7 @@ export class RecoveryService {
 
 	/**
 	 * Génère un ensemble varié et intelligent de propositions d'allègement avec métadonnées exhaustives
-	 * (reports, rétrogradations de quadrant, priorisations, annulations, allègements d'échéances et d'énergie).
+	 * et protection stricte des tâches critiques (finance, loyer, santé, légal).
 	 */
 	public static generateDefaultLighteningProposals(data: RecoveryVaultData, plugin?: SecondBrainPlugin): ActionProposal[] {
 		const proposals: ActionProposal[] = [];
@@ -179,12 +186,45 @@ export class RecoveryService {
 			: MatrixAdapterFactory.createAdapter('task-matrix');
 
 		data.overdueTasks.forEach((task, idx) => {
+			const isCritical = TaskSafetyGuard.isCriticalTask(task);
 			const isVeryStale = task.dueDate && task.dueDate <= fourteenDaysAgo;
 			const isMeetingOrCall = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
 			const currentQ = matrixAdapter.getQuadrant(task);
 
-			if (isVeryStale || isMeetingOrCall) {
-				// 1. Annulation des tâches obsolètes
+			if (isCritical) {
+				// RÈGLE DE SÉCURITÉ CRITIQUE : Jamais d'annulation, jamais de suppression d'échéance.
+				const diff: TaskDiffMetadata = {
+					taskTitle: task.title,
+					filePath: task.filePath,
+					lineNumber: task.lineNumber,
+					oldDueDate: task.dueDate,
+					newDueDate: data.dateStr,
+					oldQuadrant: currentQ,
+					newQuadrant: 'q1',
+					oldPriority: task.priority || 'highest',
+					newPriority: 'highest',
+					oldEnergy: task.energy,
+					newEnergy: task.energy,
+					reason: '🚨 Tâche critique incompressible (finance/loyer/légal/santé) : report prioritaire en Q1 à aujourd\'hui sans délestage'
+				};
+
+				proposals.push({
+					id: `recovery-critical-${idx}-${Date.now()}`,
+					type: 'update_task',
+					targetPath: task.filePath,
+					lineNumber: task.lineNumber,
+					taskTitle: task.title,
+					description: `🚨 [CRITIQUE] Reporter impérativement en Q1 à aujourd'hui : "${task.title}"`,
+					selected: true,
+					newDueDate: data.dateStr,
+					newMatrixQuadrant: 'q1',
+					newPriority: 'highest',
+					diff,
+					reason: diff.reason
+				} as UpdateTaskActionProposal);
+
+			} else if (isVeryStale || isMeetingOrCall) {
+				// 1. Annulation des tâches obsolètes (non critiques uniquement)
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
@@ -216,7 +256,7 @@ export class RecoveryService {
 				} as UpdateTaskActionProposal);
 
 			} else if (currentQ === 'q1' && task.dueDate && task.dueDate <= sevenDaysAgo) {
-				// 2. Rétrogradation de quadrant (Q1 -> Q2 ou Q3) pour soulager la reprise
+				// 2. Rétrogradation de quadrant (Q1 -> Q2) pour soulager la reprise
 				const targetQ = 'q2';
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
@@ -313,12 +353,13 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Extrait les propositions d'actions JSON retournées par l'IA et les enrichit avec les métadonnées de tâche.
+	 * Extrait les propositions d'actions JSON retournées par l'IA et applique la protection TaskSafetyGuard.
 	 */
 	public static extractProposalsFromResponse(
 		responseText: string,
 		defaultProposals: ActionProposal[],
-		vaultTasks: ObsidianTask[] = []
+		vaultTasks: ObsidianTask[] = [],
+		todayStr?: string
 	): { cleanText: string; proposals: ActionProposal[] } {
 		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
 
@@ -368,7 +409,7 @@ export class RecoveryService {
 							reason
 						};
 
-						return {
+						const prop: ActionProposal = {
 							id: p.id || `recovery-ai-${index}-${Date.now()}`,
 							type: p.type,
 							targetPath,
@@ -385,6 +426,9 @@ export class RecoveryService {
 							diff,
 							reason
 						} as ActionProposal;
+
+						// Sécurisation stricte anti-délestage des tâches critiques
+						return TaskSafetyGuard.sanitizeProposal(prop, matchedTask, todayStr);
 					});
 
 				if (validatedProposals.length > 0) {
@@ -409,7 +453,8 @@ export class RecoveryService {
 	 */
 	public static buildRecoveryMessages(data: RecoveryVaultData): ChatMessage[] {
 		const formatTaskDetailed = (t: ObsidianTask): string => {
-			let line = `- [ ] ${t.title}`;
+			const isCritical = TaskSafetyGuard.isCriticalTask(t);
+			let line = `- [ ] ${isCritical ? '🚨 ' : ''}${t.title}`;
 			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
@@ -441,18 +486,24 @@ export class RecoveryService {
 			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
 			: 'Inbox vide.';
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et allègement radical de charge mentale.
+		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et allègement intelligent de charge mentale.
 
 TON OBJECTIF :
-Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan déculpabilisant, et proposer un **véritable plan de tri et d'allègement de toutes ses tâches en souffrance**.
+Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan déculpabilisant, et proposer un **véritable plan de tri et d'allègement de ses tâches en souffrance**.
+
+🛡️ RÈGLES DE SÉCURITÉ ABSOLUES SUR LES TÂCHES CRITIQUES :
+- Les tâches **financières** (ex: "Payer le loyer", "Facture EDF", "Impôts", "Crédit"), **légales / administratives** (ex: "Renouveler passeport", "Contrat bail", "Résiliation") et **médicales / santé** (ex: "Médecin", "Ordonnance", "Dentiste") sont des tâches CRITIQUES et INCOMPRESSIBLES.
+- ⛔ Il est FORMELLEMENT INTERDIT de supprimer l'échéance (\`newDueDate: null\`) d'une tâche critique.
+- ⛔ Il est FORMELLEMENT INTERDIT d'annuler (\`newStatus: "cancelled"\`) ou de rétrograder en Q3/Q4 une tâche critique.
+- ✅ Toute tâche critique en retard DOIT être **immédiatement reportée à aujourd'hui (${data.dateStr}) avec la plus haute priorité (Quadrant Q1)**.
 
 VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
-Ne te limite pas à de simples reports de dates. Propose une combinaison intelligente et adaptée :
-1. 🔽 **Rétrogradation de quadrant / priorité** (ex: passer de Q1 à Q2 ou Q3 des tâches qui ne sont pas de véritables urgences pour alléger la pression).
+Pour les autres tâches non critiques :
+1. 🔽 **Rétrogradation de quadrant** (ex: passer de Q1 à Q2 ou Q3 des tâches qui ne sont pas de véritables urgences pour alléger la pression).
 2. 🔺 **Priorisation / Promotion** (ex: passer en Q1 une urgence vitale).
 3. ⏩ **Report de date** (décaler à aujourd'hui ${data.dateStr} les tâches encore d'actualité).
 4. ❌ **Annulation / Obsolescence** (passer en \`newStatus: "cancelled"\` les réunions ou tâches périmées depuis longtemps).
-5. 🧹 **Délestage d'échéances** (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les tâches de fond).
+5. 🧹 **Délestage d'échéances** (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les tâches de fond non urgentes).
 6. ⚡ **Ajustement d'énergie** (réduire l'énergie estimée pour faciliter le passage à l'action).
 
 STRUCTURE DE TA RÉPONSE :
@@ -507,7 +558,7 @@ ${staleText}
 📥 BOÎTE DE RÉCEPTION (INBOX) :
 ${inboxText}
 
-Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâches (rétrogradations, annulations, reports, délestages), accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
+Prépare-moi un plan de reprise complet avec un vrai tri et allègement sécurisé des tâches, accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -557,7 +608,7 @@ Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâc
 			}
 		);
 
-		const { cleanText, proposals } = this.extractProposalsFromResponse(rawGeneratedText, defaultProposals, vaultTasks);
+		const { cleanText, proposals } = this.extractProposalsFromResponse(rawGeneratedText, defaultProposals, vaultTasks, data.dateStr);
 
 		const allTasks = [
 			...(data.oneThingTask ? [data.oneThingTask] : []),
@@ -615,7 +666,7 @@ Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâc
 	}
 
 	/**
-	 * Enregistre le plan de reprise dans la note quotidienne du jour.
+	 * Enregistre le plan de reprise dans la note quotidienne du jour sans dupliquer les tâches (formaté via DailyNoteFormatter).
 	 */
 	public static async saveRecoveryToDailyNote(
 		app: App,
@@ -629,8 +680,11 @@ Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâc
 
 		const file = app.vault.getFileByPath(dailyPath) || app.vault.getAbstractFileByPath(dailyPath);
 
+		// Formatage anti-doublons de tâches
+		const formattedMarkdown = DailyNoteFormatter.formatForDailyNote(recoveryMarkdown);
+
 		const sectionTitle = '## ☕ Reprise en Douceur & Focus';
-		const sectionContent = `${sectionTitle}\n\n${recoveryMarkdown.trim()}\n`;
+		const sectionContent = `${sectionTitle}\n\n${formattedMarkdown}\n`;
 
 		if (file instanceof TFile) {
 			await app.vault.process(file, (content) => {
