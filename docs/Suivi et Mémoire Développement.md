@@ -520,6 +520,24 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   3. **Tests & Validation** : **100/100 tests unitaires passés avec succès**, bundle de production compilé.
 - **Statut** : Validée.
 
+### 📅 2026-08-25 — Étape 4.8 : Audit Complet du Cahier des Charges & Release Officielle v0.1.0
+- **Décision & Actions Réalisées** :
+  1. **Audit Exhaustif Ligne à Ligne** :
+     - Relecture intégrale du document [`docs/Réflexion plugin.md`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/docs/R%C3%A9flexion%20plugin.md).
+     - Vérification de la conformité à 100% de toutes les fonctionnalités : tâches Markdown Tasks natives, délégation de matrice configurable, chat contextuel, briefing énergie & projet focus, revue du soir, reprise après pause, garde-fou critique, système de pièces/récompenses, séries (streaks) et galerie de 12 badges déblocables.
+  2. **Fichiers de Version & Configuration Obsidian** :
+     - Création de [`versions.json`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/versions.json) (`"0.1.0": "0.15.0"`).
+     - Synchronisation des versions dans [`manifest.json`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/manifest.json) et [`package.json`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/package.json).
+  3. **Automatisation GitHub Actions aux Standards Officiels Obsidian** :
+     - Mise en place du workflow [`.github/workflows/release.yml`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/.github/workflows/release.yml) conforme au guide officiel d'Obsidian (`gh release create "$tag" --generate-notes main.js manifest.json styles.css` avec attestation de provenance `actions/attest-build-provenance@v2`).
+  4. **Merge sur `main` & Publication du Tag `0.1.0`** :
+     - Fusion propre de `dev` vers `main`.
+     - Création et push du tag annoté `0.1.0` déclenchant la génération de la Release GitHub avec tous les artefacts attachés.
+     - Retour sur la branche active `dev`.
+  5. **Tests & Validation** : **100/100 tests unitaires passés avec 100% de succès**, 0 erreur linter.
+- **Statut** : Validée & Déployée.
+
+
 
 
 
