@@ -492,6 +492,25 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   3. **Tests & Validation** : **94/94 tests unitaires passés avec 100% de succès (17 suites de tests)**, 0 erreur ESLint, bundle de production validé.
 - **Statut** : Validée.
 
+### 📅 2026-08-25 — Étape 4.6 : Séries Quotidiennes (Streaks), Galerie de Trophées/Badges & Nettoyage du Coffre
+- **Décision & Actions Réalisées** :
+  1. **Système de Séries Quotidiennes (Streaks) ([`GamificationService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/gamificationService.ts))** :
+     - Suivi du nombre de jours consécutifs avec au moins une tâche accomplie (`currentStreak`, `longestStreak`).
+     - Calcul par dates calendaires : incrément si tâche accomplie le lendemain, maintien si le même jour, redémarrage à 1 si plus d'un jour d'interruption (avec préservation du record historique).
+  2. **Galerie de Trophées & Badges Déblocables ([`gamification.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/models/gamification.ts))** :
+     - 12 badges valorisants couvrant la régularité, les quadrants, les pièces et les workflows :
+       - *Premier Pas* (1ère tâche), *Maître du Focus Q1* (10 tâches Q1), *Vision Stratégique Q2* (10 tâches Q2), *Étincelle de Régularité* (3j streak), *Habitude Solide* (7j streak), *Légende* (30j streak), *Tirelire Pleine* (50 pièces), *Trésorier* (200 pièces), *Grand Nettoyeur d'Inbox* (5 notes rangées), *Éveil Stratégique* (5 briefings), *Sérénité du Soir* (5 revues), *Soft Landing* (1 reprise).
+     - Notification automatique lors du déblocage d'un trophée (`🏆 NOUVEAU BADGE DÉBLOQUÉ : [Nom] !`).
+  3. **Interface Dédiée dans la Vue Gamification ([`GamificationHistoryView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/gamificationHistoryView.ts), [`styles.css`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/styles.css))** :
+     - Nouvel onglet `🏆 Trophées & Séries (Streaks)`.
+     - Carte héroïque du Streak avec flamme et record.
+     - Grille responsive de cartes de badges (dorés et datés si débloqués, barre de progression interactive si en cours).
+  4. **Nettoyage du Coffre & Actions de Rangement dans les Workflows** :
+     - Propositions de rangement de l'Inbox (`move_note`), de liaisons entre notes (`link_notes`) et de création intégrées dans les prompts et dans `ActionPreviewWidget`.
+  5. **Tests & Validation** : **100/100 tests unitaires passés avec 100% de succès (17 suites de tests)**, 0 avertissement linter, bundle de production compilé.
+- **Statut** : Validée.
+
+
 
 
 
