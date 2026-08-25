@@ -510,6 +510,17 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   5. **Tests & Validation** : **100/100 tests unitaires passés avec 100% de succès (17 suites de tests)**, 0 avertissement linter, bundle de production compilé.
 - **Statut** : Validée.
 
+### 📅 2026-08-25 — Étape 4.7 : Ouverture & Affichage Immédiats des Vues Dédiées (Non-Bloquant)
+- **Décision & Actions Réalisées** :
+  1. **Suppression du Blocage Synchrone à l'Ouverture des Vues** :
+     - Correction de [`BriefingView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/briefingView.ts), [`EveningReviewView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/eveningReviewView.ts), et [`RecoveryView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/recoveryView.ts).
+     - Remplacement du `await this.trigger...Generation()` bloquant dans `onOpen()` par un déclenchement asynchrone non-bloquant (`window.setTimeout(..., 50)`).
+  2. **Gain d'Ergonomie et de Fluidité Immédiat** :
+     - Clic sur le ruban ou exécution de la commande ouvre et affiche **instantanément** l'onglet avec sa mise en page, ses réglages d'énergie et son indicateur de chargement, puis le flux LLM s'affiche en streaming en temps réel sous les yeux de l'utilisateur.
+  3. **Tests & Validation** : **100/100 tests unitaires passés avec succès**, bundle de production compilé.
+- **Statut** : Validée.
+
+
 
 
 
