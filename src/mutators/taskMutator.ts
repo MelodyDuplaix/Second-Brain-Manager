@@ -126,7 +126,7 @@ export class TaskMutator {
 			prev = text;
 			text = text
 				.replace(/^[-*+]\s+/, '')
-				.replace(/^\d+[\.\)]\s+/, '')
+				.replace(/^\d+[.)]\s+/, '')
 				.replace(/^\[[- xX/!?b>]?\]\s*/, '')
 				.trim();
 		}

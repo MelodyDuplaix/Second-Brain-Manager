@@ -6,6 +6,7 @@ export interface PluginData {
 	wallet: Wallet;
 	rewards: Reward[];
 	completionEvents: Record<string, CompletionEvent>;
+	lastActiveSession?: string;
 }
 
 export class GamificationService {

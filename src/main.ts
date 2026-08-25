@@ -7,6 +7,7 @@ import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views
 import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
+import { RecoveryView, VIEW_TYPE_RECOVERY } from './views/recoveryView';
 import { Wallet, Reward, CompletionEvent } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
@@ -62,6 +63,7 @@ interface StoredData {
 	wallet: Wallet;
 	rewards: Reward[];
 	completionEvents: Record<string, CompletionEvent>;
+	lastActiveSession?: string;
 }
 
 const DEFAULT_STORED_DATA: StoredData = {
@@ -107,6 +109,11 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new EveningReviewView(leaf, this)
 		);
 
+		this.registerView(
+			VIEW_TYPE_RECOVERY,
+			(leaf) => new RecoveryView(leaf, this)
+		);
+
 		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
@@ -118,6 +125,10 @@ export default class SecondBrainPlugin extends Plugin {
 
 		this.addRibbonIcon('moon', 'Revue du soir', () => {
 			this.activateEveningReviewView();
+		});
+
+		this.addRibbonIcon('coffee', 'Reprise après une pause', () => {
+			this.activateRecoveryView();
 		});
 
 		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
@@ -170,6 +181,14 @@ export default class SecondBrainPlugin extends Plugin {
 			name: 'Ouvrir la revue du soir',
 			callback: () => {
 				this.activateEveningReviewView();
+			}
+		});
+
+		this.addCommand({
+			id: 'ouvrir-reprise-pause',
+			name: 'Reprendre après une pause',
+			callback: () => {
+				this.activateRecoveryView();
 			}
 		});
 
@@ -358,6 +377,23 @@ export default class SecondBrainPlugin extends Plugin {
 		}
 	}
 
+	async activateRecoveryView() {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(VIEW_TYPE_RECOVERY)[0];
+
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				leaf = rightLeaf;
+				await leaf.setViewState({ type: VIEW_TYPE_RECOVERY, active: true });
+			}
+		}
+
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
+	}
+
 	async activateHistoryView() {
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_GAMIFICATION_HISTORY)[0];
@@ -449,6 +485,7 @@ export default class SecondBrainPlugin extends Plugin {
 			wallet: raw.wallet || DEFAULT_STORED_DATA.wallet,
 			rewards: raw.rewards || DEFAULT_STORED_DATA.rewards,
 			completionEvents: raw.completionEvents || DEFAULT_STORED_DATA.completionEvents,
+			lastActiveSession: raw.lastActiveSession
 		};
 	}
 
@@ -457,7 +494,8 @@ export default class SecondBrainPlugin extends Plugin {
 			settings: this.settings,
 			wallet: this.pluginData.wallet,
 			rewards: this.pluginData.rewards,
-			completionEvents: this.pluginData.completionEvents
+			completionEvents: this.pluginData.completionEvents,
+			lastActiveSession: this.pluginData.lastActiveSession
 		};
 		await this.saveData(dataToStore);
 	}

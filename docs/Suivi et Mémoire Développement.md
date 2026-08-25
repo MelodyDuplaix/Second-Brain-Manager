@@ -200,9 +200,9 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
 | **Fournisseur Infomaniak AI Services (Chat, Embeddings, Discovery)** | ✅ Terminé | `src/services/llmService.ts`, `src/services/modelDiscoveryService.ts` |
 | **Panneau de Réglages Natif (Style Spaced Repetition)** | ✅ Terminé | `src/settings/` (`settingsPageManager.ts`, `mainPage.ts`, `rewardsPage.ts`) |
 | **Configuration Branche Git `dev` & `main`** | ✅ Terminé | Dépôt GitHub (`origin/main`, `origin/dev`) |
-| **Workflow GitHub Actions (CI : Lint + Test + Build)** | ⏳ À faire | `.github/workflows/ci.yml` |
+| **Workflow GitHub Actions (CI & Releases)** | ✅ Terminé | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |
 | **Workflow de la Revue du Soir & Nettoyage Mental** | ✅ Terminé | `src/views/eveningReviewView.ts`, `src/services/eveningReviewService.ts` |
-| **Workflow de Reprise après Pause** | ⏳ À faire | `src/workflows/recoveryWorkflow.ts` |
+| **Workflow de Reprise après Pause** | ✅ Terminé | `src/views/recoveryView.ts`, `src/services/recoveryService.ts` |
 | **Commandes Contextuelles d'Édition / Reformulation de Notes** | ✅ Terminé | `src/services/noteActionsService.ts` |
 | **Moteur de Rappels & Notifications Desktop** | ⏳ À faire | `src/services/reminderEngine.ts`, `src/services/notificationService.ts` |
 | **Système d'XP, Niveaux & Trophées** | ⏳ À faire | `src/services/gamificationService.ts` |
@@ -435,6 +435,26 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   4. **Immunisation du Parser & Vues ([`TaskParser.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/parsers/taskParser.ts), [`ChatView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/chatView.ts), [`BriefingView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/briefingView.ts), [`EveningReviewView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/eveningReviewView.ts))** :
      - `TaskParser.cleanTitle` filtre désormais toute case à cocher parasite pour empêcher la propagation de doublons dans les vues et les cartes de tâches.
   5. **Tests & Validation** : **75/75 tests unitaires passés avec 100% de succès (14 suites)**, 0 erreur ESLint, build de production validé.
+- **Statut** : Validée.
+
+### 📅 2026-08-25 — Étape 4.3 : Automatisation CI/CD GitHub Actions & Workflow de Reprise après Inactivité
+- **Décision & Actions Réalisées** :
+  1. **Workflows GitHub Actions (`.github/workflows/`)** :
+     - `.github/workflows/ci.yml` : Exécution automatique de `npm run lint` (ESLint), `npx vitest run` (82 tests unitaires) et `npm run build` (ESBuild) sur chaque `push` et `pull_request` vers `dev` et `main`.
+     - `.github/workflows/release.yml` : Déclenchement sur tag `v*` pour compiler et publier automatiquement la release GitHub avec les assets officiels (`main.js`, `manifest.json`, `styles.css`).
+  2. **Service Métier de Reprise ([`RecoveryService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/recoveryService.ts))** :
+     - `calculateInactivity` : Détection intelligente du temps écoulé depuis la dernière session active ou dernière complétion de tâche (heures, jours, semaines, mois).
+     - `collectRecoveryData` : Extraction sélective du coffre : identification des *Quick Wins* (tâches faciles ou faible énergie `#energie/1..3`), de la tâche majeure (*The One Thing*), des retards récents et des tâches en souffrance (> 7 jours de retard).
+     - `buildRecoveryMessages` : Prompting bienveillant, déculpabilisant et sans friction (philosophie *Soft Landing* en 3 blocs d'action : Quick Win immédiat, The One Thing du jour, délestage/triage).
+     - `postponeOverdueTasks` : Report chirurgical et en masse des tâches dépassées vers la date du jour (`TaskMutator.setDueDate`, `app.vault.process`).
+     - `saveRecoveryToDailyNote` : Consignation instantanée du plan de reprise dans la section `## ☕ Reprise en Douceur & Focus` de la note quotidienne.
+  3. **Vue Interactive Dédiée ([`RecoveryView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/recoveryView.ts))** :
+     - Icône ruban `coffee` et commande `Second Brain: Reprendre après une pause`.
+     - En-tête fixe avec badge dynamique de durée de pause (ex: *« ☕ Reprise après 3 jours de pause »*) et jauge d'énergie interactive.
+     - Streaming en temps réel et injection *in-place* des cartes de tâches interactives (`TaskCardWidget`).
+     - Boutons 1-clic : `[ 📝 Enregistrer dans ma Daily Note ]` et `[ ⏩ Reporter les retards à aujourd'hui ]`.
+     - Dock inférieur avec suggestions chips et transfert direct vers `ChatView`.
+  4. **Tests & Validation** : **82/82 tests unitaires passés avec 100% de succès (15 suites de tests)**, 0 erreur ESLint, bundle de production validé.
 - **Statut** : Validée.
 
 

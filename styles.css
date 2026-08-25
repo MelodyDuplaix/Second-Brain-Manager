@@ -2590,9 +2590,14 @@ textarea.sbm-chat-textarea:focus {
 	border-color: rgba(var(--interactive-accent-rgb), 0.25);
 }
 
+/* ==========================================================================
+   Vue Dédiée de la Reprise après Pause (Soft Landing & Focus)
+   ========================================================================== */
 
+.sbm-recovery-header-icon {
+	color: var(--text-warning, #f39c12) !important;
+}
 
-
-
-
-
+.sbm-recovery-view-header {
+	border-bottom: 1px solid var(--background-modifier-border);
+}
