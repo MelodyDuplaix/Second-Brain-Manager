@@ -472,30 +472,41 @@
 	gap: 8px;
 }
 
-.sbm-history-card {
+.sbm-history-card,
+.sbm-history-item {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
 	padding: 12px;
-	border-radius: 6px;
+	border-radius: 8px;
 	background-color: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
 	gap: 12px;
+	transition: border-color 0.15s ease;
 }
 
-.sbm-history-left {
+.sbm-history-card:hover,
+.sbm-history-item:hover {
+	border-color: var(--interactive-accent);
+}
+
+.sbm-history-left,
+.sbm-history-item-main {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
 	flex: 1;
 }
 
-.sbm-history-task-text {
+.sbm-history-task-text,
+.sbm-history-task-title {
 	font-weight: 600;
 	font-size: 0.95em;
+	color: var(--text-normal);
 }
 
-.sbm-history-meta {
+.sbm-history-meta,
+.sbm-history-task-meta {
 	display: flex;
 	gap: 8px;
 	align-items: center;
@@ -505,6 +516,22 @@
 .sbm-history-date {
 	font-size: 0.75em;
 	color: var(--text-muted);
+}
+
+.sbm-history-tags {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.sbm-tag-pill {
+	font-size: 0.72em;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background-color: var(--background-secondary-alt);
+	color: var(--text-muted);
+	border: 1px solid var(--background-modifier-border);
 }
 
 .sbm-history-right {
@@ -520,7 +547,8 @@
 	white-space: nowrap;
 }
 
-.sbm-revoke-btn {
+.sbm-revoke-btn,
+.sbm-refund-btn {
 	font-size: 0.78em;
 	padding: 4px 8px;
 	cursor: pointer;
@@ -532,7 +560,8 @@
 	white-space: nowrap;
 }
 
-.sbm-revoke-btn:hover {
+.sbm-revoke-btn:hover,
+.sbm-refund-btn:hover {
 	background-color: var(--text-error, #f44336);
 	color: #ffffff;
 	border-color: transparent;

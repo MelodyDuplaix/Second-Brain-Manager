@@ -191,12 +191,12 @@ export class GamificationHistoryView extends ItemView {
 		}
 
 		filtered.forEach(item => {
-			const row = container.createEl('div', { cls: 'sbm-history-item' });
+			const row = container.createEl('div', { cls: 'sbm-history-card' });
 
-			const mainInfo = row.createEl('div', { cls: 'sbm-history-item-main' });
-			mainInfo.createEl('div', { cls: 'sbm-history-task-title', text: item.taskText });
+			const mainInfo = row.createEl('div', { cls: 'sbm-history-left' });
+			mainInfo.createEl('div', { cls: 'sbm-history-task-text', text: item.taskText });
 
-			const metaInfo = mainInfo.createEl('div', { cls: 'sbm-history-task-meta' });
+			const metaInfo = mainInfo.createEl('div', { cls: 'sbm-history-meta' });
 			const dateFormatted = new Date(item.completedAt).toLocaleString('fr-FR', {
 				dateStyle: 'short',
 				timeStyle: 'short'
@@ -214,7 +214,7 @@ export class GamificationHistoryView extends ItemView {
 			rightWrap.createEl('span', { cls: 'sbm-history-coins', text: `+${item.coins} 🪙` });
 
 			const refundBtn = rightWrap.createEl('button', {
-				cls: 'sbm-refund-btn',
+				cls: 'sbm-revoke-btn',
 				text: 'Annuler'
 			});
 			refundBtn.title = 'Annuler cette complétion et rembourser les pièces';
