@@ -5,7 +5,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
-import { ActionProposal, UpdateTaskActionProposal } from '../models/actions';
+import { ActionProposal, UpdateTaskActionProposal, TaskDiffMetadata } from '../models/actions';
 import { VaultContextService } from './vaultContextService';
 import SecondBrainPlugin from '../main';
 
@@ -166,41 +166,146 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Génère automatiquement des propositions structurées d'allègement et de triage
-	 * (décalage à aujourd'hui, annulation des tâches obsolètes, suppression d'échéances non prioritaires).
+	 * Génère un ensemble varié et intelligent de propositions d'allègement avec métadonnées exhaustives
+	 * (reports, rétrogradations de quadrant, priorisations, annulations, allègements d'échéances et d'énergie).
 	 */
-	public static generateDefaultLighteningProposals(data: RecoveryVaultData): ActionProposal[] {
+	public static generateDefaultLighteningProposals(data: RecoveryVaultData, plugin?: SecondBrainPlugin): ActionProposal[] {
 		const proposals: ActionProposal[] = [];
 		const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+		const matrixAdapter = plugin 
+			? MatrixAdapterFactory.createAdapter(plugin.settings.matrixProvider, plugin.settings.customMatrixMapping)
+			: MatrixAdapterFactory.createAdapter('task-matrix');
 
 		data.overdueTasks.forEach((task, idx) => {
 			const isVeryStale = task.dueDate && task.dueDate <= fourteenDaysAgo;
-			const isMeeting = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
+			const isMeetingOrCall = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
+			const currentQ = matrixAdapter.getQuadrant(task);
 
-			if (isVeryStale || isMeeting) {
-				// Proposition 1 : Annulation / Archivage des tâches obsolètes
-				const prop: UpdateTaskActionProposal = {
+			if (isVeryStale || isMeetingOrCall) {
+				// 1. Annulation des tâches obsolètes
+				const diff: TaskDiffMetadata = {
+					taskTitle: task.title,
+					filePath: task.filePath,
+					lineNumber: task.lineNumber,
+					oldDueDate: task.dueDate,
+					newDueDate: task.dueDate,
+					oldQuadrant: currentQ,
+					newQuadrant: currentQ,
+					oldPriority: task.priority,
+					newPriority: task.priority,
+					oldEnergy: task.energy,
+					newEnergy: task.energy,
+					oldStatus: '- [ ]',
+					newStatus: 'cancelled',
+					reason: isMeetingOrCall ? 'Événement ou rendez-vous passé' : 'Tâche dépassée depuis plus de 14 jours'
+				};
+
+				proposals.push({
 					id: `recovery-cancel-${idx}-${Date.now()}`,
 					type: 'update_task',
 					targetPath: task.filePath,
 					lineNumber: task.lineNumber,
-					description: `❌ Marquer comme obsolète / annulée : "${task.title}" (${task.filePath})`,
+					taskTitle: task.title,
+					description: `❌ Annuler la tâche obsolète : "${task.title}"`,
 					selected: true,
-					newStatus: 'cancelled'
+					newStatus: 'cancelled',
+					diff,
+					reason: diff.reason
+				} as UpdateTaskActionProposal);
+
+			} else if (currentQ === 'q1' && task.dueDate && task.dueDate <= sevenDaysAgo) {
+				// 2. Rétrogradation de quadrant (Q1 -> Q2 ou Q3) pour soulager la reprise
+				const targetQ = 'q2';
+				const diff: TaskDiffMetadata = {
+					taskTitle: task.title,
+					filePath: task.filePath,
+					lineNumber: task.lineNumber,
+					oldDueDate: task.dueDate,
+					newDueDate: data.dateStr,
+					oldQuadrant: 'q1',
+					newQuadrant: targetQ,
+					oldPriority: task.priority || 'high',
+					newPriority: 'normal',
+					oldEnergy: task.energy,
+					newEnergy: task.energy,
+					reason: 'Rétrogradation de Q1 vers Q2 pour éliminer le faux sentiment d\'urgence et planifier sereinement'
 				};
-				proposals.push(prop);
-			} else if (task.dueDate && task.dueDate < data.dateStr) {
-				// Proposition 2 : Report des retards récents à aujourd'hui
-				const prop: UpdateTaskActionProposal = {
+
+				proposals.push({
+					id: `recovery-demote-${idx}-${Date.now()}`,
+					type: 'update_task',
+					targetPath: task.filePath,
+					lineNumber: task.lineNumber,
+					taskTitle: task.title,
+					description: `🔽 Rétrograder en Q2 et replanifier : "${task.title}"`,
+					selected: true,
+					newMatrixQuadrant: targetQ,
+					newDueDate: data.dateStr,
+					newPriority: 'normal',
+					diff,
+					reason: diff.reason
+				} as UpdateTaskActionProposal);
+
+			} else if (currentQ === 'q4' || (task.energy !== undefined && task.energy >= 8 && task.dueDate && task.dueDate < data.dateStr)) {
+				// 3. Délestage d'échéance ou allègement d'énergie
+				const diff: TaskDiffMetadata = {
+					taskTitle: task.title,
+					filePath: task.filePath,
+					lineNumber: task.lineNumber,
+					oldDueDate: task.dueDate,
+					newDueDate: null,
+					oldQuadrant: currentQ,
+					newQuadrant: currentQ,
+					oldEnergy: task.energy,
+					newEnergy: task.energy ? Math.min(task.energy, 4) : undefined,
+					reason: 'Suppression de l\'échéance pour enlever la pression temporelle et ajustement d\'énergie'
+				};
+
+				proposals.push({
+					id: `recovery-lighten-${idx}-${Date.now()}`,
+					type: 'update_task',
+					targetPath: task.filePath,
+					lineNumber: task.lineNumber,
+					taskTitle: task.title,
+					description: `🧹 Délester l'échéance : "${task.title}"`,
+					selected: true,
+					newDueDate: null,
+					newEnergy: diff.newEnergy,
+					diff,
+					reason: diff.reason
+				} as UpdateTaskActionProposal);
+
+			} else {
+				// 4. Report de date normal à aujourd'hui
+				const diff: TaskDiffMetadata = {
+					taskTitle: task.title,
+					filePath: task.filePath,
+					lineNumber: task.lineNumber,
+					oldDueDate: task.dueDate,
+					newDueDate: data.dateStr,
+					oldQuadrant: currentQ,
+					newQuadrant: currentQ,
+					oldPriority: task.priority,
+					newPriority: task.priority,
+					oldEnergy: task.energy,
+					newEnergy: task.energy,
+					reason: 'Replanification pour aujourd\'hui suite à la reprise'
+				};
+
+				proposals.push({
 					id: `recovery-postpone-${idx}-${Date.now()}`,
 					type: 'update_task',
 					targetPath: task.filePath,
 					lineNumber: task.lineNumber,
-					description: `⏩ Reporter à aujourd'hui (${data.dateStr}) : "${task.title}"`,
+					taskTitle: task.title,
+					description: `⏩ Reporter à aujourd'hui : "${task.title}"`,
 					selected: true,
-					newDueDate: data.dateStr
-				};
-				proposals.push(prop);
+					newDueDate: data.dateStr,
+					diff,
+					reason: diff.reason
+				} as UpdateTaskActionProposal);
 			}
 		});
 
@@ -208,11 +313,12 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Extrait les propositions d'actions JSON retournées par l'IA et nettoie le texte affiché.
+	 * Extrait les propositions d'actions JSON retournées par l'IA et les enrichit avec les métadonnées de tâche.
 	 */
 	public static extractProposalsFromResponse(
 		responseText: string,
-		defaultProposals: ActionProposal[]
+		defaultProposals: ActionProposal[],
+		vaultTasks: ObsidianTask[] = []
 	): { cleanText: string; proposals: ActionProposal[] } {
 		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
 
@@ -231,20 +337,55 @@ export class RecoveryService {
 			if (Array.isArray(parsed) && parsed.length > 0) {
 				const validatedProposals: ActionProposal[] = parsed
 					.filter(p => p && typeof p === 'object' && p.type && p.targetPath)
-					.map((p, index) => ({
-						id: p.id || `recovery-ai-${index}-${Date.now()}`,
-						type: p.type,
-						targetPath: p.targetPath,
-						lineNumber: Number(p.lineNumber || 1),
-						description: p.description || `Action sur ${p.targetPath}`,
-						selected: p.selected !== false,
-						newStatus: p.newStatus,
-						newDueDate: p.newDueDate,
-						newStartDate: p.newStartDate,
-						newPriority: p.newPriority,
-						newEnergy: p.newEnergy,
-						newMatrixQuadrant: p.newMatrixQuadrant
-					} as ActionProposal));
+					.map((p, index) => {
+						const targetPath = String(p.targetPath);
+						const lineNum = Number(p.lineNumber || 1);
+
+						// Recherche de la tâche originale dans le coffre pour enrichir les informations
+						const matchedTask = vaultTasks.find(vt => vt.filePath === targetPath && vt.lineNumber === lineNum)
+							|| vaultTasks.find(vt => vt.filePath === targetPath);
+
+						const taskTitle = p.taskTitle || matchedTask?.title || p.description || 'Tâche';
+						const oldDueDate = p.oldDueDate || matchedTask?.dueDate;
+						const oldQuadrant = p.oldQuadrant || matchedTask?.matrixTag?.replace('#tm/', '');
+						const oldPriority = p.oldPriority || matchedTask?.priority;
+						const oldEnergy = p.oldEnergy || matchedTask?.energy;
+						const reason = p.reason || p.description;
+
+						const diff: TaskDiffMetadata = {
+							taskTitle,
+							filePath: targetPath,
+							lineNumber: lineNum,
+							oldDueDate,
+							newDueDate: p.newDueDate,
+							oldQuadrant,
+							newQuadrant: p.newMatrixQuadrant,
+							oldPriority,
+							newPriority: p.newPriority,
+							oldEnergy,
+							newEnergy: p.newEnergy,
+							newStatus: p.newStatus,
+							reason
+						};
+
+						return {
+							id: p.id || `recovery-ai-${index}-${Date.now()}`,
+							type: p.type,
+							targetPath,
+							lineNumber: lineNum,
+							taskTitle,
+							description: p.description || `Action sur ${taskTitle}`,
+							selected: p.selected !== false,
+							newStatus: p.newStatus,
+							newDueDate: p.newDueDate,
+							newStartDate: p.newStartDate,
+							newPriority: p.newPriority,
+							newEnergy: p.newEnergy,
+							newMatrixQuadrant: p.newMatrixQuadrant,
+							diff,
+							reason
+						} as ActionProposal;
+					});
 
 				if (validatedProposals.length > 0) {
 					return {
@@ -254,7 +395,7 @@ export class RecoveryService {
 				}
 			}
 		} catch {
-			// En cas d'erreur de parsing JSON, on conserve les propositions par défaut
+			// En cas d'erreur de parsing, repli sur defaultProposals
 		}
 
 		return {
@@ -264,7 +405,7 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Construit le prompt système et utilisateur optimisé pour un réembarquement doux et un allègement structuré.
+	 * Construit le prompt système et utilisateur optimisé pour un réembarquement doux et un allègement complet.
 	 */
 	public static buildRecoveryMessages(data: RecoveryVaultData): ChatMessage[] {
 		const formatTaskDetailed = (t: ObsidianTask): string => {
@@ -272,10 +413,11 @@ export class RecoveryService {
 			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
+			if (t.priority) line += ` (Priorité: ${t.priority})`;
 			if (t.energy) line += ` #energie/${t.energy}`;
 			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
 			if (noteBasename) line += ` [[${noteBasename}]]`;
-			line += ` (Fichier: "${t.filePath}", Ligne: ${t.lineNumber})`;
+			line += ` [Fichier: "${t.filePath}", Ligne: ${t.lineNumber}]`;
 			return line;
 		};
 
@@ -288,47 +430,61 @@ export class RecoveryService {
 			: 'Aucune tâche rapide identifiée.';
 
 		const overdueText = data.overdueTasks.length > 0
-			? data.overdueTasks.slice(0, 10).map(formatTaskDetailed).join('\n')
+			? data.overdueTasks.slice(0, 12).map(formatTaskDetailed).join('\n')
 			: 'Aucune urgence en retard.';
 
 		const staleText = data.staleTasks.length > 0
-			? data.staleTasks.slice(0, 8).map(formatTaskDetailed).join('\n')
+			? data.staleTasks.slice(0, 10).map(formatTaskDetailed).join('\n')
 			: 'Aucune tâche ancienne en souffrance.';
 
 		const inboxText = data.inboxNotes.length > 0
 			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
 			: 'Inbox vide.';
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et délestage d'esprit.
+		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine après pause (Soft Landing) et allègement radical de charge mentale.
 
 TON OBJECTIF :
-Accueillir chaleureusement l'utilisateur (${data.inactivityText}), établir un bilan de reprise sans culpabilité, et proposer un **véritable plan de tri et d'allègement de ses tâches en souffrance**.
+Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan déculpabilisant, et proposer un **véritable plan de tri et d'allègement de toutes ses tâches en souffrance**.
+
+VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
+Ne te limite pas à de simples reports de dates. Propose une combinaison intelligente et adaptée :
+1. 🔽 **Rétrogradation de quadrant / priorité** (ex: passer de Q1 à Q2 ou Q3 des tâches qui ne sont pas de véritables urgences pour alléger la pression).
+2. 🔺 **Priorisation / Promotion** (ex: passer en Q1 une urgence vitale).
+3. ⏩ **Report de date** (décaler à aujourd'hui ${data.dateStr} les tâches encore d'actualité).
+4. ❌ **Annulation / Obsolescence** (passer en \`newStatus: "cancelled"\` les réunions ou tâches périmées depuis longtemps).
+5. 🧹 **Délestage d'échéances** (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les tâches de fond).
+6. ⚡ **Ajustement d'énergie** (réduire l'énergie estimée pour faciliter le passage à l'action).
 
 STRUCTURE DE TA RÉPONSE :
 1. **☕ Accueil & Philosophie de reprise** (2 phrases déculpabilisantes).
 2. **🚀 Étape 1 : Le Quick Win pour amorcer le mouvement** (1 tâche ultra-simple de 5 min au format \`- [ ] ... [[Note]]\`).
 3. **🎯 Étape 2 : The One Thing** (La seule tâche prioritaire et stratégique du jour au format \`- [ ] ... [[Note]]\`).
-4. **🧹 Étape 3 : Plan d'Allègement & Tri des tâches** :
-   - Explique clairement quelles tâches sont décalées à aujourd'hui (${data.dateStr}), quelles tâches périmées/obsolètes doivent être annulées/abandonnées, et quelles tâches doivent être délestées de leur échéance.
+4. **🧹 Étape 3 : Plan d'Allègement & Tri Détaillé** :
+   - Explique et justifie les rétrogradations, annulations et reports proposés.
 5. **🌱 Conseil de démarrage** (1 phrase motivante).
 
 BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
-À la toute fin de ton message, inclus un bloc de code JSON strictement balisé \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions pour que l'utilisateur puisse appliquer toutes les modifications en 1 clic :
+À la toute fin de ton message, inclus un bloc de code JSON strictement balisé \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions :
 \`\`\`json:actions
 [
   {
     "type": "update_task",
-    "targetPath": "chemin/vers/fichier.md",
+    "targetPath": "01 - Projets/Acme.md",
     "lineNumber": 12,
-    "description": "⏩ Reporter à aujourd'hui : Titre de la tâche",
-    "newDueDate": "${data.dateStr}"
+    "taskTitle": "Rédiger le rapport",
+    "description": "🔽 Rétrograder en Q2 et replanifier : Rédiger le rapport",
+    "newMatrixQuadrant": "q2",
+    "newDueDate": "${data.dateStr}",
+    "reason": "Tâche non urgente, rétrogradée pour soulager la reprise"
   },
   {
     "type": "update_task",
-    "targetPath": "chemin/vers/fichier.md",
+    "targetPath": "02 - Domaines/Maison.md",
     "lineNumber": 5,
-    "description": "❌ Marquer comme obsolète / annulée : Titre",
-    "newStatus": "cancelled"
+    "taskTitle": "Réunion du 10 août",
+    "description": "❌ Marquer comme obsolète / annulée",
+    "newStatus": "cancelled",
+    "reason": "Réunion passée non pertinente"
   }
 ]
 \`\`\`
@@ -351,7 +507,7 @@ ${staleText}
 📥 BOÎTE DE RÉCEPTION (INBOX) :
 ${inboxText}
 
-Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâches, accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
+Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâches (rétrogradations, annulations, reports, délestages), accompagné du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -370,7 +526,16 @@ Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâc
 	): Promise<{ text: string; data: RecoveryVaultData; allTasks: ObsidianTask[]; proposals: ActionProposal[] }> {
 		const data = await this.collectRecoveryData(app, plugin);
 		const messages = this.buildRecoveryMessages(data);
-		const defaultProposals = this.generateDefaultLighteningProposals(data);
+
+		// Lecture de toutes les tâches pour enrichissement
+		const files = app.vault.getMarkdownFiles();
+		const vaultTasks: ObsidianTask[] = [];
+		for (const file of files) {
+			const content = await app.vault.read(file);
+			vaultTasks.push(...TaskParser.parseFile(content, file.path, plugin.settings));
+		}
+
+		const defaultProposals = this.generateDefaultLighteningProposals(data, plugin);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
 		const config: LLMConfig = {
@@ -392,7 +557,7 @@ Prépare-moi un plan de reprise complet avec un vrai tri et allègement des tâc
 			}
 		);
 
-		const { cleanText, proposals } = this.extractProposalsFromResponse(rawGeneratedText, defaultProposals);
+		const { cleanText, proposals } = this.extractProposalsFromResponse(rawGeneratedText, defaultProposals, vaultTasks);
 
 		const allTasks = [
 			...(data.oneThingTask ? [data.oneThingTask] : []),

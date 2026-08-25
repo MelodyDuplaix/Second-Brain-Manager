@@ -457,6 +457,27 @@ Le projet **Second Brain Manager** est un plugin Obsidian agentique et gamifié,
   4. **Tests & Validation** : **82/82 tests unitaires passés avec 100% de succès (15 suites de tests)**, 0 erreur ESLint, bundle de production validé.
 - **Statut** : Validée.
 
+### 📅 2026-08-25 — Étape 4.4 : Tri Multi-Dimensionnel & Affichage Exhaustif des Tâches dans le Plan d'Allègement
+- **Décision & Actions Réalisées** :
+  1. **Tri Multi-Dimensionnel Étendu ([`RecoveryService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/recoveryService.ts))** :
+     - Enrichissement des types d'actions proposés au-delà des simples reports :
+       - 🔽 **Rétrogradation de quadrant** (Q1 ➔ Q2 ou Q3) pour soulager la pression et planifier sereinement.
+       - 🔺 **Promotion de quadrant** (➔ Q1) pour les urgences critiques réelles.
+       - ⏩ **Report de date** vers la date du jour ou le lendemain.
+       - ❌ **Annulation / Obsolescence** (`newStatus: 'cancelled'` / `- [-]`) pour les réunions passées et tâches périmées (>14j).
+       - 🧹 **Délestage d'échéances** (`newDueDate: null`) pour retirer la contrainte temporelle des tâches de fond.
+       - ⚡ **Ajustement d'énergie** (`newEnergy: N`) pour faciliter la remise en mouvement.
+  2. **Affichage Exhaustif & Diffs Visuels ([`ActionPreviewWidget.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/actionPreviewWidget.ts), [`styles.css`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/styles.css))** :
+     - Pour chaque tâche, présentation claire et détaillée :
+       - **Titre complet de la tâche** + lien de note source cliquable `📁 [[Note]] (Ligne X)`.
+       - **Badge d'action distinctif** (`⏩ Report`, `❌ Annulation`, `🔽 Rétrogradation`, `🔺 Priorisation`, `🧹 Délestage`, `⚡ Énergie`).
+       - **Diffs de métadonnées visuels** : `📅 Ancienne ➔ Nouvelle`, `🎯 Ancien Quadrant ➔ Nouveau`, `🔺 Priorité`, `⚡ Énergie`, `Statut`.
+       - **Justification pédagogique de l'IA** (`💡 Raison`).
+     - Boutons rapides `[ Tout cocher ]` / `[ Tout décocher ]`.
+     - Bouton d'action globale `[ ⚡ Appliquer les modifications sélectionnées ]` avec retour visuel immédiat `✅ Appliqué`.
+  3. **Tests & Validation** : **84/84 tests unitaires passés avec 100% de succès (15 suites)**, 0 erreur ESLint, bundle de production compilé.
+- **Statut** : Validée.
+
 
 
 

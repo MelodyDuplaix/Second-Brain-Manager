@@ -49,9 +49,29 @@ export interface CreateTaskActionProposal extends BaseActionProposal {
 	blockId?: string;
 }
 
+export interface TaskDiffMetadata {
+	taskTitle?: string;
+	filePath?: string;
+	lineNumber?: number;
+	oldDueDate?: string | null;
+	newDueDate?: string | null;
+	oldQuadrant?: string | null;
+	newQuadrant?: string | null;
+	oldPriority?: string | null;
+	newPriority?: string | null;
+	oldEnergy?: number | null;
+	newEnergy?: number | null;
+	oldStatus?: string | null;
+	newStatus?: string | null;
+	reason?: string;
+}
+
 export interface UpdateTaskActionProposal extends BaseActionProposal {
 	type: 'update_task';
 	lineNumber: number;
+	taskTitle?: string;
+	diff?: TaskDiffMetadata;
+	reason?: string;
 	newStatus?: string;
 	newDueDate?: string | null;
 	newStartDate?: string | null;

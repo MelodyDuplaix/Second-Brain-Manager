@@ -1,5 +1,5 @@
 import { Notice } from 'obsidian';
-import { ActionProposal, ActionResult } from '../models/actions';
+import { ActionProposal, ActionResult, UpdateTaskActionProposal } from '../models/actions';
 import { ActionExecutor } from '../services/actionExecutor';
 
 export class ActionPreviewWidget {
@@ -11,19 +11,48 @@ export class ActionPreviewWidget {
 	): HTMLElement {
 		const widgetEl = containerEl.createDiv({ cls: 'sbm-action-preview-card' });
 
+		// En-tête de la carte d'actions
 		const headerEl = widgetEl.createDiv({ cls: 'sbm-preview-header' });
-		const titleEl = headerEl.createEl('h4', { text: `📋 ${proposals.length} modification${proposals.length > 1 ? 's' : ''} proposée${proposals.length > 1 ? 's' : ''}` });
-		titleEl.addClass('sbm-preview-title');
+		const titleRow = headerEl.createDiv({ cls: 'sbm-preview-title-row' });
+		
+		titleRow.createEl('h4', { 
+			text: `📋 Plan d'Allègement & Tri Proposé (${proposals.length} modification${proposals.length > 1 ? 's' : ''})`,
+			cls: 'sbm-preview-title'
+		});
+
+		// Boutons d'aide à la sélection rapide
+		if (proposals.length > 1) {
+			const selectToggles = titleRow.createDiv({ cls: 'sbm-preview-select-toggles' });
+			const checkAllBtn = selectToggles.createEl('button', { cls: 'sbm-preview-toggle-btn', text: 'Tout cocher' });
+			const uncheckAllBtn = selectToggles.createEl('button', { cls: 'sbm-preview-toggle-btn', text: 'Tout décocher' });
+
+			checkAllBtn.addEventListener('click', (e) => {
+				e.preventDefault();
+				proposals.forEach(p => p.selected = true);
+				rowMap.forEach(({ rowEl, checkbox }) => {
+					checkbox.checked = true;
+					rowEl.removeClass('is-deselected');
+				});
+			});
+
+			uncheckAllBtn.addEventListener('click', (e) => {
+				e.preventDefault();
+				proposals.forEach(p => p.selected = false);
+				rowMap.forEach(({ rowEl, checkbox }) => {
+					checkbox.checked = false;
+					rowEl.addClass('is-deselected');
+				});
+			});
+		}
 
 		const listEl = widgetEl.createDiv({ cls: 'sbm-preview-list' });
-
 		const rowMap = new Map<string, { rowEl: HTMLElement; checkbox: HTMLInputElement }>();
 
 		proposals.forEach(prop => {
 			const itemRow = listEl.createDiv({ cls: 'sbm-preview-item' });
 
-			const labelEl = itemRow.createEl('label', { cls: 'sbm-preview-label' });
-			const checkbox = labelEl.createEl('input', { type: 'checkbox' });
+			const checkboxWrap = itemRow.createDiv({ cls: 'sbm-preview-checkbox-wrap' });
+			const checkbox = checkboxWrap.createEl('input', { type: 'checkbox' });
 			checkbox.checked = prop.selected;
 
 			checkbox.addEventListener('change', () => {
@@ -31,22 +60,123 @@ export class ActionPreviewWidget {
 				itemRow.toggleClass('is-deselected', !checkbox.checked);
 			});
 
-			labelEl.createEl('span', { text: prop.description, cls: 'sbm-preview-desc' });
+			const itemContent = itemRow.createDiv({ cls: 'sbm-preview-item-content' });
+
+			// A. En-tête de l'item : Badge de type d'action + Titre de la tâche + Fichier source
+			const itemHeader = itemContent.createDiv({ cls: 'sbm-preview-item-header' });
+			this.createActionTypeBadge(itemHeader, prop);
+
+			// Extraction du titre et du nom de fichier
+			let taskTitle = '';
+			const fileBasename = prop.targetPath.replace(/\.md$/, '').split('/').pop() || prop.targetPath;
+			let lineNumber = 0;
+
+			if (prop.type === 'update_task') {
+				const upProp = prop as UpdateTaskActionProposal;
+				taskTitle = upProp.taskTitle || upProp.diff?.taskTitle || prop.description;
+				lineNumber = upProp.lineNumber;
+			} else if (prop.type === 'create_task') {
+				taskTitle = prop.taskTitle;
+			} else {
+				taskTitle = prop.description;
+			}
+
+			const titleSpan = itemHeader.createSpan({ cls: 'sbm-preview-task-title', text: taskTitle });
+			titleSpan.title = taskTitle;
+
+			const filePill = itemHeader.createSpan({ 
+				cls: 'sbm-preview-file-pill', 
+				text: `📁 [[${fileBasename}]]${lineNumber ? ` : L${lineNumber}` : ''}` 
+			});
+			filePill.title = `Fichier : ${prop.targetPath}`;
+
+			// B. Ligne des Diffs & Métadonnées comparées (Ancienne vs Nouvelle valeur)
+			if (prop.type === 'update_task') {
+				const upProp = prop as UpdateTaskActionProposal;
+				const diff = upProp.diff;
+
+				const diffsRow = itemContent.createDiv({ cls: 'sbm-preview-diffs-row' });
+
+				// 1. Échéance
+				if (upProp.newDueDate !== undefined || diff?.newDueDate !== undefined) {
+					const oldDue = diff?.oldDueDate || 'Non définie';
+					const newDue = upProp.newDueDate || diff?.newDueDate;
+					const dueDiffPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					dueDiffPill.createSpan({ text: '📅 ' });
+					if (newDue) {
+						dueDiffPill.createSpan({ text: `${oldDue} ➔ `, cls: 'sbm-diff-old' });
+						dueDiffPill.createSpan({ text: `${newDue}`, cls: 'sbm-diff-new' });
+					} else {
+						dueDiffPill.createSpan({ text: `${oldDue} ➔ `, cls: 'sbm-diff-old' });
+						dueDiffPill.createSpan({ text: 'Supprimée', cls: 'sbm-diff-removed' });
+					}
+				}
+
+				// 2. Quadrant / Matrice
+				if (upProp.newMatrixQuadrant !== undefined || diff?.newQuadrant !== undefined) {
+					const oldQ = diff?.oldQuadrant ? diff.oldQuadrant.toUpperCase() : 'Non classé';
+					const newQ = (upProp.newMatrixQuadrant || diff?.newQuadrant || '').toUpperCase();
+					const quadPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					quadPill.createSpan({ text: '🎯 ' });
+					quadPill.createSpan({ text: `${oldQ} ➔ `, cls: 'sbm-diff-old' });
+					quadPill.createSpan({ text: `${newQ}`, cls: 'sbm-diff-new' });
+				}
+
+				// 3. Priorité
+				if (upProp.newPriority !== undefined || diff?.newPriority !== undefined) {
+					const oldP = diff?.oldPriority || 'Normale';
+					const newP = upProp.newPriority || diff?.newPriority || 'Normale';
+					const prioPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					prioPill.createSpan({ text: '🔺 ' });
+					prioPill.createSpan({ text: `${oldP} ➔ `, cls: 'sbm-diff-old' });
+					prioPill.createSpan({ text: `${newP}`, cls: 'sbm-diff-new' });
+				}
+
+				// 4. Énergie
+				if (upProp.newEnergy !== undefined || diff?.newEnergy !== undefined) {
+					const oldE = diff?.oldEnergy ? `#energie/${diff.oldEnergy}` : 'Non définie';
+					const newE = upProp.newEnergy || diff?.newEnergy;
+					const energyPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					energyPill.createSpan({ text: '⚡ ' });
+					energyPill.createSpan({ text: `${oldE} ➔ `, cls: 'sbm-diff-old' });
+					energyPill.createSpan({ text: `#energie/${newE}`, cls: 'sbm-diff-new' });
+				}
+
+				// 5. Statut
+				if (upProp.newStatus !== undefined || diff?.newStatus !== undefined) {
+					const newS = upProp.newStatus || diff?.newStatus;
+					if (newS === 'cancelled' || newS === '-') {
+						const statusPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill is-cancelled-diff' });
+						statusPill.createSpan({ text: '❌ Statut : - [ ] ➔ - [-] (Annulée)' });
+					} else if (newS === 'done' || newS === 'completed') {
+						const statusPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+						statusPill.createSpan({ text: '✅ Statut : - [ ] ➔ - [x] (Terminée)' });
+					}
+				}
+			}
+
+			// C. Raison / Explication de l'IA
+			const reasonText = (prop as UpdateTaskActionProposal).reason || (prop as UpdateTaskActionProposal).diff?.reason || (prop.description !== taskTitle ? prop.description : '');
+			if (reasonText && !reasonText.startsWith('Action sur')) {
+				const reasonEl = itemContent.createDiv({ cls: 'sbm-preview-reason-box' });
+				reasonEl.createSpan({ text: '💡 ' });
+				reasonEl.createSpan({ text: reasonText });
+			}
 
 			rowMap.set(prop.id, { rowEl: itemRow, checkbox });
 		});
 
-		// Barre d'actions
+		// Barre d'actions en bas
 		const actionsRow = widgetEl.createDiv({ cls: 'sbm-preview-actions-row' });
 
 		const applyBtn = actionsRow.createEl('button', {
 			cls: 'sbm-preview-apply-btn mod-cta',
-			text: '⚡ Tout appliquer'
+			text: '⚡ Appliquer les modifications sélectionnées'
 		});
 
 		const cancelBtn = actionsRow.createEl('button', {
 			cls: 'sbm-preview-cancel-btn',
-			text: 'Annuler'
+			text: 'Fermer'
 		});
 
 		applyBtn.addEventListener('click', async () => {
@@ -58,7 +188,7 @@ export class ActionPreviewWidget {
 
 			applyBtn.disabled = true;
 			cancelBtn.disabled = true;
-			applyBtn.setText('Application...');
+			applyBtn.setText('Application du plan d\'allègement...');
 
 			const results = await executor.executeProposals(proposals);
 
@@ -77,10 +207,10 @@ export class ActionPreviewWidget {
 			});
 
 			const successCount = results.filter(r => r.success).length;
-			new Notice(`Second Brain : ${successCount}/${results.length} action(s) appliquée(s) avec succès !`);
+			new Notice(`Second Brain : ${successCount}/${results.length} action(s) d'allègement appliquée(s) avec succès !`);
 
 			applyBtn.remove();
-			cancelBtn.setText('Fermer');
+			cancelBtn.setText('Terminé');
 			cancelBtn.disabled = false;
 
 			if (onExecuted) {
@@ -93,5 +223,44 @@ export class ActionPreviewWidget {
 		});
 
 		return widgetEl;
+	}
+
+	private static createActionTypeBadge(parentEl: HTMLElement, prop: ActionProposal): HTMLElement {
+		const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge' });
+
+		if (prop.type === 'update_task') {
+			const up = prop as UpdateTaskActionProposal;
+			if (up.newStatus === 'cancelled' || up.newStatus === '-') {
+				badge.addClass('type-cancel');
+				badge.setText('❌ Annuler / Obsolète');
+			} else if (up.newMatrixQuadrant === 'q3' || up.newMatrixQuadrant === 'q4') {
+				badge.addClass('type-demote');
+				badge.setText('🔽 Rétrograder');
+			} else if (up.newMatrixQuadrant === 'q1') {
+				badge.addClass('type-promote');
+				badge.setText('🔺 Prioriser');
+			} else if (up.newDueDate === null) {
+				badge.addClass('type-remove-due');
+				badge.setText('🧹 Retirer échéance');
+			} else if (up.newDueDate) {
+				badge.addClass('type-postpone');
+				badge.setText('⏩ Reporter');
+			} else if (up.newEnergy !== undefined) {
+				badge.addClass('type-energy');
+				badge.setText('⚡ Ajuster énergie');
+			} else {
+				badge.setText('📝 Modifier tâche');
+			}
+		} else if (prop.type === 'create_task') {
+			badge.addClass('type-create');
+			badge.setText('➕ Créer tâche');
+		} else if (prop.type === 'decompose_task') {
+			badge.addClass('type-decompose');
+			badge.setText('🧩 Décomposer');
+		} else {
+			badge.setText('📄 Note');
+		}
+
+		return badge;
 	}
 }

@@ -17,7 +17,7 @@ export interface CustomMatrixTagMapping {
 
 export class TaskMatrixAdapter implements MatrixAdapter {
 	getQuadrant(task: ObsidianTask): MatrixQuadrant {
-		const text = (task.matrixTag || task.rawText).toLowerCase();
+		const text = (task.matrixTag || task.rawText || task.rawLine || task.title || '').toLowerCase();
 		if (text.includes('#tm/q1') || text.includes('#q1')) return 'q1';
 		if (text.includes('#tm/q2') || text.includes('#q2')) return 'q2';
 		if (text.includes('#tm/q3') || text.includes('#q3')) return 'q3';
@@ -44,7 +44,7 @@ export class TaskMatrixAdapter implements MatrixAdapter {
 
 export class FocusFirstAdapter implements MatrixAdapter {
 	getQuadrant(task: ObsidianTask): MatrixQuadrant {
-		const line = task.rawText.toLowerCase();
+		const line = (task.matrixTag || task.rawText || task.rawLine || task.title || '').toLowerCase();
 		if (line.includes('#focus') || line.includes('#q1') || line.includes('#tm/q1')) return 'q1';
 		if (line.includes('#q2') || line.includes('#tm/q2')) return 'q2';
 		if (line.includes('#q3') || line.includes('#tm/q3')) return 'q3';
@@ -73,7 +73,7 @@ export class CustomTagMatrixAdapter implements MatrixAdapter {
 	constructor(private mapping: CustomMatrixTagMapping) {}
 
 	getQuadrant(task: ObsidianTask): MatrixQuadrant {
-		const line = task.rawText.toLowerCase();
+		const line = (task.matrixTag || task.rawText || task.rawLine || task.title || '').toLowerCase();
 		if (line.includes(this.mapping.q1Tag.toLowerCase()) || line.includes('#q1') || line.includes('#tm/q1')) return 'q1';
 		if (line.includes(this.mapping.q2Tag.toLowerCase()) || line.includes('#q2') || line.includes('#tm/q2')) return 'q2';
 		if (line.includes(this.mapping.q3Tag.toLowerCase()) || line.includes('#q3') || line.includes('#tm/q3')) return 'q3';
