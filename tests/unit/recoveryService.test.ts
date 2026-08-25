@@ -240,7 +240,7 @@ describe('RecoveryService', () => {
 			expect((proposals[1] as any).newStatus).toBe('cancelled');
 		});
 
-		it('should never cancel or remove due date on critical tasks like rent or bills', () => {
+		it('should safely postpone explicitly Q1 tasks to today without cancelling', () => {
 			const data: RecoveryVaultData = {
 				dateStr: '2026-08-25',
 				formattedDate: 'Mardi 25 Août 2026',
@@ -254,10 +254,11 @@ describe('RecoveryService', () => {
 						status: 'todo',
 						lineNumber: 12,
 						filePath: '02 - Domaines/Finances.md',
-						rawLine: '- [ ] Payer le loyer 📅 2026-08-01',
+						rawLine: '- [ ] Payer le loyer 📅 2026-08-01 #tm/q1',
 						indentLevel: 0,
-						dueDate: '2026-08-01', // Plus de 14j de retard
-						domainTags: []
+						dueDate: '2026-08-01', // Plus de 14j de retard mais marqué Q1
+						matrixTag: '#tm/q1',
+						domainTags: ['#tm/q1']
 					}
 				],
 				staleTasks: [],
@@ -273,7 +274,7 @@ describe('RecoveryService', () => {
 			expect(prop.newStatus).not.toBe('cancelled');
 			expect(prop.newDueDate).toBe('2026-08-25'); // Forcé à aujourd'hui
 			expect(prop.newMatrixQuadrant).toBe('q1'); // Forcé en Q1
-			expect(prop.description).toContain('CRITIQUE');
+			expect(prop.description).toContain('Priorité Q1');
 		});
 	});
 

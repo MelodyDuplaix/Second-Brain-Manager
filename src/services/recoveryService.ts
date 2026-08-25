@@ -118,11 +118,9 @@ export class RecoveryService {
 		const overdueTasks = allOpenTasks.filter(t => t.dueDate && t.dueDate < dateStr);
 		const staleTasks = overdueTasks.filter(t => t.dueDate && t.dueDate <= sevenDaysAgo);
 
-		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, NON critiques)
+		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, non Q1)
 		const quickWinTasks = allOpenTasks
 			.filter(t => {
-				const isCritical = TaskSafetyGuard.isCriticalTask(t);
-				if (isCritical) return false;
 				const isLowEnergy = t.energy !== undefined && t.energy <= 3;
 				const isEasy = t.difficulty && t.difficulty.toLowerCase() === 'facile';
 				const isQ3orQ4 = matrixAdapter.getQuadrant(t) === 'q3' || matrixAdapter.getQuadrant(t) === 'q4';
@@ -130,11 +128,8 @@ export class RecoveryService {
 			})
 			.slice(0, 3);
 
-		// Identification de la tâche majeure (The One Thing) : priorité aux urgences critiques
-		let oneThingTask = allOpenTasks.find(t => TaskSafetyGuard.isCriticalTask(t) && t.dueDate && t.dueDate <= dateStr);
-		if (!oneThingTask) {
-			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
-		}
+		// Identification de la tâche majeure (The One Thing) : priorité Q1
+		let oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
 		if (!oneThingTask) {
 			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
 		}
@@ -173,8 +168,8 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Génère un ensemble varié et intelligent de propositions d'allègement avec métadonnées exhaustives
-	 * et protection stricte des tâches critiques (finance, loyer, santé, légal).
+	 * Génère un ensemble varié de propositions d'allègement avec métadonnées exhaustives
+	 * en respectant les priorités définies par l'utilisateur.
 	 */
 	public static generateDefaultLighteningProposals(data: RecoveryVaultData, plugin?: SecondBrainPlugin): ActionProposal[] {
 		const proposals: ActionProposal[] = [];
@@ -186,26 +181,26 @@ export class RecoveryService {
 			: MatrixAdapterFactory.createAdapter('task-matrix');
 
 		data.overdueTasks.forEach((task, idx) => {
-			const isCritical = TaskSafetyGuard.isCriticalTask(task);
+			const isExplicitlyCritical = TaskSafetyGuard.isExplicitlyCritical(task);
 			const isVeryStale = task.dueDate && task.dueDate <= fourteenDaysAgo;
 			const isMeetingOrCall = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
 			const currentQ = matrixAdapter.getQuadrant(task);
 
-			if (isCritical) {
-				// RÈGLE DE SÉCURITÉ CRITIQUE : Jamais d'annulation, jamais de suppression d'échéance.
+			if (isExplicitlyCritical) {
+				// Tâche explicitement prioritaire (Q1 / Haute priorité) : Report sécurisé à aujourd'hui
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
 					lineNumber: task.lineNumber,
 					oldDueDate: task.dueDate,
 					newDueDate: data.dateStr,
-					oldQuadrant: currentQ,
+					oldQuadrant: currentQ || 'q1',
 					newQuadrant: 'q1',
-					oldPriority: task.priority || 'highest',
-					newPriority: 'highest',
+					oldPriority: task.priority || 'high',
+					newPriority: task.priority || 'high',
 					oldEnergy: task.energy,
 					newEnergy: task.energy,
-					reason: '🚨 Tâche critique incompressible (finance/loyer/légal/santé) : report prioritaire en Q1 à aujourd\'hui sans délestage'
+					reason: 'Tâche prioritaire : report immédiat à aujourd\'hui sans délestage'
 				};
 
 				proposals.push({
@@ -214,17 +209,16 @@ export class RecoveryService {
 					targetPath: task.filePath,
 					lineNumber: task.lineNumber,
 					taskTitle: task.title,
-					description: `🚨 [CRITIQUE] Reporter impérativement en Q1 à aujourd'hui : "${task.title}"`,
+					description: `⏩ Reporter à aujourd'hui (Priorité Q1) : "${task.title}"`,
 					selected: true,
 					newDueDate: data.dateStr,
 					newMatrixQuadrant: 'q1',
-					newPriority: 'highest',
 					diff,
 					reason: diff.reason
 				} as UpdateTaskActionProposal);
 
 			} else if (isVeryStale || isMeetingOrCall) {
-				// 1. Annulation des tâches obsolètes (non critiques uniquement)
+				// 1. Annulation des tâches très anciennes (>14j) ou événements passés non critiques
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
@@ -289,7 +283,7 @@ export class RecoveryService {
 				} as UpdateTaskActionProposal);
 
 			} else if (currentQ === 'q4' || (task.energy !== undefined && task.energy >= 8 && task.dueDate && task.dueDate < data.dateStr)) {
-				// 3. Délestage d'échéance ou allègement d'énergie
+				// 3. Délestage d'échéance ou allègement d'énergie sur tâche non urgente
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
@@ -353,7 +347,7 @@ export class RecoveryService {
 	}
 
 	/**
-	 * Extrait les propositions d'actions JSON retournées par l'IA et applique la protection TaskSafetyGuard.
+	 * Extrait les propositions d'actions JSON retournées par l'IA et applique la sanitarisation.
 	 */
 	public static extractProposalsFromResponse(
 		responseText: string,
@@ -427,7 +421,6 @@ export class RecoveryService {
 							reason
 						} as ActionProposal;
 
-						// Sécurisation stricte anti-délestage des tâches critiques
 						return TaskSafetyGuard.sanitizeProposal(prop, matchedTask, todayStr);
 					});
 
@@ -453,8 +446,7 @@ export class RecoveryService {
 	 */
 	public static buildRecoveryMessages(data: RecoveryVaultData): ChatMessage[] {
 		const formatTaskDetailed = (t: ObsidianTask): string => {
-			const isCritical = TaskSafetyGuard.isCriticalTask(t);
-			let line = `- [ ] ${isCritical ? '🚨 ' : ''}${t.title}`;
+			let line = `- [ ] ${t.title}`;
 			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
@@ -491,18 +483,16 @@ export class RecoveryService {
 TON OBJECTIF :
 Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan déculpabilisant, et proposer un **véritable plan de tri et d'allègement de ses tâches en souffrance**.
 
-🛡️ RÈGLES DE SÉCURITÉ ABSOLUES SUR LES TÂCHES CRITIQUES :
-- Les tâches **financières** (ex: "Payer le loyer", "Facture EDF", "Impôts", "Crédit"), **légales / administratives** (ex: "Renouveler passeport", "Contrat bail", "Résiliation") et **médicales / santé** (ex: "Médecin", "Ordonnance", "Dentiste") sont des tâches CRITIQUES et INCOMPRESSIBLES.
-- ⛔ Il est FORMELLEMENT INTERDIT de supprimer l'échéance (\`newDueDate: null\`) d'une tâche critique.
-- ⛔ Il est FORMELLEMENT INTERDIT d'annuler (\`newStatus: "cancelled"\`) ou de rétrograder en Q3/Q4 une tâche critique.
-- ✅ Toute tâche critique en retard DOIT être **immédiatement reportée à aujourd'hui (${data.dateStr}) avec la plus haute priorité (Quadrant Q1)**.
+DISCERNEMENT SÉMANTIQUE ET SÉCURITÉ :
+- Fais preuve d'un discernement contextuel approfondi :
+  - Identifie les **obligations à conséquences réelles** (ex: paiements obligatoires comme le loyer/factures, engagements contractuels, démarches administratives avec délais stricts, impératifs de santé). Pour ces tâches, **ne propose jamais de supprimer l'échéance ni d'annuler**, mais propose un report prioritaire à aujourd'hui (${data.dateStr}).
+  - Réserve le **délestage d'échéances** (\`newDueDate: null\`) et les **rétrogradations** aux tâches secondaires, lectures, recherches ou projets de fond sans contrainte critique.
 
 VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
-Pour les autres tâches non critiques :
 1. 🔽 **Rétrogradation de quadrant** (ex: passer de Q1 à Q2 ou Q3 des tâches qui ne sont pas de véritables urgences pour alléger la pression).
 2. 🔺 **Priorisation / Promotion** (ex: passer en Q1 une urgence vitale).
 3. ⏩ **Report de date** (décaler à aujourd'hui ${data.dateStr} les tâches encore d'actualité).
-4. ❌ **Annulation / Obsolescence** (passer en \`newStatus: "cancelled"\` les réunions ou tâches périmées depuis longtemps).
+4. ❌ **Annulation / Obsolescence** (passer en \`newStatus: "cancelled"\` les réunions ou tâches périmées depuis longtemps sans impact).
 5. 🧹 **Délestage d'échéances** (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les tâches de fond non urgentes).
 6. ⚡ **Ajustement d'énergie** (réduire l'énergie estimée pour faciliter le passage à l'action).
 
@@ -511,7 +501,7 @@ STRUCTURE DE TA RÉPONSE :
 2. **🚀 Étape 1 : Le Quick Win pour amorcer le mouvement** (1 tâche ultra-simple de 5 min au format \`- [ ] ... [[Note]]\`).
 3. **🎯 Étape 2 : The One Thing** (La seule tâche prioritaire et stratégique du jour au format \`- [ ] ... [[Note]]\`).
 4. **🧹 Étape 3 : Plan d'Allègement & Tri Détaillé** :
-   - Explique et justifie les rétrogradations, annulations et reports proposés.
+   - Explique et justifie les rétrogradations, annulations et reports proposés avec discernement.
 5. **🌱 Conseil de démarrage** (1 phrase motivante).
 
 BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
