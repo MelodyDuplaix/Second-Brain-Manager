@@ -42,8 +42,11 @@ export class EveningReviewView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		await this.render();
+		// Lancement automatique de la revue en tâche de fond immédiate (non-bloquant pour l'ouverture de la vue)
 		if (!this.generatedReviewText) {
-			await this.triggerReviewGeneration();
+			window.setTimeout(() => {
+				void this.triggerReviewGeneration();
+			}, 50);
 		}
 	}
 

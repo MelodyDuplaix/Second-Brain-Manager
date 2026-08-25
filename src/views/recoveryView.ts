@@ -47,8 +47,11 @@ export class RecoveryView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		await this.render();
+		// Lancement automatique de la reprise en tâche de fond immédiate (non-bloquant pour l'ouverture de la vue)
 		if (!this.generatedRecoveryText) {
-			await this.triggerRecoveryGeneration();
+			window.setTimeout(() => {
+				void this.triggerRecoveryGeneration();
+			}, 50);
 		}
 	}
 

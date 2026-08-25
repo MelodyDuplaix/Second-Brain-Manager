@@ -46,9 +46,11 @@ export class BriefingView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		await this.render();
-		// Lancement automatique du briefing à l'ouverture si pas encore généré
+		// Lancement automatique du briefing en tâche de fond immédiate (non-bloquant pour l'ouverture de la vue)
 		if (!this.generatedBriefingText) {
-			await this.triggerBriefingGeneration();
+			window.setTimeout(() => {
+				void this.triggerBriefingGeneration();
+			}, 50);
 		}
 	}
 
