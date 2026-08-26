@@ -431,4 +431,63 @@ export class ModelDiscoveryService {
 	public static getAllFallbackModels(): ModelOption[] {
 		return FALLBACK_MODELS;
 	}
+
+	/**
+	 * Récupère uniquement les modèles pour lesquels une clé API est configurée (ou les modèles locaux).
+	 */
+	public static async getAvailableModelsForConfiguredProviders(
+		getSecretApiKey: (provider: string) => Promise<string | undefined>,
+		currentProvider: LLMProvider,
+		endpoint?: string,
+		infomaniakProductId?: string
+	): Promise<ModelOption[]> {
+		const cloudProviders: Array<{ id: LLMProvider; name: string }> = [
+			{ id: 'gemini', name: 'Google Gemini' },
+			{ id: 'openai', name: 'OpenAI' },
+			{ id: 'openrouter', name: 'OpenRouter' },
+			{ id: 'infomaniak', name: 'Infomaniak AI' }
+		];
+
+		const results: ModelOption[] = [];
+
+		// Fournisseurs Cloud vérifiés en parallèle
+		await Promise.all(
+			cloudProviders.map(async (p) => {
+				const apiKey = await getSecretApiKey(p.id);
+				if (!apiKey) {
+					// Pas de clé d'API -> exclusion totale de ce fournisseur
+					return;
+				}
+
+				try {
+					const provEndpoint = (p.id === 'infomaniak' || p.id === 'openrouter') ? endpoint : undefined;
+					const provProductId = p.id === 'infomaniak' ? infomaniakProductId : undefined;
+					const live = await this.fetchLiveModels(p.id, apiKey, provEndpoint, provProductId);
+					if (live.length > 0) {
+						results.push(...live);
+					} else {
+						results.push(...this.getFallbackForProvider(p.id));
+					}
+				} catch {
+					results.push(...this.getFallbackForProvider(p.id));
+				}
+			})
+		);
+
+		// Fournisseurs Locaux (Ollama, LM Studio) : inclus si le fournisseur actuel est local
+		if (currentProvider === 'ollama' || currentProvider === 'lmstudio' || (currentProvider as string) === 'lm-studio') {
+			try {
+				const live = await this.fetchLiveModels(currentProvider, undefined, endpoint);
+				if (live.length > 0) {
+					results.push(...live);
+				} else {
+					results.push(...this.getFallbackForProvider(currentProvider));
+				}
+			} catch {
+				results.push(...this.getFallbackForProvider(currentProvider));
+			}
+		}
+
+		return results;
+	}
 }

@@ -1,5 +1,6 @@
 import { App, FuzzySuggestModal, Notice } from 'obsidian';
-import { ModelDiscoveryService, ModelOption, FALLBACK_MODELS } from '../services/modelDiscoveryService';
+import { ModelDiscoveryService, ModelOption } from '../services/modelDiscoveryService';
+import { SecretsManagementModal } from './secretsManagementModal';
 import SecondBrainPlugin from '../main';
 
 export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
@@ -11,37 +12,58 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 		super(app);
 		this.plugin = plugin;
 		this.onModelSelected = onModelSelected;
-		this.loadedModels = FALLBACK_MODELS;
-		this.setPlaceholder('Rechercher ou saisir un modèle IA (ex: gemini-3.5-flash, gpt-4o, llama3.2)...');
+		this.loadedModels = [];
+		this.setPlaceholder('Rechercher un modèle IA parmi vos fournisseurs configurés...');
 	}
 
 	async onOpen(): Promise<void> {
 		super.onOpen();
 
-		// Chargement dynamique des modèles en direct depuis l'API du fournisseur actif
+		// Chargement dynamique uniquement pour les fournisseurs possédant une clé API valide
 		try {
-			const apiKey = await this.plugin.getSecretApiKey(this.plugin.settings.llmProvider);
-			const liveModels = await ModelDiscoveryService.fetchLiveModels(
+			const models = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
+				(provider) => this.plugin.getSecretApiKey(provider),
 				this.plugin.settings.llmProvider,
-				apiKey,
 				this.plugin.settings.llmEndpoint,
 				this.plugin.settings.infomaniakProductId
 			);
 
-			if (liveModels.length > 0) {
-				// Combine les modèles du fournisseur actif avec les modèles des autres fournisseurs
-				const otherProvidersModels = FALLBACK_MODELS.filter(m => m.provider !== this.plugin.settings.llmProvider);
-				this.loadedModels = [...liveModels, ...otherProvidersModels];
+			if (models.length > 0) {
+				this.loadedModels = models;
+			} else {
+				this.loadedModels = [
+					{
+						id: '__configure_secrets__',
+						name: '🔑 Configurer mes clés d\'API',
+						provider: this.plugin.settings.llmProvider,
+						providerName: 'Secrets Obsidian',
+						desc: 'Aucune clé d\'API configurée. Cliquez ici pour ajouter votre clé Gemini, Infomaniak, OpenAI ou OpenRouter.'
+					}
+				];
 			}
-		} catch {
-			this.loadedModels = FALLBACK_MODELS;
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur lors du chargement des modèles:', err);
+			this.loadedModels = [
+				{
+					id: '__configure_secrets__',
+					name: '🔑 Configurer mes clés d\'API',
+					provider: this.plugin.settings.llmProvider,
+					providerName: 'Secrets Obsidian',
+					desc: 'Cliquez ici pour vérifier ou ajouter vos clés d\'API dans le gestionnaire de secrets.'
+				}
+			];
+		}
+
+		// Déclenche le rafraîchissement immédiat de la liste de suggestions
+		if (this.inputEl) {
+			this.inputEl.dispatchEvent(new Event('input'));
 		}
 	}
 
 	getItems(): ModelOption[] {
 		const currentQuery = this.inputEl.value.trim();
 
-		// Si l'utilisateur tape un nom qui n'est pas dans la liste, on propose de l'utiliser comme modèle personnalisé
+		// Si l'utilisateur tape un nom personnalisé et qu'au moins un modèle est disponible
 		if (currentQuery && !this.loadedModels.some(m => m.name.toLowerCase() === currentQuery.toLowerCase())) {
 			const customOption: ModelOption = {
 				id: currentQuery,
@@ -81,6 +103,11 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 	}
 
 	async onChooseItem(item: ModelOption): Promise<void> {
+		if (item.id === '__configure_secrets__') {
+			new SecretsManagementModal(this.app, this.plugin).open();
+			return;
+		}
+
 		this.plugin.settings.llmProvider = item.provider;
 		this.plugin.settings.llmModel = item.name;
 
