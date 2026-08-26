@@ -58,6 +58,68 @@
 	box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
 }
 
+/* Bandeau Récapitulatif Tâches Détectées */
+.sbm-tasks-summary-card {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: center;
+	margin-bottom: 12px;
+	padding: 8px 12px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+}
+
+.sbm-summary-badge {
+	font-size: 0.82em;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 12px;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+}
+
+.sbm-summary-badge.total {
+	color: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+}
+
+.sbm-summary-badge.due {
+	color: var(--text-warning, #e5a93c);
+}
+
+.sbm-summary-badge.energy {
+	color: var(--text-accent, #3b82f6);
+}
+
+/* Bouton d'extension de liste de tâches */
+.sbm-expand-container {
+	display: flex;
+	justify-content: center;
+	margin-top: 12px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--background-modifier-border);
+}
+
+.sbm-expand-btn {
+	padding: 6px 14px;
+	font-size: 0.85em;
+	font-weight: 500;
+	border-radius: 6px;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.sbm-expand-btn:hover {
+	color: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+}
+
 /* Carte de Gamification & Statistiques */
 .sbm-gamification-card {
 	margin-bottom: 18px;
@@ -1599,6 +1661,56 @@ textarea.sbm-chat-textarea:focus {
 	border-color: var(--interactive-accent);
 }
 
+/* Bannière d'alerte encombrement et tri assisté dans le Briefing */
+.sbm-clutter-alert-banner {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 14px;
+	margin-bottom: 16px;
+	padding: 12px 16px;
+	border-radius: 8px;
+	background: linear-gradient(135deg, rgba(234, 179, 8, 0.12) 0%, rgba(249, 115, 22, 0.08) 100%);
+	border: 1px solid rgba(234, 179, 8, 0.35);
+	flex-wrap: wrap;
+}
+
+.sbm-clutter-info {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	flex: 1;
+	min-width: 240px;
+}
+
+.sbm-clutter-title {
+	font-weight: 600;
+	font-size: 0.95em;
+	color: var(--text-warning, #eab308);
+}
+
+.sbm-clutter-desc {
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.sbm-clutter-btn {
+	padding: 7px 14px;
+	font-size: 0.85em;
+	font-weight: 600;
+	border-radius: 6px;
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	cursor: pointer;
+	transition: opacity 0.15s ease;
+	white-space: nowrap;
+}
+
+.sbm-clutter-btn:hover {
+	opacity: 0.9;
+}
+
 /* Modal de sélection de modèle */
 .sbm-model-picker-row {
 	display: flex;
@@ -2417,6 +2529,8 @@ textarea.sbm-chat-textarea:focus {
 	padding: 24px 32px 32px 32px;
 	box-sizing: border-box;
 	min-height: 0;
+	user-select: text !important;
+	-webkit-user-select: text !important;
 }
 
 .sbm-briefing-content-flow {
@@ -2424,6 +2538,14 @@ textarea.sbm-chat-textarea:focus {
 	margin: 0 auto;
 	line-height: 1.65;
 	color: var(--text-normal);
+	user-select: text !important;
+	-webkit-user-select: text !important;
+}
+
+.sbm-briefing-rendered-body,
+.sbm-briefing-text-display {
+	user-select: text !important;
+	-webkit-user-select: text !important;
 }
 
 .sbm-briefing-loading {

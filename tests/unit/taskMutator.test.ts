@@ -108,4 +108,16 @@ describe('TaskMutator', () => {
 		const subtask3 = TaskMutator.createSubtaskLine('\t\t', '1. - [ ] Implémenter le niveau');
 		expect(subtask3).toBe('\t\t- [ ] Implémenter le niveau');
 	});
+
+	it('should update due date preserving Dataview style when task already uses Dataview fields', () => {
+		const line = '- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22]';
+		const updated = TaskMutator.setDueDate(line, '2026-08-25', DEFAULT_SYNTAX_CONFIG);
+		expect(updated).toBe('- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-25]');
+	});
+
+	it('should mark Dataview task as completed using [completion:: YYYY-MM-DD]', () => {
+		const line = '- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22]';
+		const updated = TaskMutator.setCompleted(line, true, '2026-08-26', DEFAULT_SYNTAX_CONFIG);
+		expect(updated).toBe('- [x] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22] [completion:: 2026-08-26]');
+	});
 });

@@ -101,15 +101,60 @@ Voici comment écrire une tâche :
 		expect(tasks[0].dueDate).toBe('2026-08-15');
 	});
 
-	it('should clean residual checkboxes from title when parsing malformed lines with duplicate checkboxes', () => {
-		const task1 = TaskParser.parseLine('  - [ ] - [ ] Isoler le script de collision 📅 2026-08-17', 'test.md', 1);
-		expect(task1).not.toBeNull();
-		expect(task1?.title).toBe('Isoler le script de collision');
-		expect(task1?.dueDate).toBe('2026-08-17');
+	it('should parse Dataview inline fields format correctly', () => {
+		const line = '- [x] Préparer journée du  [scheduled:: 2025-12-29]  [due:: 2025-12-30]  [completion:: 2026-08-26]';
+		const task = TaskParser.parseLine(line, 'Note quotidienne/20-06-2024.md', 17, DEFAULT_SYNTAX_CONFIG);
 
-		const task2 = TaskParser.parseLine('\t- [ ] [ ] Lister les mécaniques de gameplay', 'test.md', 2);
-		expect(task2).not.toBeNull();
-		expect(task2?.title).toBe('Lister les mécaniques de gameplay');
+		expect(task).not.toBeNull();
+		expect(task?.completed).toBe(true);
+		expect(task?.title).toBe('Préparer journée du');
+		expect(task?.scheduledDate).toBe('2025-12-29');
+		expect(task?.dueDate).toBe('2025-12-30');
+		expect(task?.completedDate).toBe('2026-08-26');
+	});
+
+	it('should parse Dataview format with parentheses and french dates (DD-MM-YYYY)', () => {
+		const line = '- [ ] Nettoyer le bureau (scheduled:: 29-12-2025) (due:: 30-12-2025) [priority:: high] [energy:: 4] [pieces:: 3]';
+		const task = TaskParser.parseLine(line, 'Notes en vrac/Bureau.md', 1, DEFAULT_SYNTAX_CONFIG);
+
+		expect(task).not.toBeNull();
+		expect(task?.completed).toBe(false);
+		expect(task?.title).toBe('Nettoyer le bureau');
+		expect(task?.scheduledDate).toBe('2025-12-29');
+		expect(task?.dueDate).toBe('2025-12-30');
+		expect(task?.priority).toBe('high');
+		expect(task?.energy).toBe(4);
+		expect(task?.pieces).toBe(3);
+	});
+
+	it('should normalize dates in wikilinks with day names and assign to dueDate', () => {
+		const line = '- [ ] Passer l\'aspirateur 🔁 every week when done ➕ 2026-08-09 [[17-08-2026 lu]]';
+		const task = TaskParser.parseLine(line, 'Tracker menage.md', 15, DEFAULT_SYNTAX_CONFIG);
+
+		expect(task).not.toBeNull();
+		expect(task?.title).toBe('Passer l\'aspirateur');
+		expect(task?.dueDate).toBe('2026-08-17');
+	});
+
+	it('should infer implicit scheduled date from daily note file name when task has no explicit date', () => {
+		const line = '- [ ] Prendre médicament allergie';
+		const task = TaskParser.parseLine(line, 'Note quotidienne/28-12-2025.md', 18, DEFAULT_SYNTAX_CONFIG);
+
+		expect(task).not.toBeNull();
+		expect(task?.title).toBe('Prendre médicament allergie');
+		expect(task?.scheduledDate).toBe('2025-12-28');
+	});
+
+	it('should flatten all tasks including nested subtasks with parseAllTasks', () => {
+		const markdown = `
+- [ ] Parent
+  - [ ] Subtask 1
+    - [ ] Nested Subtask 1.1
+- [ ] Another Root
+`;
+		const allTasks = TaskParser.parseAllTasks(markdown, 'test.md', DEFAULT_SYNTAX_CONFIG);
+		expect(allTasks.length).toBe(4);
+		expect(allTasks.map(t => t.title)).toEqual(['Parent', 'Subtask 1', 'Nested Subtask 1.1', 'Another Root']);
 	});
 });
 

@@ -42,26 +42,34 @@ export class EveningReviewService {
 		const structure = vaultContext.getVaultStructure();
 
 		// Lecture de toutes les tâches du coffre
-		const files = app.vault.getMarkdownFiles();
+		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
 		const completedTodayTasks: ObsidianTask[] = [];
 		const unfinishedTodayTasks: ObsidianTask[] = [];
 		const overdueTasks: ObsidianTask[] = [];
 
-		for (const file of files) {
-			const content = await app.vault.read(file);
-			const tasks = TaskParser.parseFile(content, file.path, plugin.settings);
+		const results = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const content = (typeof (app.vault as any).cachedRead === 'function')
+						? await (app.vault as any).cachedRead(file)
+						: await app.vault.read(file);
+					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
+				} catch {
+					return [];
+				}
+			})
+		);
 
-			for (const t of tasks) {
-				if (t.completed || t.status === 'done') {
-					if (t.completedDate === dateStr || !t.completedDate) {
-						completedTodayTasks.push(t);
-					}
-				} else if (t.status !== 'cancelled') {
-					if (t.dueDate === dateStr || t.scheduledDate === dateStr) {
-						unfinishedTodayTasks.push(t);
-					} else if (t.dueDate && t.dueDate < dateStr) {
-						overdueTasks.push(t);
-					}
+		for (const t of results.flat()) {
+			if (t.completed || t.status === 'done') {
+				if (t.completedDate === dateStr || !t.completedDate) {
+					completedTodayTasks.push(t);
+				}
+			} else if (t.status !== 'cancelled') {
+				if (t.dueDate === dateStr || t.scheduledDate === dateStr) {
+					unfinishedTodayTasks.push(t);
+				} else if (t.dueDate && t.dueDate < dateStr) {
+					overdueTasks.push(t);
 				}
 			}
 		}
@@ -244,12 +252,16 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		reviewText: string,
 		dateStr: string
 	): Promise<string> {
-		const folderPath = normalizePath(plugin.settings.dailyNotesFolder);
-		const filePath = normalizePath(`${folderPath}/${dateStr}.md`);
+		const vaultContext = new VaultContextService(app, plugin.settings);
+		const dailyRes = await vaultContext.getDailyNote(dateStr);
+		const filePath = dailyRes.path;
 
-		const folder = app.vault.getFolderByPath(folderPath);
-		if (!folder) {
-			await app.vault.createFolder(folderPath);
+		const folderPath = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
+		if (folderPath) {
+			const folder = app.vault.getFolderByPath(folderPath);
+			if (!folder) {
+				await app.vault.createFolder(folderPath);
+			}
 		}
 
 		const cleanText = DailyNoteFormatter.formatForDailyNote(reviewText);

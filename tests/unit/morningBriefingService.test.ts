@@ -205,4 +205,85 @@ describe('MorningBriefingService', () => {
 		expect(count).toBe(1);
 		expect(files['01 - Projets/Acme.md']).toContain('📅 2026-08-24');
 	});
+
+	it('should extract and sanitize json:actions proposals from LLM response', () => {
+		const rawResponse = `Voici votre briefing.
+### Tri & Délestage
+- Report de la tâche de ménage.
+
+\`\`\`json:actions
+[
+  {
+    "type": "update_task",
+    "targetPath": "01 - Projets/Acme.md",
+    "lineNumber": 2,
+    "taskTitle": "Maquette client",
+    "newDueDate": "2026-08-28",
+    "reason": "Replanifier à vendredi"
+  }
+]
+\`\`\``;
+
+		const vaultTasks: ObsidianTask[] = [
+			{
+				title: 'Maquette client',
+				completed: false,
+				status: 'todo',
+				lineNumber: 2,
+				filePath: '01 - Projets/Acme.md',
+				rawLine: '- [ ] Maquette client',
+				indentLevel: 0,
+				domainTags: []
+			}
+		];
+
+		const { cleanText, proposals } = MorningBriefingService.extractProposalsFromResponse(rawResponse, vaultTasks, '2026-08-24');
+
+		expect(cleanText).not.toContain('```json:actions');
+		expect(cleanText).toContain('Voici votre briefing.');
+		expect(proposals).toHaveLength(1);
+		expect(proposals[0].type).toBe('update_task');
+		expect((proposals[0] as any).newDueDate).toBe('2026-08-28');
+	});
+
+	it('should trigger recovery mode prompt with wide triage when isRecoveryMode is true', () => {
+		const data: BriefingVaultData = {
+			dateStr: '2026-08-26',
+			formattedDate: 'Mercredi 26 Août 2026',
+			energy: 4,
+			modeText: 'Mode Équilibré',
+			inactivityText: 'Reprise après 5 jour(s) de pause',
+			inactivityDays: 5,
+			isRecoveryMode: true,
+			isCluttered: true,
+			quickWinTasks: [mockTasks[0]],
+			oneThingTask: mockTasks[1],
+			overdueTasks: [mockTasks[0], mockTasks[1]],
+			staleTasks: [mockTasks[0]],
+			todayTasks: [],
+			priorityTasks: [mockTasks[1]],
+			inboxTasks: [mockTasks[2]],
+			projectTasks: [],
+			looseNotes: ['Liste appel vrac.md'],
+			inboxNotePreviews: [{ path: 'Notes en vrac/Liste.md', name: 'Liste', preview: 'Antoine' }],
+			folders: ['01 - Projets', '02 - Domaines'],
+			projects: ['Acme Project'],
+			contacts: ['Marc Dupont']
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(data);
+
+		expect(messages).toHaveLength(2);
+		expect(messages[0].content).toContain('Mode Reprise & Décongestion Large');
+		expect(messages[0].content).toContain('TRI LARGE et EXHAUSTIF');
+		expect(messages[1].content).toContain('THE ONE THING');
+		expect(messages[1].content).toContain('QUICK WINS DISPONIBLES');
+		expect(messages[1].content).toContain('Reprise après 5 jour(s) de pause');
+	});
+
+	it('should calculate inactivity correctly', () => {
+		expect(MorningBriefingService.calculateInactivity(undefined).inactivityText).toBe('Reprise de session');
+		const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+		expect(MorningBriefingService.calculateInactivity(threeDaysAgo).inactivityDays).toBe(3);
+	});
 });

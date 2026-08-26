@@ -177,6 +177,24 @@ export class ActionPreviewWidget {
 						statusPill.createSpan({ text: '✅ Statut : - [ ] ➔ - [x] (Terminée)' });
 					}
 				}
+			} else if (prop.type === 'move_note' || prop.type === 'rename_note') {
+				const moveProp = prop as MoveNoteActionProposal;
+				const renameProp = prop as RenameNoteActionProposal;
+				const diffsRow = itemContent.createDiv({ cls: 'sbm-preview-diffs-row' });
+
+				if (moveProp.destinationFolder) {
+					const movePill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					movePill.createSpan({ text: '📁 Dossier cible : ' });
+					movePill.createSpan({ text: moveProp.destinationFolder, cls: 'sbm-diff-new' });
+				}
+
+				const newName = moveProp.newFileName || renameProp.newFileName;
+				if (newName) {
+					const renamePill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+					renamePill.createSpan({ text: '✏️ Nouveau nom : ' });
+					renamePill.createSpan({ text: `${fileBasename} ➔ `, cls: 'sbm-diff-old' });
+					renamePill.createSpan({ text: newName.replace(/\.md$/, ''), cls: 'sbm-diff-new' });
+				}
 			}
 
 			// C. Raison / Explication de l'IA
@@ -204,38 +222,21 @@ export class ActionPreviewWidget {
 		});
 
 		applyBtn.addEventListener('click', async () => {
-			const selectedCount = proposals.filter(p => p.selected).length;
-			if (selectedCount === 0) {
-				new Notice('Aucune action sélectionnée.');
+			const selectedProposals = proposals.filter(p => p.selected);
+			if (selectedProposals.length === 0) {
+				new Notice('Aucune modification sélectionnée.');
 				return;
 			}
 
 			applyBtn.disabled = true;
-			cancelBtn.disabled = true;
-			applyBtn.setText('Application du plan d\'allègement...');
+			applyBtn.setText('Application en cours...');
 
-			const results = await executor.executeProposals(proposals);
-
-			results.forEach(res => {
-				const row = rowMap.get(res.proposalId);
-				if (row) {
-					row.checkbox.disabled = true;
-					if (res.success) {
-						row.rowEl.addClass('is-success');
-						row.rowEl.createEl('span', { cls: 'sbm-preview-status-badge success', text: '✅ Appliqué' });
-					} else {
-						row.rowEl.addClass('is-error');
-						row.rowEl.createEl('span', { cls: 'sbm-preview-status-badge error', text: `❌ ${res.message}` });
-					}
-				}
-			});
-
+			const results = await executor.executeProposals(selectedProposals);
 			const successCount = results.filter(r => r.success).length;
-			new Notice(`Second Brain : ${successCount}/${results.length} action(s) d'allègement appliquée(s) avec succès !`);
 
-			applyBtn.remove();
-			cancelBtn.setText('Terminé');
-			cancelBtn.disabled = false;
+			new Notice(`Second Brain : ${successCount}/${selectedProposals.length} modification(s) appliquée(s) !`);
+
+			widgetEl.remove();
 
 			if (onExecuted) {
 				onExecuted(results);
@@ -282,8 +283,12 @@ export class ActionPreviewWidget {
 			badge.addClass('type-decompose');
 			badge.setText('🧩 Décomposer');
 		} else if (prop.type === 'move_note') {
+			const move = prop as MoveNoteActionProposal;
 			badge.addClass('type-move');
-			badge.setText('📁 Ranger note');
+			badge.setText(move.newFileName ? '📁 Ranger & Renommer' : '📁 Ranger note');
+		} else if (prop.type === 'rename_note') {
+			badge.addClass('type-rename');
+			badge.setText('✏️ Renommer note');
 		} else if (prop.type === 'link_notes') {
 			badge.addClass('type-link');
 			badge.setText('🔗 Lier notes');

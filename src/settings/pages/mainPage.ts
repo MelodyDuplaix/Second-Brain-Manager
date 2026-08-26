@@ -2,6 +2,7 @@ import { ButtonComponent, Setting, setIcon, Notice, normalizePath } from 'obsidi
 import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
+import { FileSuggest } from '../../suggesters/fileSuggest';
 import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
 
@@ -98,8 +99,61 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
+		foldersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Modèle de note quotidienne (Template)')
+				.setDesc('Chemin du fichier modèle (.md) utilisé pour créer automatiquement la note quotidienne. Compatible Templater (<% ... %>).')
+				.addText((text) => {
+					text
+						.setPlaceholder('Templates/Daily Note Template.md')
+						.setValue(this.plugin.settings.dailyNoteTemplatePath || '')
+						.onChange(async (value) => {
+							this.plugin.settings.dailyNoteTemplatePath = normalizePath(value.trim());
+							await this.plugin.saveSettings();
+						});
+					new FileSuggest(this.plugin.app, text.inputEl);
+				});
+		});
+
+		foldersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Créer et ouvrir automatiquement la note quotidienne lors du briefing')
+				.setDesc('Si activé, le lancement du briefing du matin crée la note quotidienne avec le modèle configuré (via Templater) et l\'ouvre dans votre espace de travail.')
+				.addToggle((toggle) => {
+					toggle
+						.setValue(this.plugin.settings.autoOpenDailyNoteOnBriefing !== false)
+						.onChange(async (value) => {
+							this.plugin.settings.autoOpenDailyNoteOnBriefing = value;
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+
 		// 4. Syntaxes des Tâches & Priorités
 		const syntaxGroup = new SettingGroup(this.containerEl).setHeading('Syntaxes des tâches et priorités');
+		syntaxGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Format principal des métadonnées de tâches')
+				.setDesc('Format utilisé pour insérer ou mettre à jour les échéances, dates et statuts de tâches (Emojis Obsidian Tasks, Dataview [due:: ...], ou Tags #due/...)')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('emoji', 'Tasks Emojis (📅, ⏳, 🛫, ✅, 🔺)')
+						.addOption('dataview', 'Tasks Dataview ([due:: ...], [scheduled:: ...], [completion:: ...])')
+						.addOption('tag', 'Tags (#due/..., #scheduled/..., #done/...)')
+						.setValue(this.plugin.settings.taskFormat || 'emoji')
+						.onChange(async (value: 'emoji' | 'dataview' | 'tag') => {
+							this.plugin.settings.taskFormat = value;
+							if (value === 'dataview') {
+								this.plugin.settings.priorityMode = 'emoji';
+							} else if (value === 'tag') {
+								this.plugin.settings.priorityMode = 'tag';
+							}
+							await this.plugin.saveSettings();
+							this.render();
+						});
+				});
+		});
+
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Format des priorités')

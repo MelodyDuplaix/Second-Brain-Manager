@@ -16,13 +16,26 @@ export class TaskMutator {
 		const newStatusChar = completed ? 'x' : ' ';
 
 		const completedDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.completedDateSignifier);
-		const updatedBody = body.replace(completedDateRegex, '').replace(/\s+/g, ' ').trim();
+		const dvCompletedRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['completion', 'completed', 'done']);
+		const hasDataviewStyle = dvCompletedRegex.test(body) || DynamicRegexBuilder.buildDataviewFieldRegex(['due', 'scheduled', 'start']).test(body);
+
+		const updatedBody = body
+			.replace(completedDateRegex, '')
+			.replace(dvCompletedRegex, '')
+			.replace(/\s+/g, ' ')
+			.trim();
 
 		const lineWithStatus = `${indentWhitespace}- [${newStatusChar}] ${updatedBody}`;
 
 		if (completed && completionDate) {
 			const formattedDate = this.formatDate(completionDate, config);
-			return this.insertMetaBeforeBlockId(lineWithStatus, `${config.completedDateSignifier} ${formattedDate}`);
+			let meta = `${config.completedDateSignifier} ${formattedDate}`;
+			if (hasDataviewStyle || config.taskFormat === 'dataview') {
+				meta = `[completion:: ${formattedDate}]`;
+			} else if (config.taskFormat === 'tag') {
+				meta = `#done/${formattedDate}`;
+			}
+			return this.insertMetaBeforeBlockId(lineWithStatus, meta);
 		}
 
 		return lineWithStatus;
@@ -46,30 +59,70 @@ export class TaskMutator {
 
 	public static setDueDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const dueDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.dueDateSignifier);
-		const lineWithoutDue = rawLine.replace(dueDateRegex, '').replace(/\s+/g, ' ').trim();
+		const dvDueRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['due']);
+		const tagDueRegex = /(?:^|\s)#due\/[^\s#^]+/gi;
+		const hasDataviewStyle = dvDueRegex.test(rawLine) || DynamicRegexBuilder.buildDataviewFieldRegex(['scheduled', 'start', 'completion']).test(rawLine);
+
+		const lineWithoutDue = rawLine
+			.replace(dueDateRegex, '')
+			.replace(dvDueRegex, '')
+			.replace(tagDueRegex, '')
+			.replace(/\s+/g, ' ')
+			.trim();
 		if (!dateStr) return lineWithoutDue;
 
 		const formattedDate = this.formatDate(dateStr, config);
-		return this.insertMetaBeforeBlockId(lineWithoutDue, `${config.dueDateSignifier} ${formattedDate}`);
+		let meta = `${config.dueDateSignifier} ${formattedDate}`;
+		if (hasDataviewStyle || config.taskFormat === 'dataview') {
+			meta = `[due:: ${formattedDate}]`;
+		} else if (config.taskFormat === 'tag') {
+			meta = `#due/${formattedDate}`;
+		}
+		return this.insertMetaBeforeBlockId(lineWithoutDue, meta);
 	}
 
 	public static setStartDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const startDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.startDateSignifier);
-		const lineWithoutStart = rawLine.replace(startDateRegex, '').replace(/\s+/g, ' ').trim();
+		const dvStartRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['start']);
+		const tagStartRegex = /(?:^|\s)#start\/[^\s#^]+/gi;
+		const hasDataviewStyle = dvStartRegex.test(rawLine) || DynamicRegexBuilder.buildDataviewFieldRegex(['due', 'scheduled', 'completion']).test(rawLine);
+
+		const lineWithoutStart = rawLine
+			.replace(startDateRegex, '')
+			.replace(dvStartRegex, '')
+			.replace(tagStartRegex, '')
+			.replace(/\s+/g, ' ')
+			.trim();
 		if (!dateStr) return lineWithoutStart;
 
 		const formattedDate = this.formatDate(dateStr, config);
-		return this.insertMetaBeforeBlockId(lineWithoutStart, `${config.startDateSignifier} ${formattedDate}`);
+		let meta = `${config.startDateSignifier} ${formattedDate}`;
+		if (hasDataviewStyle || config.taskFormat === 'dataview') {
+			meta = `[start:: ${formattedDate}]`;
+		} else if (config.taskFormat === 'tag') {
+			meta = `#start/${formattedDate}`;
+		}
+		return this.insertMetaBeforeBlockId(lineWithoutStart, meta);
 	}
 
 	public static setPriority(rawLine: string, priority: TaskPriority | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const tagPrefix = config.priorityTagPrefix;
 		const tagRegex = DynamicRegexBuilder.buildTagRegex(tagPrefix, false);
+		const dvPriorityRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['priority', 'priorite']);
 
-		const cleaned = rawLine.replace(tagRegex, '').replace(this.ALL_PRIORITY_EMOJIS_REGEX, '').replace(/\s+/g, ' ').trim();
+		const cleaned = rawLine
+			.replace(tagRegex, '')
+			.replace(dvPriorityRegex, '')
+			.replace(this.ALL_PRIORITY_EMOJIS_REGEX, '')
+			.replace(/\s+/g, ' ')
+			.trim();
 		if (!priority || priority === 'normal') return cleaned;
 
-		if (config.priorityMode === 'emoji') {
+		if (config.taskFormat === 'dataview') {
+			return this.insertMetaBeforeBlockId(cleaned, `[priority:: ${priority}]`);
+		}
+
+		if (config.priorityMode === 'emoji' && config.taskFormat !== 'tag') {
 			const emojiMap: Record<TaskPriority, string> = {
 				highest: config.highestPrioritySignifier,
 				high: config.highPrioritySignifier,

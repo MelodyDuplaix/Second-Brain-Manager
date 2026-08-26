@@ -7,7 +7,6 @@ import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views
 import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
-import { RecoveryView, VIEW_TYPE_RECOVERY } from './views/recoveryView';
 import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
@@ -21,6 +20,8 @@ export interface SecondBrainSettings extends TaskSyntaxConfig {
 	customMatrixMapping: CustomMatrixTagMapping;
 	inboxFolder: string;
 	dailyNotesFolder: string;
+	dailyNoteTemplatePath: string;
+	autoOpenDailyNoteOnBriefing: boolean;
 
 	llmProvider: 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lm-studio' | 'lmstudio';
 	llmEndpoint: string;
@@ -46,6 +47,8 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	},
 	inboxFolder: '00 - Inbox',
 	dailyNotesFolder: '04 - Journal',
+	dailyNoteTemplatePath: '',
+	autoOpenDailyNoteOnBriefing: true,
 
 	llmProvider: 'gemini',
 	llmEndpoint: 'https://generativelanguage.googleapis.com',
@@ -120,26 +123,17 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new EveningReviewView(leaf, this)
 		);
 
-		this.registerView(
-			VIEW_TYPE_RECOVERY,
-			(leaf) => new RecoveryView(leaf, this)
-		);
-
 		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
 		});
 
-		this.addRibbonIcon('sun', 'Briefing du matin', () => {
+		this.addRibbonIcon('sun', 'Briefing du matin (avec tri & reprise)', () => {
 			this.activateBriefingView();
 		});
 
 		this.addRibbonIcon('moon', 'Revue du soir', () => {
 			this.activateEveningReviewView();
-		});
-
-		this.addRibbonIcon('coffee', 'Reprise après une pause', () => {
-			this.activateRecoveryView();
 		});
 
 		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
@@ -227,10 +221,10 @@ export default class SecondBrainPlugin extends Plugin {
 				let count = 0;
 				for (const file of files) {
 					const content = await this.app.vault.read(file);
-					const tasks = TaskParser.parseFile(content, file.path, this.settings);
+					const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
 					count += tasks.length;
 				}
-				new Notice(`Analyse terminée : ${count} tâches principales trouvées dans le coffre.`);
+				new Notice(`Analyse terminée : ${count} tâches trouvées dans le coffre.`);
 			}
 		});
 
@@ -324,7 +318,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 	public async checkFileForCompletedTasks(file: TFile): Promise<void> {
 		const content = await this.app.vault.read(file);
-		const tasks = TaskParser.parseFile(content, file.path, this.settings);
+		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
 
 		for (const task of tasks) {
 			if (task.completed || task.status === 'done') {
@@ -356,6 +350,9 @@ export default class SecondBrainPlugin extends Plugin {
 
 		if (leaf) {
 			workspace.revealLeaf(leaf);
+			if (leaf.view instanceof DashboardView) {
+				await (leaf.view as DashboardView).render();
+			}
 		}
 	}
 
@@ -373,6 +370,19 @@ export default class SecondBrainPlugin extends Plugin {
 
 		if (leaf) {
 			workspace.revealLeaf(leaf);
+		}
+
+		if (this.settings.autoOpenDailyNoteOnBriefing) {
+			try {
+				const vaultContext = new VaultContextService(this.app, this.settings);
+				const todayStr = new Date().toISOString().split('T')[0];
+				const dailyRes = await vaultContext.getOrCreateDailyNote(todayStr, this.settings.dailyNoteTemplatePath);
+				if (dailyRes.path) {
+					await this.app.workspace.openLinkText(dailyRes.path, '', false);
+				}
+			} catch (e) {
+				console.warn('[Second Brain Manager] Impossible d\'ouvrir la note quotidienne:', e);
+			}
 		}
 	}
 
@@ -394,20 +404,8 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async activateRecoveryView() {
-		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_RECOVERY)[0];
-
-		if (!leaf) {
-			const rightLeaf = workspace.getRightLeaf(false);
-			if (rightLeaf) {
-				leaf = rightLeaf;
-				await leaf.setViewState({ type: VIEW_TYPE_RECOVERY, active: true });
-			}
-		}
-
-		if (leaf) {
-			workspace.revealLeaf(leaf);
-		}
+		// La reprise après pause et le tri large sont intégrés directement dans le Briefing du matin
+		await this.activateBriefingView();
 	}
 
 	async activateHistoryView() {

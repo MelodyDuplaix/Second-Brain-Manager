@@ -8,7 +8,8 @@ export type ActionType =
 	| 'update_task'
 	| 'decompose_task'
 	| 'link_notes'
-	| 'move_note';
+	| 'move_note'
+	| 'rename_note';
 
 export interface BaseActionProposal {
 	id: string;
@@ -99,7 +100,13 @@ export interface LinkNotesActionProposal extends BaseActionProposal {
 
 export interface MoveNoteActionProposal extends BaseActionProposal {
 	type: 'move_note';
-	destinationFolder: string;
+	destinationFolder?: string;
+	newFileName?: string;
+}
+
+export interface RenameNoteActionProposal extends BaseActionProposal {
+	type: 'rename_note';
+	newFileName: string;
 }
 
 export type ActionProposal =
@@ -109,7 +116,8 @@ export type ActionProposal =
 	| UpdateTaskActionProposal
 	| DecomposeTaskActionProposal
 	| LinkNotesActionProposal
-	| MoveNoteActionProposal;
+	| MoveNoteActionProposal
+	| RenameNoteActionProposal;
 
 export interface ActionResult {
 	proposalId: string;

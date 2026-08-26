@@ -14,6 +14,7 @@ export class DashboardView extends ItemView {
 	private plugin: SecondBrainPlugin;
 	private popover: InlineMetaPopover;
 	private taskSearchQuery = '';
+	private showAllTodoTasks = false;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
 		super(leaf);
@@ -43,7 +44,7 @@ export class DashboardView extends ItemView {
 	}
 
 	async render(): Promise<void> {
-		const container = this.containerEl.children[1];
+		const container = (this as any).contentEl || this.containerEl.children[1] || this.containerEl;
 		container.empty();
 		container.addClass('sbm-dashboard-container');
 
@@ -79,6 +80,25 @@ export class DashboardView extends ItemView {
 		// Carte de Gamification & Statistiques de pièces
 		this.renderGamificationStatsCard(container);
 
+		// Chargement de toutes les tâches
+		const allTasks = await this.loadAllVaultTasks();
+		const todoTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
+
+		// Badge récapitulatif global des tâches détectées (aide au debug)
+		const summaryCard = container.createEl('div', { cls: 'sbm-tasks-summary-card' });
+		summaryCard.createEl('span', {
+			cls: 'sbm-summary-badge total',
+			text: `📋 ${todoTasks.length} tâche${todoTasks.length > 1 ? 's' : ''} à faire détectée${todoTasks.length > 1 ? 's' : ''}`
+		});
+		const dueCount = todoTasks.filter(t => !!t.dueDate || !!t.scheduledDate).length;
+		if (dueCount > 0) {
+			summaryCard.createEl('span', { cls: 'sbm-summary-badge due', text: `📅 ${dueCount} avec échéance` });
+		}
+		const energyCount = todoTasks.filter(t => t.energy !== undefined).length;
+		if (energyCount > 0) {
+			summaryCard.createEl('span', { cls: 'sbm-summary-badge energy', text: `⚡ ${energyCount} avec énergie` });
+		}
+
 		// Barre de recherche de tâches
 		const searchContainer = container.createEl('div', { cls: 'sbm-task-search-container' });
 		const searchInput = searchContainer.createEl('input', {
@@ -91,7 +111,6 @@ export class DashboardView extends ItemView {
 			this.renderSections(sectionsContainer, allTasks, isEconomyMode);
 		});
 
-		const allTasks = await this.loadAllVaultTasks();
 		const sectionsContainer = container.createEl('div', { cls: 'sbm-sections-wrapper' });
 		this.renderSections(sectionsContainer, allTasks, isEconomyMode);
 	}
@@ -118,54 +137,59 @@ export class DashboardView extends ItemView {
 
 		const mainTask = filteredTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || (t.energy && t.energy >= 6));
 		const secondaryTasks = filteredTasks.filter(t => t !== mainTask && (matrixAdapter.getQuadrant(t) === 'q2' || (t.energy && t.energy <= 5)));
-		const deadlines = filteredTasks.filter(t => t.dueDate || t.scheduledDate);
-		const unclassified = filteredTasks.filter(t => !matrixAdapter.getQuadrant(t) && !t.energy);
+		const deadlines = filteredTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && (t.dueDate || t.scheduledDate));
+		const unclassified = filteredTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && !deadlines.includes(t));
 
 		this.renderSection(container, '🎯 Tâche principale', mainTask ? [mainTask] : [], 'main');
 		this.renderSection(container, '📋 Tâches secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
 		this.renderSection(container, '⏰ Échéances et urgences', deadlines, 'deadlines');
-		this.renderSection(container, '❓ Tâches à décider', unclassified, 'unclassified');
+		this.renderSection(container, '❓ Tâches à qualifier (sans tag ni échéance)', unclassified, 'unclassified', true);
+		this.renderSection(container, `📑 Toutes les tâches à faire détectées (${filteredTasks.length})`, filteredTasks, 'all-todo', true);
 	}
 
 	private renderGamificationStatsCard(container: Element): void {
-		const statsCard = container.createEl('div', { cls: 'sbm-gamification-card' });
+		try {
+			const statsCard = container.createEl('div', { cls: 'sbm-gamification-card' });
 
-		const topRow = statsCard.createEl('div', { cls: 'sbm-gamification-top-row' });
+			const topRow = statsCard.createEl('div', { cls: 'sbm-gamification-top-row' });
 
-		const walletBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
-		walletBox.createEl('div', { cls: 'sbm-stat-label', text: 'Solde portefeuille' });
-		walletBox.createEl('div', { cls: 'sbm-stat-value gold', text: `🪙 ${this.plugin.pluginData.wallet.balance} pièces` });
+			const walletBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
+			walletBox.createEl('div', { cls: 'sbm-stat-label', text: 'Solde portefeuille' });
+			walletBox.createEl('div', { cls: 'sbm-stat-value gold', text: `🪙 ${this.plugin.pluginData.wallet.balance} pièces` });
 
-		const todayCoins = GamificationService.getTodayCoins(this.plugin.pluginData);
-		const todayBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
-		todayBox.createEl('div', { cls: 'sbm-stat-label', text: 'Gagnées aujourd\'hui' });
-		todayBox.createEl('div', { cls: 'sbm-stat-value green', text: `+${todayCoins} 🪙` });
+			const todayCoins = GamificationService.getTodayCoins(this.plugin.pluginData);
+			const todayBox = topRow.createEl('div', { cls: 'sbm-gamification-stat' });
+			todayBox.createEl('div', { cls: 'sbm-stat-label', text: 'Gagnées aujourd\'hui' });
+			todayBox.createEl('div', { cls: 'sbm-stat-value green', text: `+${todayCoins} 🪙` });
 
-		// Résumé et lien historique
-		const historyLink = statsCard.createEl('div', { cls: 'sbm-history-link-row' });
-		const linkBtn = historyLink.createEl('button', { cls: 'sbm-history-btn', text: '📜 Consulter l\'historique des pièces (annuler un missclick)' });
-		linkBtn.addEventListener('click', () => {
-			this.plugin.activateHistoryView();
-		});
-
-		// Répartition par catégorie
-		const categoryCoins = GamificationService.getCoinsByCategory(this.plugin.pluginData);
-		const categoryEntries = Object.entries(categoryCoins);
-
-		if (categoryEntries.length > 0) {
-			const catSection = statsCard.createEl('div', { cls: 'sbm-category-breakdown' });
-			catSection.createEl('div', { cls: 'sbm-cat-title', text: 'Répartition par catégorie :' });
-			const catPills = catSection.createEl('div', { cls: 'sbm-cat-pills' });
-
-			categoryEntries.forEach(([cat, amount]) => {
-				const pill = catPills.createEl('span', { cls: 'sbm-cat-pill' });
-				pill.setText(`${cat} : ${amount} 🪙`);
+			// Résumé et lien historique
+			const historyLink = statsCard.createEl('div', { cls: 'sbm-history-link-row' });
+			const linkBtn = historyLink.createEl('button', { cls: 'sbm-history-btn', text: '📜 Consulter l\'historique des pièces (annuler un missclick)' });
+			linkBtn.addEventListener('click', () => {
+				this.plugin.activateHistoryView();
 			});
-		}
 
-		// Graphique d'activité sur 7 jours (Sparkline SVG sécurisé sans innerHTML)
-		const trend = GamificationService.getDailyTrend(this.plugin.pluginData, 7);
-		this.renderTrendChart(statsCard, trend);
+			// Répartition par catégorie
+			const categoryCoins = GamificationService.getCoinsByCategory(this.plugin.pluginData);
+			const categoryEntries = Object.entries(categoryCoins);
+
+			if (categoryEntries.length > 0) {
+				const catSection = statsCard.createEl('div', { cls: 'sbm-category-breakdown' });
+				catSection.createEl('div', { cls: 'sbm-cat-title', text: 'Répartition par catégorie :' });
+				const catPills = catSection.createEl('div', { cls: 'sbm-cat-pills' });
+
+				categoryEntries.forEach(([cat, amount]) => {
+					const pill = catPills.createEl('span', { cls: 'sbm-cat-pill' });
+					pill.setText(`${cat} : ${amount} 🪙`);
+				});
+			}
+
+			// Graphique d'activité sur 7 jours (Sparkline SVG sécurisé sans innerHTML)
+			const trend = GamificationService.getDailyTrend(this.plugin.pluginData, 7);
+			this.renderTrendChart(statsCard, trend);
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur affichage carte gamification:', err);
+		}
 	}
 
 	private renderTrendChart(container: Element, trend: { date: string; coins: number }[]): void {
@@ -219,7 +243,7 @@ export class DashboardView extends ItemView {
 		});
 	}
 
-	private renderSection(container: Element, title: string, tasks: ObsidianTask[], sectionType: string): void {
+	private renderSection(container: Element, title: string, tasks: ObsidianTask[], sectionType: string, allowExpand = false): void {
 		const sectionEl = container.createEl('div', { cls: `sbm-section sbm-section-${sectionType}` });
 		sectionEl.createEl('h3', { text: title });
 
@@ -230,7 +254,10 @@ export class DashboardView extends ItemView {
 
 		const listEl = sectionEl.createEl('div', { cls: 'sbm-task-list' });
 
-		tasks.forEach(task => {
+		const limit = (allowExpand && !this.showAllTodoTasks) ? 30 : tasks.length;
+		const displayedTasks = tasks.slice(0, limit);
+
+		displayedTasks.forEach(task => {
 			const cardEl = listEl.createEl('div', { cls: 'sbm-task-card' });
 
 			const infoEl = cardEl.createEl('div', { cls: 'sbm-task-info' });
@@ -309,6 +336,18 @@ export class DashboardView extends ItemView {
 				await this.render();
 			});
 		});
+
+		if (allowExpand && tasks.length > 30) {
+			const expandContainer = sectionEl.createEl('div', { cls: 'sbm-expand-container' });
+			const toggleBtn = expandContainer.createEl('button', {
+				cls: 'sbm-expand-btn',
+				text: this.showAllTodoTasks ? `🔼 Réduire l'affichage (30/${tasks.length})` : `🔽 Afficher toutes les tâches (${tasks.length})`
+			});
+			toggleBtn.addEventListener('click', async () => {
+				this.showAllTodoTasks = !this.showAllTodoTasks;
+				await this.render();
+			});
+		}
 	}
 
 	private async openTaskLocation(task: ObsidianTask): Promise<void> {
@@ -413,16 +452,21 @@ export class DashboardView extends ItemView {
 	}
 
 	private async loadAllVaultTasks(): Promise<ObsidianTask[]> {
-		const files = this.app.vault.getMarkdownFiles();
-		const allTasks: ObsidianTask[] = [];
+		const files = (typeof this.app.vault.getMarkdownFiles === 'function') ? this.app.vault.getMarkdownFiles() : [];
+		const results = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const content = (typeof (this.app.vault as any).cachedRead === 'function')
+						? await (this.app.vault as any).cachedRead(file)
+						: await this.app.vault.read(file);
+					return TaskParser.parseAllTasks(content, file.path, this.plugin.settings);
+				} catch {
+					return [];
+				}
+			})
+		);
 
-		for (const file of files) {
-			const content = await this.app.vault.read(file);
-			const tasks = TaskParser.parseFile(content, file.path, this.plugin.settings);
-			allTasks.push(...tasks);
-		}
-
-		return allTasks;
+		return results.flat();
 	}
 
 	private async updateTaskStatus(task: ObsidianTask, inProgress: boolean): Promise<void> {

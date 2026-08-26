@@ -140,5 +140,51 @@ describe('ActionExecutor', () => {
 		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toBeDefined();
 		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toContain('# Bac à sable pour idées');
 	});
+
+	it('should execute move_note and rename_note with vault fileManager', async () => {
+		createdFiles['Notes en vrac/Liste Appel.md'] = 'Antoine\nMarc';
+		let renamedTo = '';
+
+		const mockAppWithRename = {
+			...mockApp,
+			fileManager: {
+				renameFile: (_file: any, newPath: string) => {
+					renamedTo = newPath;
+					return Promise.resolve();
+				}
+			}
+		} as any;
+
+		const customExecutor = new ActionExecutor(mockAppWithRename, DEFAULT_SETTINGS);
+
+		// Test move_note with newFileName
+		const moveProp = {
+			id: 'act-6',
+			type: 'move_note' as const,
+			description: 'Déplacer et renommer note',
+			selected: true,
+			targetPath: 'Notes en vrac/Liste Appel.md',
+			destinationFolder: '01 - Projets',
+			newFileName: 'Vœux 2026 - Liste Appel.md'
+		};
+
+		const moveResults = await customExecutor.executeProposals([moveProp]);
+		expect(moveResults[0].success).toBe(true);
+		expect(renamedTo).toBe('01 - Projets/Vœux 2026 - Liste Appel.md');
+
+		// Test rename_note
+		const renameProp = {
+			id: 'act-7',
+			type: 'rename_note' as const,
+			description: 'Renommer note',
+			selected: true,
+			targetPath: 'Notes en vrac/Liste Appel.md',
+			newFileName: 'Nouvelle Liste.md'
+		};
+
+		const renameResults = await customExecutor.executeProposals([renameProp]);
+		expect(renameResults[0].success).toBe(true);
+		expect(renamedTo).toBe('Notes en vrac/Nouvelle Liste.md');
+	});
 });
 

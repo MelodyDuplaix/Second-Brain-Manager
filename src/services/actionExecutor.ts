@@ -187,7 +187,6 @@ export class ActionExecutor {
 
 			case 'move_note': {
 				const sourcePath = normalizePath(proposal.targetPath);
-				const destFolder = normalizePath(proposal.destinationFolder);
 				const file = this.app.vault.getFileByPath(sourcePath) || this.app.vault.getAbstractFileByPath(sourcePath);
 
 				if (!(file instanceof TFile)) {
@@ -199,16 +198,74 @@ export class ActionExecutor {
 					};
 				}
 
-				await this.ensureFolderExists(destFolder);
-				const newPath = normalizePath(`${destFolder}/${file.name}`);
+				const fallbackParent = sourcePath.includes('/') ? sourcePath.split('/').slice(0, -1).join('/') : '';
+				const destFolder = proposal.destinationFolder 
+					? normalizePath(proposal.destinationFolder) 
+					: ((file.parent && file.parent.path && file.parent.path !== '/') ? file.parent.path : fallbackParent);
+				
+				if (destFolder && destFolder !== '/') {
+					await this.ensureFolderExists(destFolder);
+				}
 
-				// Déplacement propre avec mise à jour des liens internes Obsidian
+				let finalFileName = proposal.newFileName ? proposal.newFileName.trim() : file.name;
+				if (!finalFileName.endsWith('.md')) {
+					finalFileName += '.md';
+				}
+
+				const newPath = destFolder && destFolder !== '/'
+					? normalizePath(`${destFolder}/${finalFileName}`)
+					: normalizePath(finalFileName);
+
+				// Déplacement et/ou renommage propre avec mise à jour des liens internes Obsidian
+				await this.app.fileManager.renameFile(file, newPath);
+
+				const actionDesc = proposal.newFileName && proposal.destinationFolder
+					? `Note déplacée et renommée vers "${newPath}".`
+					: proposal.newFileName
+						? `Note renommée en "${finalFileName}".`
+						: `Note déplacée vers "${newPath}".`;
+
+				return {
+					proposalId: proposal.id,
+					success: true,
+					message: actionDesc,
+					createdOrModifiedPath: newPath
+				};
+			}
+
+			case 'rename_note': {
+				const sourcePath = normalizePath(proposal.targetPath);
+				const file = this.app.vault.getFileByPath(sourcePath) || this.app.vault.getAbstractFileByPath(sourcePath);
+
+				if (!(file instanceof TFile)) {
+					return {
+						proposalId: proposal.id,
+						success: false,
+						message: `Fichier source introuvable pour renommage : "${sourcePath}".`,
+						createdOrModifiedPath: sourcePath
+					};
+				}
+
+				let newName = proposal.newFileName.trim();
+				if (!newName.endsWith('.md')) {
+					newName += '.md';
+				}
+
+				const fallbackParent = sourcePath.includes('/') ? sourcePath.split('/').slice(0, -1).join('/') : '';
+				const parentDir = (file.parent && file.parent.path && file.parent.path !== '/')
+					? file.parent.path
+					: fallbackParent;
+
+				const newPath = parentDir && parentDir !== '/'
+					? normalizePath(`${parentDir}/${newName}`)
+					: normalizePath(newName);
+
 				await this.app.fileManager.renameFile(file, newPath);
 
 				return {
 					proposalId: proposal.id,
 					success: true,
-					message: `Note déplacée vers "${newPath}".`,
+					message: `Note renommée en "${newName}".`,
 					createdOrModifiedPath: newPath
 				};
 			}

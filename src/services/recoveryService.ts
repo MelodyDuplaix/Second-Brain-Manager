@@ -21,8 +21,12 @@ export interface RecoveryVaultData {
 	oneThingTask?: ObsidianTask;
 	overdueTasks: ObsidianTask[];
 	staleTasks: ObsidianTask[];
+	inboxTasks: ObsidianTask[];
 	inboxNotes: string[];
+	inboxNotePreviews: Array<{ path: string; name: string; preview: string }>;
+	folders: string[];
 	projects: string[];
+	contacts: string[];
 	energy: number;
 	dailyNoteContent?: string;
 }
@@ -102,22 +106,67 @@ export class RecoveryService {
 		const vaultContext = new VaultContextService(app, plugin.settings);
 		const structure = vaultContext.getVaultStructure();
 
-		// Lecture de toutes les tâches ouvertes du coffre
-		const files = app.vault.getMarkdownFiles();
-		const allOpenTasks: ObsidianTask[] = [];
-
-		for (const file of files) {
-			const content = await app.vault.read(file);
-			const tasks = TaskParser.parseFile(content, file.path, plugin.settings);
-			const open = tasks.filter(t => !t.completed && t.status !== 'cancelled');
-			allOpenTasks.push(...open);
-		}
+		// Lecture de toutes les tâches ouvertes du coffre en parallèle
+		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const results = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const content = (typeof (app.vault as any).cachedRead === 'function')
+						? await (app.vault as any).cachedRead(file)
+						: await app.vault.read(file);
+					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
+				} catch {
+					return [];
+				}
+			})
+		);
+		const allTasks = results.flat();
+		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
 
 		// Seuil de 7 jours pour identifier les tâches en retard "obsolètes / en souffrance"
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-		const overdueTasks = allOpenTasks.filter(t => t.dueDate && t.dueDate < dateStr);
-		const staleTasks = overdueTasks.filter(t => t.dueDate && t.dueDate <= sevenDaysAgo);
+		const overdueTasks = allOpenTasks.filter(t =>
+			(t.dueDate && t.dueDate < dateStr) ||
+			(t.scheduledDate && t.scheduledDate < dateStr)
+		);
+		const staleTasks = overdueTasks.filter(t =>
+			(t.dueDate && t.dueDate <= sevenDaysAgo) ||
+			(t.scheduledDate && t.scheduledDate <= sevenDaysAgo)
+		);
+
+		// Boîte de réception & Notes en vrac
+		const inboxFolder = plugin.settings.inboxFolder ? normalizePath(plugin.settings.inboxFolder).toLowerCase() : '00 - inbox';
+		const inboxTasks = allOpenTasks.filter(t => {
+			const norm = normalizePath(t.filePath).toLowerCase();
+			const isRoot = !norm.includes('/');
+			return norm.startsWith(inboxFolder) || norm.includes('notes en vrac') || norm.includes('vrac') || isRoot;
+		});
+
+		const inboxFilesToScan = structure.inboxFiles.slice(0, 30);
+		const inboxNotePreviews = await Promise.all(
+			inboxFilesToScan.map(async (normPath) => {
+				const file = app.vault.getFileByPath(normPath) || app.vault.getAbstractFileByPath(normPath);
+				let preview = '';
+				if (file instanceof TFile) {
+					try {
+						const raw = (typeof (app.vault as any).cachedRead === 'function')
+							? await (app.vault as any).cachedRead(file)
+							: await app.vault.read(file);
+						const nonHeadingLine = raw.split('\n')
+							.map(l => l.trim())
+							.filter(l => l.length > 0 && !l.startsWith('---') && !l.startsWith('```'))[0] || '';
+						preview = nonHeadingLine.slice(0, 120);
+					} catch {
+						preview = '';
+					}
+				}
+				const name = normPath.split('/').pop()?.replace(/\.md$/, '') || normPath;
+				return { path: normPath, name, preview };
+			})
+		);
+
+		const inboxNotes = inboxNotePreviews.map(n => n.name);
 
 		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, non Q1)
 		const quickWinTasks = allOpenTasks
@@ -138,18 +187,11 @@ export class RecoveryService {
 			oneThingTask = overdueTasks[0];
 		}
 
-		// Fichiers dans l'Inbox
-		const inboxFolder = normalizePath(plugin.settings.inboxFolder);
-		const inboxNotes = files
-			.filter(f => f.path.startsWith(inboxFolder) && f.basename)
-			.map(f => f.basename);
-
 		// Note quotidienne du jour
 		let dailyNoteContent: string | undefined;
-		const dailyPath = normalizePath(`${plugin.settings.dailyNotesFolder}/${dateStr}.md`);
-		const dailyFile = app.vault.getFileByPath(dailyPath) || app.vault.getAbstractFileByPath(dailyPath);
-		if (dailyFile instanceof TFile) {
-			dailyNoteContent = await app.vault.read(dailyFile);
+		const dailyRes = await vaultContext.getOrCreateDailyNote(dateStr, plugin.settings.dailyNoteTemplatePath);
+		if (dailyRes.content) {
+			dailyNoteContent = dailyRes.content;
 		}
 
 		return {
@@ -161,8 +203,12 @@ export class RecoveryService {
 			oneThingTask,
 			overdueTasks,
 			staleTasks,
+			inboxTasks,
 			inboxNotes,
+			inboxNotePreviews,
+			folders: structure.folders,
 			projects: structure.projects,
+			contacts: structure.contacts,
 			energy,
 			dailyNoteContent
 		};
@@ -181,9 +227,11 @@ export class RecoveryService {
 			? MatrixAdapterFactory.createAdapter(plugin.settings.matrixProvider, plugin.settings.customMatrixMapping)
 			: MatrixAdapterFactory.createAdapter('task-matrix');
 
+		// 1. Triage des tâches en retard
 		data.overdueTasks.forEach((task, idx) => {
 			const isExplicitlyCritical = TaskSafetyGuard.isExplicitlyCritical(task);
-			const isVeryStale = task.dueDate && task.dueDate <= fourteenDaysAgo;
+			const effectiveDate = task.dueDate || task.scheduledDate;
+			const isVeryStale = effectiveDate && effectiveDate <= fourteenDaysAgo;
 			const isMeetingOrCall = /réunion|rdv|rendez-vous|call|point\s/i.test(task.title);
 			const currentQ = matrixAdapter.getQuadrant(task);
 
@@ -219,7 +267,7 @@ export class RecoveryService {
 				} as UpdateTaskActionProposal);
 
 			} else if (isVeryStale || isMeetingOrCall) {
-				// 1. Annulation des tâches très anciennes (>14j) ou événements passés non critiques
+				// Annulation des tâches très anciennes (>14j) ou événements passés non critiques
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
@@ -250,8 +298,8 @@ export class RecoveryService {
 					reason: diff.reason
 				} as UpdateTaskActionProposal);
 
-			} else if (currentQ === 'q1' && task.dueDate && task.dueDate <= sevenDaysAgo) {
-				// 2. Rétrogradation de quadrant (Q1 -> Q2) pour soulager la reprise
+			} else if (currentQ === 'q1' && effectiveDate && effectiveDate <= sevenDaysAgo) {
+				// Rétrogradation de quadrant (Q1 -> Q2) pour soulager la reprise
 				const targetQ = 'q2';
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
@@ -283,37 +331,8 @@ export class RecoveryService {
 					reason: diff.reason
 				} as UpdateTaskActionProposal);
 
-			} else if (currentQ === 'q4' || (task.energy !== undefined && task.energy >= 8 && task.dueDate && task.dueDate < data.dateStr)) {
-				// 3. Délestage d'échéance ou allègement d'énergie sur tâche non urgente
-				const diff: TaskDiffMetadata = {
-					taskTitle: task.title,
-					filePath: task.filePath,
-					lineNumber: task.lineNumber,
-					oldDueDate: task.dueDate,
-					newDueDate: null,
-					oldQuadrant: currentQ,
-					newQuadrant: currentQ,
-					oldEnergy: task.energy,
-					newEnergy: task.energy ? Math.min(task.energy, 4) : undefined,
-					reason: 'Suppression de l\'échéance pour enlever la pression temporelle et ajustement d\'énergie'
-				};
-
-				proposals.push({
-					id: `recovery-lighten-${idx}-${Date.now()}`,
-					type: 'update_task',
-					targetPath: task.filePath,
-					lineNumber: task.lineNumber,
-					taskTitle: task.title,
-					description: `🧹 Délester l'échéance : "${task.title}"`,
-					selected: true,
-					newDueDate: null,
-					newEnergy: diff.newEnergy,
-					diff,
-					reason: diff.reason
-				} as UpdateTaskActionProposal);
-
 			} else {
-				// 4. Report de date normal à aujourd'hui
+				// Report de date normal à aujourd'hui
 				const diff: TaskDiffMetadata = {
 					taskTitle: task.title,
 					filePath: task.filePath,
@@ -343,6 +362,32 @@ export class RecoveryService {
 				} as UpdateTaskActionProposal);
 			}
 		});
+
+		// 2. Triage des notes en vrac
+		if (data.inboxNotePreviews && data.inboxNotePreviews.length > 0) {
+			data.inboxNotePreviews.forEach((note, idx) => {
+				const isLoose = note.path.toLowerCase().includes('vrac') || note.path.toLowerCase().includes('inbox') || !note.path.includes('/');
+				if (isLoose) {
+					let destFolder = '01 - Projets';
+					if (data.folders && data.folders.length > 0) {
+						const matching = data.folders.find(f =>
+							f.toLowerCase().includes(note.name.toLowerCase()) ||
+							note.name.toLowerCase().includes(f.toLowerCase().split('/').pop() || '')
+						);
+						if (matching) destFolder = matching;
+					}
+
+					proposals.push({
+						id: `recovery-move-note-${idx}-${Date.now()}`,
+						type: 'move_note',
+						targetPath: note.path,
+						destinationFolder: destFolder,
+						description: `📁 Ranger la note [[${note.name}]] vers "${destFolder}"`,
+						selected: true
+					});
+				}
+			});
+		}
 
 		return proposals;
 	}
@@ -464,48 +509,52 @@ export class RecoveryService {
 			: 'Aucune tache rapide identifiee.';
 
 		const overdueText = data.overdueTasks.length > 0
-			? data.overdueTasks.slice(0, 12).map(formatTaskDetailed).join('\n')
+			? data.overdueTasks.slice(0, 35).map(formatTaskDetailed).join('\n')
 			: 'Aucune urgence en retard.';
 
 		const staleText = data.staleTasks.length > 0
-			? data.staleTasks.slice(0, 10).map(formatTaskDetailed).join('\n')
+			? data.staleTasks.slice(0, 35).map(formatTaskDetailed).join('\n')
 			: 'Aucune tache ancienne en souffrance.';
 
-		const inboxText = data.inboxNotes.length > 0
-			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
-			: 'Inbox vide.';
+		const looseNotesText = (data.inboxNotePreviews && data.inboxNotePreviews.length > 0)
+			? data.inboxNotePreviews.map(n => `- [[${n.name}]] (Chemin: "${n.path}")${n.preview ? ` : "${n.preview}"` : ''}`).join('\n')
+			: (data.inboxNotes.length > 0 ? data.inboxNotes.map(n => `- [[${n}]]`).join('\n') : 'Inbox vide.');
+
+		const foldersText = (data.folders && data.folders.length > 0)
+			? data.folders.slice(0, 25).join(', ')
+			: 'Racine';
 
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine apres pause (Soft Landing) et allegement intelligent de charge mentale.
 
 TON OBJECTIF :
-Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan deculpabilisant, et proposer un plan de tri et d'allegement structure de ses taches en souffrance.
+Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan deculpabilisant, et proposer un plan de tri et d'allegement structure et exhaustif de ses taches et notes en souffrance.
 
 CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN emoji dans ta reponse textuelle. Reste sobre, clair, direct et bienveillant.
 
 DISCERNEMENT SEMANTIQUE ET SECURITE :
 - Fais preuve d'un discernement contextuel approfondi :
-  - Identifie les obligations a consequences reelles (ex: paiements obligatoires comme le loyer/factures, engagements contractuels, demarches administratives avec delais stricts, imperatifs de sante). Pour ces taches, ne propose jamais de supprimer l'echeance ni d'annuler, mais propose un report prioritaire a aujourd'hui (${data.dateStr}).
-  - Reserve le delestage d'echeances (\`newDueDate: null\`) et les retrogradations aux taches secondaires, lectures, recherches ou projets de fond sans contrainte critique.
+  - Identifie les obligations a consequences reelles (ex: paiements obligatoires, engagements contractuels, demarches administratives, sante). Pour ces taches, propose un report prioritaire a aujourd'hui (${data.dateStr}).
+  - Annule sans culpabilite (\`newStatus: "cancelled"\`) les taches ou rendez-vous perimes depuis longtemps sans consequences actuelles.
+  - Range et renomme les notes en vrac vers les dossiers de projets ou de domaines correspondants avec des noms clairs (\`type: "move_note"\` ou \`type: "rename_note"\`).
 
 VARIETE D'ACTIONS A PROPOSER DANS LE PLAN :
-1. Retrogradation de quadrant (ex: passer de Q1 a Q2 ou Q3 des taches qui ne sont pas de veritables urgences pour alleger la pression).
-2. Priorisation / Promotion (ex: passer en Q1 une urgence vitale).
-3. Report de date (decaler a aujourd'hui ${data.dateStr} les taches encore d'actualite).
-4. Annulation / Obsolescence (passer en \`newStatus: "cancelled"\` les reunions ou taches perimees depuis longtemps sans impact).
-5. Delestage d'echeances (mettre \`newDueDate: null\` pour retirer la pression temporelle sur les taches de fond non urgentes).
-6. Ajustement d'energie (reduire l'energie estimee pour faciliter le passage a l'action).
+1. Annulation / Obsolescence (passer en \`newStatus: "cancelled"\` les taches obsoletes ou perimees).
+2. Report de date (replanifier a aujourd'hui ou a une date realiste).
+3. Rangement & Renommage de notes en vrac (\`type: "move_note"\` pour ranger les notes dans leurs dossiers et/ou leur donner un nom explicite via \`newFileName\`, ou \`type: "rename_note"\`).
+4. Retrogradation de quadrant (passer de Q1 a Q2 pour reduire la pression).
+5. Delestage d'echeances (mettre \`newDueDate: null\` sur les taches de fond sans contrainte).
 
 STRUCTURE DE TA REPONSE :
 1. Accueil & Philosophie de reprise (2 phrases deculpabilisantes).
 2. Etape 1 : Le Quick Win pour amorcer le mouvement (1 micro-tache simple de 5 min au format \`- [ ] ... [[Note]]\`).
 3. Etape 2 : The One Thing (La seule tache prioritaire et strategique du jour au format \`- [ ] ... [[Note]]\`).
 4. Etape 3 : Plan d'Allegement & Tri Detaille :
-   - Explique et justifie les retrogradations, annulations et reports proposes avec discernement.
+   - Traite et justifie les annulations, reports, rangements et renommages de notes en vrac.
 5. Conseil de demarrage (1 phrase motivante).
 
 BLOC D'ACTIONS STRUCTUREES (OBLIGATOIRE A LA FIN DU MESSAGE) :
-A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`\`\`json:actions ... \`\`\` contenant le tableau des propositions d'actions :
+A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`\`\`json:actions ... \`\`\` contenant le tableau exhaustif de TOUTES les propositions d'actions pour que l'utilisateur puisse les executer en 1 clic :
 \`\`\`json:actions
 [
   {
@@ -513,7 +562,7 @@ A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`
     "targetPath": "01 - Projets/Acme.md",
     "lineNumber": 12,
     "taskTitle": "Rediger le rapport",
-    "description": "Retrograder en Q2 et replanifier : Rediger le rapport",
+    "description": "Retrograder en Q2 et replanifier",
     "newMatrixQuadrant": "q2",
     "newDueDate": "${data.dateStr}",
     "reason": "Tache non urgente, retrogradee pour soulager la reprise"
@@ -522,10 +571,23 @@ A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`
     "type": "update_task",
     "targetPath": "02 - Domaines/Maison.md",
     "lineNumber": 5,
-    "taskTitle": "Reunion du 10 aout",
+    "taskTitle": "Reunion passee",
     "description": "Marquer comme obsolete / annulee",
     "newStatus": "cancelled",
     "reason": "Reunion passee non pertinente"
+  },
+  {
+    "type": "move_note",
+    "targetPath": "Notes en vrac/Liste d'appel VŒUX 2026.md",
+    "destinationFolder": "01 - Projets",
+    "newFileName": "Vœux 2026 - Liste d'appels.md",
+    "description": "Ranger et renommer la liste d'appel dans les projets"
+  },
+  {
+    "type": "rename_note",
+    "targetPath": "00 - Inbox/Sans titre.md",
+    "newFileName": "Idées Projet X.md",
+    "description": "Donner un nom clair et explicite à la note"
   }
 ]
 \`\`\`
@@ -533,22 +595,26 @@ Utilise les chemins exacts et numeros de ligne fournis.`;
 
 		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Date du jour : ${data.dateStr}, Energie : ${data.energy}/10) :
 
+Dossiers disponibles : ${foldersText}
+Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
+Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
+
 TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
 
 QUICK WINS DISPONIBLES :
 ${quickWinsText}
 
-TACHES EN RETARD (${data.overdueTasks.length} au total) :
+TACHES EN RETARD ET ANCIENNES (${data.overdueTasks.length} au total) :
 ${overdueText}
 
 TACHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
 ${staleText}
 
-BOITE DE RECEPTION (INBOX) :
-${inboxText}
+NOTES EN VRAC ET BOITE DE RECEPTION :
+${looseNotesText}
 
-Prepare-moi un plan de reprise complet avec un vrai tri et allegement securise des taches, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse.`;
+Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et securise des taches et notes, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -569,12 +635,20 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement securise d
 		const messages = this.buildRecoveryMessages(data);
 
 		// Lecture de toutes les tâches pour enrichissement
-		const files = app.vault.getMarkdownFiles();
-		const vaultTasks: ObsidianTask[] = [];
-		for (const file of files) {
-			const content = await app.vault.read(file);
-			vaultTasks.push(...TaskParser.parseFile(content, file.path, plugin.settings));
-		}
+		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const results = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const content = (typeof (app.vault as any).cachedRead === 'function')
+						? await (app.vault as any).cachedRead(file)
+						: await app.vault.read(file);
+					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
+				} catch {
+					return [];
+				}
+			})
+		);
+		const vaultTasks: ObsidianTask[] = results.flat();
 
 		const defaultProposals = this.generateDefaultLighteningProposals(data, plugin);
 

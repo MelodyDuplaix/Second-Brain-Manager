@@ -211,6 +211,20 @@ export class RecoveryView extends ItemView {
 		// 1. Barre d'actions directes
 		const actionsRow = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-document-actions' });
 
+		const copyBtn = actionsRow.createEl('button', {
+			cls: 'sbm-doc-action-btn',
+			text: '📋 Copier la réponse'
+		});
+		copyBtn.title = 'Copier l\'intégralité du texte de la reprise dans le presse-papier';
+		copyBtn.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(this.generatedRecoveryText);
+				new Notice('Plan de reprise copié dans le presse-papier !');
+			} catch {
+				new Notice('Impossible de copier dans le presse-papier.');
+			}
+		});
+
 		const saveDailyBtn = actionsRow.createEl('button', {
 			cls: 'sbm-doc-action-btn',
 			text: '📝 Enregistrer dans ma Daily Note'

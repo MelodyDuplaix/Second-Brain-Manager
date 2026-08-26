@@ -288,6 +288,25 @@ export class GamificationService {
 		return total;
 	}
 
+	public static getDailyTrend(data: PluginData, days = 7): { date: string; coins: number }[] {
+		this.ensureDataStructures(data);
+		const result: { date: string; coins: number }[] = [];
+		const now = new Date();
+
+		for (let i = days - 1; i >= 0; i--) {
+			const d = new Date(now);
+			d.setDate(d.getDate() - i);
+			const dateStr = d.toISOString().split('T')[0];
+
+			const totalCoins = Object.values(data.completionEvents)
+				.filter(e => e.completedAt && e.completedAt.startsWith(dateStr))
+				.reduce((acc, curr) => acc + curr.coins, 0);
+
+			result.push({ date: dateStr, coins: totalCoins });
+		}
+		return result;
+	}
+
 	public static getCoinsByCategory(data: PluginData): Record<string, number> {
 		this.ensureDataStructures(data);
 		const dist: Record<string, number> = {};

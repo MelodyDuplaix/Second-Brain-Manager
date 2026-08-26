@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import { TaskParser } from '../parsers/taskParser';
+import { DynamicRegexBuilder } from '../parsers/regexBuilder';
 import { ObsidianTask } from '../models/task';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { SecondBrainSettings } from '../main';
@@ -156,8 +157,10 @@ export class VaultContextService {
 				continue;
 			}
 
-			const content = await this.app.vault.read(file);
-			const tasks = TaskParser.parseFile(content, normPath, this.settings);
+			const content = (typeof (this.app.vault as any).cachedRead === 'function')
+				? await (this.app.vault as any).cachedRead(file)
+				: await this.app.vault.read(file);
+			const tasks = TaskParser.parseAllTasks(content, normPath, this.settings);
 
 			for (const task of tasks) {
 				// Filtre statut
@@ -274,27 +277,198 @@ export class VaultContextService {
 
 	/**
 	 * Récupération de la note quotidienne pour une date donnée (par défaut aujourd'hui).
+	 * Prend en charge les formats YYYY-MM-DD, DD-MM-YYYY et la détection flexible des dossiers.
 	 */
 	public async getDailyNote(dateStr?: string): Promise<{ path: string; exists: boolean; content?: string }> {
-		const targetDate = dateStr || new Date().toISOString().split('T')[0];
+		const targetIso = dateStr ? (DynamicRegexBuilder.normalizeDate(dateStr) || dateStr) : new Date().toISOString().split('T')[0];
+		
+		let frDate = targetIso;
+		const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetIso);
+		if (isoMatch) {
+			frDate = `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
+		}
+		const nameVariants = Array.from(new Set([targetIso, frDate]));
+
 		const dailyFolder = normalizePath(this.settings.dailyNotesFolder || '04 - Journal');
-		const dailyPath = normalizePath(`${dailyFolder}/${targetDate}.md`);
 
-		const file = this.app.vault.getFileByPath(dailyPath) || this.app.vault.getAbstractFileByPath(dailyPath);
-
-		if (file instanceof TFile) {
-			const content = await this.app.vault.read(file);
-			return { path: dailyPath, exists: true, content };
+		// 1. Recherche dans le dossier configuré
+		for (const name of nameVariants) {
+			const dailyPath = normalizePath(`${dailyFolder}/${name}.md`);
+			const file = this.app.vault.getFileByPath(dailyPath) || this.app.vault.getAbstractFileByPath(dailyPath);
+			if (file instanceof TFile) {
+				const content = (typeof (this.app.vault as any).cachedRead === 'function')
+					? await (this.app.vault as any).cachedRead(file)
+					: await this.app.vault.read(file);
+				return { path: dailyPath, exists: true, content };
+			}
 		}
 
-		return { path: dailyPath, exists: false };
+		// 2. Recherche globale dans le coffre (ex: Note quotidienne/26-08-2026.md ou Journal/2026-08-26.md)
+		if (typeof this.app.vault.getMarkdownFiles === 'function') {
+			const markdownFiles = this.app.vault.getMarkdownFiles();
+			for (const f of markdownFiles) {
+				if (nameVariants.includes(f.basename)) {
+					const content = (typeof (this.app.vault as any).cachedRead === 'function')
+						? await (this.app.vault as any).cachedRead(f)
+						: await this.app.vault.read(f);
+					return { path: normalizePath(f.path), exists: true, content };
+				}
+			}
+		}
+
+		return { path: normalizePath(`${dailyFolder}/${targetIso}.md`), exists: false };
 	}
 
 	/**
-	 * Synthèse globale de la structure du coffre pour l'agent (projets, contacts, dossiers).
+	 * Récupère ou crée la note quotidienne en appliquant le modèle (template) et en exécutant Templater si disponible.
+	 */
+	public async getOrCreateDailyNote(
+		dateStr?: string,
+		templatePath?: string
+	): Promise<{ file: TFile | null; path: string; created: boolean; content: string }> {
+		const targetIso = dateStr ? (DynamicRegexBuilder.normalizeDate(dateStr) || dateStr) : new Date().toISOString().split('T')[0];
+		
+		let frDate = targetIso;
+		const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetIso);
+		if (isoMatch) {
+			frDate = `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
+		}
+		const nameVariants = Array.from(new Set([targetIso, frDate]));
+		const dailyFolder = normalizePath(this.settings.dailyNotesFolder || '04 - Journal');
+
+		// 1. Vérification si la note existe déjà
+		for (const name of nameVariants) {
+			const dailyPath = normalizePath(`${dailyFolder}/${name}.md`);
+			const file = this.app.vault.getFileByPath(dailyPath) || this.app.vault.getAbstractFileByPath(dailyPath);
+			if (file instanceof TFile) {
+				const content = (typeof (this.app.vault as any).cachedRead === 'function')
+					? await (this.app.vault as any).cachedRead(file)
+					: await this.app.vault.read(file);
+				return { file, path: dailyPath, created: false, content };
+			}
+		}
+
+		if (typeof this.app.vault.getMarkdownFiles === 'function') {
+			const markdownFiles = this.app.vault.getMarkdownFiles();
+			for (const f of markdownFiles) {
+				if (nameVariants.includes(f.basename)) {
+					const content = (typeof (this.app.vault as any).cachedRead === 'function')
+						? await (this.app.vault as any).cachedRead(f)
+						: await this.app.vault.read(f);
+					return { file: f, path: normalizePath(f.path), created: false, content };
+				}
+			}
+		}
+
+		// 2. Création de la note quotidienne
+		const chosenName = (dailyFolder.toLowerCase().includes('quotidienne') || (this.settings.dateFormat && this.settings.dateFormat.startsWith('DD')))
+			? frDate
+			: targetIso;
+
+		const targetPath = normalizePath(`${dailyFolder}/${chosenName}.md`);
+
+		if (dailyFolder && dailyFolder !== '/' && dailyFolder !== '.') {
+			const folderExists = this.app.vault.getAbstractFileByPath(dailyFolder);
+			if (!folderExists && typeof this.app.vault.createFolder === 'function') {
+				try {
+					await this.app.vault.createFolder(dailyFolder);
+				} catch {
+					// Dossier créé
+				}
+			}
+		}
+
+		let initialContent = `# Note du ${chosenName}\n\n`;
+		let rawTemplate = '';
+
+		if (templatePath) {
+			const normTemplate = normalizePath(templatePath);
+			const templateFile = this.app.vault.getFileByPath(normTemplate) || this.app.vault.getAbstractFileByPath(normTemplate);
+			if (templateFile instanceof TFile) {
+				rawTemplate = await this.app.vault.read(templateFile);
+			}
+		}
+
+		if (rawTemplate) {
+			initialContent = rawTemplate;
+		}
+
+		let createdFile: TFile | null = null;
+		if (typeof this.app.vault.create === 'function') {
+			try {
+				createdFile = await this.app.vault.create(targetPath, initialContent);
+			} catch {
+				const existing = this.app.vault.getFileByPath(targetPath) || this.app.vault.getAbstractFileByPath(targetPath);
+				if (existing instanceof TFile) createdFile = existing;
+			}
+		}
+
+		if (!createdFile) {
+			const fileObj = this.app.vault.getFileByPath(targetPath) || this.app.vault.getAbstractFileByPath(targetPath);
+			if (fileObj instanceof TFile) createdFile = fileObj;
+		}
+
+		// Exécution de Templater ou remplacement des placeholders
+		if (createdFile) {
+			const templaterPlugin = (this.app as any).plugins?.plugins?.['templater-obsidian'];
+			if (templaterPlugin && rawTemplate) {
+				try {
+					if (templaterPlugin.templater?.overwrite_file_commands) {
+						await templaterPlugin.templater.overwrite_file_commands(createdFile);
+					} else if (templaterPlugin.templater?.parse_template) {
+						const parsed = await templaterPlugin.templater.parse_template({ target_file: createdFile, run_mode: 0 }, rawTemplate);
+						if (parsed) {
+							await this.app.vault.modify(createdFile, parsed);
+						}
+					}
+				} catch (tpErr) {
+					console.warn('[Second Brain Manager] Erreur lors de l\'exécution de Templater:', tpErr);
+				}
+			} else if (rawTemplate) {
+				const dateObj = new Date(targetIso);
+				const yesterday = new Date(dateObj);
+				yesterday.setDate(yesterday.getDate() - 1);
+				const yesterdayFr = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
+				const tomorrow = new Date(dateObj);
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const tomorrowFr = `${String(tomorrow.getDate()).padStart(2, '0')}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${tomorrow.getFullYear()}`;
+
+				const parsedContent = rawTemplate
+					.replace(/\{\{date\}\}/gi, chosenName)
+					.replace(/\{\{title\}\}/gi, chosenName)
+					.replace(/\{\{yesterday\}\}/gi, yesterdayFr)
+					.replace(/\{\{tomorrow\}\}/gi, tomorrowFr);
+
+				if (parsedContent !== rawTemplate) {
+					await this.app.vault.modify(createdFile, parsedContent);
+				}
+			}
+		}
+
+		let finalContent = initialContent;
+		if (createdFile) {
+			if (typeof (this.app.vault as any).cachedRead === 'function') {
+				try {
+					finalContent = await (this.app.vault as any).cachedRead(createdFile);
+				} catch {
+					// Fallback
+				}
+			} else if (typeof this.app.vault.read === 'function') {
+				try {
+					finalContent = await this.app.vault.read(createdFile);
+				} catch {
+					// Fallback
+				}
+			}
+		}
+		return { file: createdFile, path: targetPath, created: true, content: finalContent };
+	}
+
+	/**
+	 * Synthèse globale de la structure du coffre pour l'agent (projets, contacts, domaines, inbox).
 	 */
 	public getVaultStructure(): VaultStructureSummary {
-		const allFiles = this.app.vault.getAllLoadedFiles();
+		const allFiles = (typeof this.app.vault.getAllLoadedFiles === 'function') ? this.app.vault.getAllLoadedFiles() : [];
 		const folders: string[] = [];
 		const projects: string[] = [];
 		const contacts: string[] = [];
@@ -312,15 +486,17 @@ export class VaultContextService {
 				const normPath = normalizePath(f.path);
 				const lowerPath = normPath.toLowerCase();
 
-				if (lowerPath.includes('01 - projets') || lowerPath.startsWith('projets/')) {
+				if (lowerPath.includes('projet') || lowerPath.includes('01 - projets')) {
 					projects.push(f.basename);
-				} else if (lowerPath.includes('03 - contacts') || lowerPath.startsWith('contacts/')) {
+				} else if (lowerPath.includes('contact') || lowerPath.includes('personne') || lowerPath.includes('03 - contacts')) {
 					contacts.push(f.basename);
-				} else if (lowerPath.includes('02 - domaines') || lowerPath.startsWith('domaines/')) {
+				} else if (lowerPath.includes('domaine') || lowerPath.includes('ressource') || lowerPath.includes('note rangé') || lowerPath.includes('02 - domaines')) {
 					domains.push(f.basename);
 				}
 
-				if (lowerPath.startsWith(inboxFolder)) {
+				const isRootFile = !normPath.includes('/');
+				const isInInboxFolder = lowerPath.startsWith(inboxFolder) || lowerPath.includes('notes en vrac') || lowerPath.includes('vrac') || lowerPath.includes('sans titre');
+				if (isInInboxFolder || isRootFile) {
 					inboxFiles.push(normPath);
 				}
 			}
@@ -328,10 +504,10 @@ export class VaultContextService {
 
 		return {
 			folders: folders.sort(),
-			projects: projects.sort(),
-			contacts: contacts.sort(),
-			domains: domains.sort(),
-			inboxFiles: inboxFiles.sort(),
+			projects: Array.from(new Set(projects)).sort(),
+			contacts: Array.from(new Set(contacts)).sort(),
+			domains: Array.from(new Set(domains)).sort(),
+			inboxFiles: Array.from(new Set(inboxFiles)).sort(),
 			totalMarkdownFiles
 		};
 	}

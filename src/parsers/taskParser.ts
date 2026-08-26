@@ -27,8 +27,22 @@ export class TaskParser {
 		const startDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.startDateSignifier);
 		const completedDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.completedDateSignifier);
 		const cancelledDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.cancelledDateSignifier);
+		const createdDateRegex = DynamicRegexBuilder.buildDateSignifierRegex('➕');
 		const recurrenceRegex = DynamicRegexBuilder.buildRecurrenceRegex(config.recurrenceSignifier);
 
+		// Dataview field regexes
+		const dvDueRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['due']);
+		const dvScheduledRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['scheduled']);
+		const dvStartRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['start']);
+		const dvCompletedRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['completion', 'completed', 'done']);
+		const dvCancelledRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['cancelled', 'canceled']);
+		const dvCreatedRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['created']);
+		const dvRecurrenceRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['repeat', 'recurrence']);
+		const dvPriorityRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['priority', 'priorite']);
+		const dvEnergyRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['energy', 'energie']);
+		const dvDifficultyRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['difficulty', 'difficulte']);
+		const dvPiecesRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['pieces', 'piece', 'coins', 'coin']);
+		const dvMatrixRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['matrix', 'quadrant', 'eisenhower']);
 
 		const energyRegex = DynamicRegexBuilder.buildTagRegex(config.energyTagPrefix, true);
 		const difficultyRegex = DynamicRegexBuilder.buildTagRegex(config.difficultyTagPrefix, false);
@@ -36,25 +50,56 @@ export class TaskParser {
 		const priorityRegex = DynamicRegexBuilder.buildTagRegex(config.priorityTagPrefix, false);
 		const matrixRegex = DynamicRegexBuilder.buildTagRegex(config.matrixTagPrefix, false);
 
-		const dueDate = this.extractRegexMatch(body, dueDateRegex);
-		const scheduledDate = this.extractRegexMatch(body, scheduledDateRegex);
-		const startDate = this.extractRegexMatch(body, startDateRegex);
-		const completedDate = this.extractRegexMatch(body, completedDateRegex);
-		const cancelledDate = this.extractRegexMatch(body, cancelledDateRegex);
-		const recurrence = this.extractRegexMatch(body, recurrenceRegex);
+		const rawDueDate = this.extractRegexMatch(body, dvDueRegex) || this.extractRegexMatch(body, dueDateRegex);
+		let dueDate = DynamicRegexBuilder.normalizeDate(rawDueDate);
 
-		const energyMatch = energyRegex.exec(body);
+		const rawScheduledDate = this.extractRegexMatch(body, dvScheduledRegex) || this.extractRegexMatch(body, scheduledDateRegex);
+		let scheduledDate = DynamicRegexBuilder.normalizeDate(rawScheduledDate);
+
+		const rawStartDate = this.extractRegexMatch(body, dvStartRegex) || this.extractRegexMatch(body, startDateRegex);
+		const startDate = DynamicRegexBuilder.normalizeDate(rawStartDate);
+
+		const rawCompletedDate = this.extractRegexMatch(body, dvCompletedRegex) || this.extractRegexMatch(body, completedDateRegex);
+		const completedDate = DynamicRegexBuilder.normalizeDate(rawCompletedDate);
+
+		const rawCancelledDate = this.extractRegexMatch(body, dvCancelledRegex) || this.extractRegexMatch(body, cancelledDateRegex);
+		const cancelledDate = DynamicRegexBuilder.normalizeDate(rawCancelledDate);
+
+		const rawWikiDateRegex = /\[\[(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/g;
+
+		// Si aucune date explicite n'a été détectée avec un préfixe 📅 ou ⏳ ou Dataview,
+		// on recherche la présence d'un wikilink date brut (ex: [[17-08-2026 lu]] ou [[2026-08-17]])
+		if (!dueDate && !scheduledDate) {
+			const wikiDateMatch = /\[\[(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/.exec(body);
+			if (wikiDateMatch) {
+				dueDate = DynamicRegexBuilder.normalizeDate(wikiDateMatch[1]);
+			}
+		}
+
+		// Si toujours aucune date n'est précisée et que la tâche se trouve dans une note quotidienne (ex: 28-12-2025.md),
+		// la date de la note quotidienne sert de date de planification implicite.
+		if (!dueDate && !scheduledDate) {
+			const fileName = filePath.split('/').pop()?.replace(/\.md$/, '') || '';
+			if (/^\d{4}-\d{2}-\d{2}$/.test(fileName) || /^\d{2}-\d{2}-\d{4}$/.test(fileName)) {
+				scheduledDate = DynamicRegexBuilder.normalizeDate(fileName);
+			}
+		}
+
+		const recurrence = this.extractRegexMatch(body, dvRecurrenceRegex) || this.extractRegexMatch(body, recurrenceRegex);
+
+		const energyMatch = energyRegex.exec(body) || dvEnergyRegex.exec(body);
 		const energy = energyMatch ? parseInt(energyMatch[1], 10) : undefined;
 
-		const difficultyMatch = difficultyRegex.exec(body);
+		const difficultyMatch = difficultyRegex.exec(body) || dvDifficultyRegex.exec(body);
 		const difficulty = difficultyMatch ? difficultyMatch[1].toLowerCase() : undefined;
 
-		const piecesMatch = piecesRegex.exec(body);
+		const piecesMatch = piecesRegex.exec(body) || dvPiecesRegex.exec(body);
 		const pieces = piecesMatch ? parseInt(piecesMatch[1], 10) : undefined;
 
-		// Parsing des priorités Emoji Tasks et Tags
+		// Parsing des priorités Emoji Tasks, Tags et Dataview
 		const emojiPriorityMatch = this.PRIORITY_EMOJIS_REGEX.exec(body);
 		const priorityTagMatch = priorityRegex.exec(body);
+		const dvPriorityMatch = dvPriorityRegex.exec(body);
 
 		let priority: TaskPriority | undefined;
 		let prioritySignifier: string | undefined;
@@ -63,13 +108,18 @@ export class TaskParser {
 		if (emojiPriorityMatch) {
 			prioritySignifier = emojiPriorityMatch[1];
 			priority = this.resolveEmojiPriority(prioritySignifier, config);
+		} else if (dvPriorityMatch) {
+			const dvVal = dvPriorityMatch[1].toLowerCase().trim();
+			priority = this.resolveTagPriority(dvVal);
+			priorityTag = `[priority:: ${dvVal}]`;
 		} else if (priorityTagMatch) {
-			priorityTag = priorityTagMatch[0].toLowerCase();
-			priority = this.resolveTagPriority(priorityTagMatch[1]);
+			const rawVal = priorityTagMatch[1].toLowerCase();
+			priority = this.resolveTagPriority(rawVal);
+			priorityTag = priorityTagMatch[0];
 		}
 
-		const matrixMatch = matrixRegex.exec(body);
-		const matrixTag = matrixMatch ? matrixMatch[0].toLowerCase() : undefined;
+		const matrixMatch = matrixRegex.exec(body) || dvMatrixRegex.exec(body);
+		const matrixTag = matrixMatch ? matrixMatch[0] : undefined;
 
 		const domainTags = this.extractDomainTags(body, config);
 
@@ -78,8 +128,9 @@ export class TaskParser {
 
 		const title = this.cleanTitle(body, [
 			dueDateRegex, scheduledDateRegex, startDateRegex, completedDateRegex,
-			cancelledDateRegex, recurrenceRegex, energyRegex, difficultyRegex,
-			piecesRegex, priorityRegex, matrixRegex, this.PRIORITY_EMOJIS_REGEX, this.BLOCK_ID_REGEX
+			cancelledDateRegex, createdDateRegex, recurrenceRegex, energyRegex, difficultyRegex,
+			piecesRegex, priorityRegex, matrixRegex, this.PRIORITY_EMOJIS_REGEX,
+			DynamicRegexBuilder.DATAVIEW_ANY_FIELD_REGEX, rawWikiDateRegex, this.BLOCK_ID_REGEX
 		]);
 
 		return {
@@ -109,6 +160,18 @@ export class TaskParser {
 			blockId,
 			subtasks: []
 		};
+	}
+
+	public static flattenTasks(tasks: ObsidianTask[]): ObsidianTask[] {
+		const result: ObsidianTask[] = [];
+		const walk = (t: ObsidianTask) => {
+			result.push(t);
+			if (t.subtasks && t.subtasks.length > 0) {
+				t.subtasks.forEach(walk);
+			}
+		};
+		tasks.forEach(walk);
+		return result;
 	}
 
 	public static parseFile(fileContent: string, filePath: string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ObsidianTask[] {
@@ -146,6 +209,11 @@ export class TaskParser {
 		});
 
 		return rootTasks;
+	}
+
+	public static parseAllTasks(fileContent: string, filePath: string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ObsidianTask[] {
+		const rootTasks = this.parseFile(fileContent, filePath, config);
+		return this.flattenTasks(rootTasks);
 	}
 
 	private static calculateIndentLevel(whitespace: string): number {

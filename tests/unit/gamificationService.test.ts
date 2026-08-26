@@ -153,5 +153,21 @@ describe('GamificationService', () => {
 			expect(recoveryUnlocked.map(b => b.id)).toContain('soft_landing');
 			expect(data.badges['soft_landing'].unlockedAt).toBeDefined();
 		});
+
+		it('should calculate daily trend accurately for given number of days', () => {
+			const data = createEmptyPluginData();
+			const today = new Date().toISOString().split('T')[0];
+			data.completionEvents['test::1'] = {
+				taskId: 'test::1',
+				completedAt: `${today}T10:00:00.000Z`,
+				coins: 5,
+				taskText: 'Tâche test'
+			};
+
+			const trend = GamificationService.getDailyTrend(data, 7);
+			expect(trend.length).toBe(7);
+			expect(trend[6].date).toBe(today);
+			expect(trend[6].coins).toBe(5);
+		});
 	});
 });

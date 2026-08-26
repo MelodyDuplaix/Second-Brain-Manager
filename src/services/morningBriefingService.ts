@@ -5,6 +5,8 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
+import { ActionProposal } from '../models/actions';
+import { TaskSafetyGuard } from './taskSafetyGuard';
 import { VaultContextService } from './vaultContextService';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { GamificationService } from './gamificationService';
@@ -16,17 +18,63 @@ export interface BriefingVaultData {
 	energy: number;
 	modeText: string;
 	focusProject?: string;
+	inactivityText: string;
+	inactivityDays: number;
+	isRecoveryMode: boolean;
+	quickWinTasks: ObsidianTask[];
+	oneThingTask?: ObsidianTask;
 	overdueTasks: ObsidianTask[];
+	staleTasks: ObsidianTask[];
 	todayTasks: ObsidianTask[];
 	priorityTasks: ObsidianTask[];
 	inboxTasks: ObsidianTask[];
 	projectTasks: ObsidianTask[];
+	looseNotes: string[];
+	inboxNotePreviews: Array<{ path: string; name: string; preview: string }>;
+	folders: string[];
+	isCluttered: boolean;
 	projects: string[];
 	contacts: string[];
 	dailyNoteContent?: string;
 }
 
 export class MorningBriefingService {
+	/**
+	 * Calcule la durée d'inactivité écoulée depuis la dernière session active ou événement.
+	 */
+	public static calculateInactivity(lastActiveTimestamp?: string | number): { inactivityText: string; inactivityDays: number } {
+		const now = Date.now();
+		if (!lastActiveTimestamp) {
+			return { inactivityText: 'Reprise de session', inactivityDays: 0 };
+		}
+
+		const lastTime = typeof lastActiveTimestamp === 'string'
+			? new Date(lastActiveTimestamp).getTime()
+			: lastActiveTimestamp;
+
+		if (isNaN(lastTime)) {
+			return { inactivityText: 'Reprise de session', inactivityDays: 0 };
+		}
+
+		const diffMs = Math.max(0, now - lastTime);
+		const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+		const diffDays = Math.floor(diffHours / 24);
+
+		if (diffDays >= 30) {
+			const months = Math.floor(diffDays / 30);
+			return { inactivityText: `Reprise après ${months} mois de pause`, inactivityDays: diffDays };
+		} else if (diffDays >= 7) {
+			const weeks = Math.floor(diffDays / 7);
+			return { inactivityText: `Reprise après ${weeks} semaine(s) de pause`, inactivityDays: diffDays };
+		} else if (diffDays >= 1) {
+			return { inactivityText: `Reprise après ${diffDays} jour(s) de pause`, inactivityDays: diffDays };
+		} else if (diffHours >= 2) {
+			return { inactivityText: `Reprise après ${diffHours} heures de pause`, inactivityDays: 0 };
+		}
+
+		return { inactivityText: 'Reprise en douceur', inactivityDays: 0 };
+	}
+
 	/**
 	 * Récupère et structure l'ensemble des données du coffre nécessaires pour le briefing.
 	 */
@@ -54,6 +102,19 @@ export class MorningBriefingService {
 				? 'Mode Équilibré (Énergie moyenne - focus sur 1 tâche majeure et 2-3 secondaires)'
 				: 'Mode Plein Potentiel (Haute énergie - idéal pour les chantiers complexes et créatifs)';
 
+		// Calcul de la durée d'inactivité
+		let lastActiveTime = plugin.pluginData?.lastActiveSession;
+		if (!lastActiveTime && plugin.pluginData?.completionEvents) {
+			const timestamps = Object.values(plugin.pluginData.completionEvents)
+				.map(e => e.completedAt)
+				.filter(Boolean);
+			if (timestamps.length > 0) {
+				timestamps.sort();
+				lastActiveTime = timestamps[timestamps.length - 1];
+			}
+		}
+		const { inactivityText, inactivityDays } = this.calculateInactivity(lastActiveTime);
+
 		const matrixAdapter = MatrixAdapterFactory.createAdapter(
 			plugin.settings.matrixProvider,
 			plugin.settings.customMatrixMapping
@@ -62,31 +123,71 @@ export class MorningBriefingService {
 		const vaultContext = new VaultContextService(app, plugin.settings);
 		const structure = vaultContext.getVaultStructure();
 
-		// Lecture de toutes les tâches ouvertes du coffre
-		const files = app.vault.getMarkdownFiles();
-		const allOpenTasks: ObsidianTask[] = [];
-
-		for (const file of files) {
-			const content = await app.vault.read(file);
-			const tasks = TaskParser.parseFile(content, file.path, plugin.settings);
-			const open = tasks.filter(t => !t.completed && t.status !== 'cancelled');
-			allOpenTasks.push(...open);
-		}
+		// Lecture de toutes les tâches ouvertes du coffre en parallèle (racines + sous-tâches)
+		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const results = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const content = (typeof (app.vault as any).cachedRead === 'function')
+						? await (app.vault as any).cachedRead(file)
+						: await app.vault.read(file);
+					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
+				} catch {
+					return [];
+				}
+			})
+		);
+		const allTasks = results.flat();
+		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
 
 		// Classification
-		const overdueTasks = allOpenTasks.filter(t => t.dueDate && t.dueDate < dateStr);
+		const overdueTasks = allOpenTasks.filter(t =>
+			(t.dueDate && t.dueDate < dateStr) ||
+			(t.scheduledDate && t.scheduledDate < dateStr)
+		);
 		const todayTasks = allOpenTasks.filter(t =>
 			t.dueDate === dateStr ||
 			t.scheduledDate === dateStr ||
 			(t.startDate && t.startDate <= dateStr)
 		);
-		const inboxFolder = plugin.settings.inboxFolder;
-		const inboxTasks = allOpenTasks.filter(t => t.filePath.startsWith(inboxFolder));
+
+		// Identification des tâches très anciennes (souffrance / obsolescence)
+		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+		const staleTasks = overdueTasks.filter(t =>
+			(t.dueDate && t.dueDate <= sevenDaysAgo) ||
+			(t.scheduledDate && t.scheduledDate <= sevenDaysAgo)
+		);
+
+		const inboxFolder = plugin.settings.inboxFolder ? normalizePath(plugin.settings.inboxFolder).toLowerCase() : '00 - inbox';
+		const inboxTasks = allOpenTasks.filter(t => {
+			const norm = normalizePath(t.filePath).toLowerCase();
+			const isRoot = !norm.includes('/');
+			return norm.startsWith(inboxFolder) || norm.includes('notes en vrac') || norm.includes('vrac') || isRoot;
+		});
 
 		const priorityTasks = allOpenTasks.filter(t => {
 			const q = matrixAdapter.getQuadrant(t);
 			return q === 'q1' || q === 'q2' || (t.priority && (t.priority === 'highest' || t.priority === 'high'));
 		});
+
+		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, non Q1)
+		const quickWinTasks = allOpenTasks
+			.filter(t => {
+				const isLowEnergy = t.energy !== undefined && t.energy <= 3;
+				const isEasy = t.difficulty && t.difficulty.toLowerCase() === 'facile';
+				const isQ3orQ4 = matrixAdapter.getQuadrant(t) === 'q3' || matrixAdapter.getQuadrant(t) === 'q4';
+				return isLowEnergy || isEasy || isQ3orQ4;
+			})
+			.slice(0, 3);
+
+		// Identification de la tâche majeure (The One Thing) : priorité Q1
+		let oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+		if (!oneThingTask) {
+			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
+		}
+		if (!oneThingTask && overdueTasks.length > 0) {
+			oneThingTask = overdueTasks[0];
+		}
 
 		// Tâches spécifiques au projet focus si sélectionné
 		const projectTasks = (focusProject && focusProject !== 'all')
@@ -97,12 +198,41 @@ export class MorningBriefingService {
 			)
 			: [];
 
-		// Lecture de la note quotidienne du jour si elle existe
+		const looseNotes = structure.looseNotes || [];
+
+		// Récupération des dossiers et des aperçus des notes en boîte de réception / vrac pour donner du contexte à l'IA
+		const inboxFilesToScan = structure.inboxFiles.slice(0, 30);
+		const inboxNotePreviews = await Promise.all(
+			inboxFilesToScan.map(async (normPath) => {
+				const file = app.vault.getFileByPath(normPath) || app.vault.getAbstractFileByPath(normPath);
+				let preview = '';
+				if (file instanceof TFile) {
+					try {
+						const raw = (typeof (app.vault as any).cachedRead === 'function')
+							? await (app.vault as any).cachedRead(file)
+							: await app.vault.read(file);
+						const nonHeadingLine = raw.split('\n')
+							.map(l => l.trim())
+							.filter(l => l.length > 0 && !l.startsWith('---') && !l.startsWith('```'))[0] || '';
+						preview = nonHeadingLine.slice(0, 120);
+					} catch {
+						preview = '';
+					}
+				}
+				const name = normPath.split('/').pop()?.replace(/\.md$/, '') || normPath;
+				return { path: normPath, name, preview };
+			})
+		);
+
+		// Déclenchement automatique du mode Reprise & Décongestion si encombrement ou pause
+		const isCluttered = overdueTasks.length >= 4 || staleTasks.length >= 2 || inboxTasks.length >= 4 || inboxNotePreviews.length >= 3;
+		const isRecoveryMode = isCluttered || inactivityDays >= 1;
+
+		// Lecture ou création automatique de la note quotidienne du jour (avec template et Templater)
 		let dailyNoteContent: string | undefined;
-		const dailyPath = normalizePath(`${plugin.settings.dailyNotesFolder}/${dateStr}.md`);
-		const dailyFile = app.vault.getFileByPath(dailyPath) || app.vault.getAbstractFileByPath(dailyPath);
-		if (dailyFile instanceof TFile) {
-			dailyNoteContent = await app.vault.read(dailyFile);
+		const dailyRes = await vaultContext.getOrCreateDailyNote(dateStr, plugin.settings.dailyNoteTemplatePath);
+		if (dailyRes.content) {
+			dailyNoteContent = dailyRes.content;
 		}
 
 		return {
@@ -111,11 +241,21 @@ export class MorningBriefingService {
 			energy,
 			modeText,
 			focusProject: focusProject && focusProject !== 'all' ? focusProject : undefined,
+			inactivityText,
+			inactivityDays,
+			isRecoveryMode,
+			quickWinTasks,
+			oneThingTask,
 			overdueTasks,
+			staleTasks,
 			todayTasks,
 			priorityTasks,
 			inboxTasks,
 			projectTasks,
+			looseNotes,
+			inboxNotePreviews,
+			folders: structure.folders,
+			isCluttered,
 			projects: structure.projects,
 			contacts: structure.contacts,
 			dailyNoteContent
@@ -123,7 +263,7 @@ export class MorningBriefingService {
 	}
 
 	/**
-	 * Construit le prompt système et utilisateur optimisé pour un briefing percutant.
+	 * Construit le prompt système et utilisateur optimisé pour un briefing percutant ou une reprise décongestionnée.
 	 */
 	public static buildBriefingMessages(data: BriefingVaultData): ChatMessage[] {
 		const formatTaskLine = (t: ObsidianTask): string => {
@@ -132,28 +272,50 @@ export class MorningBriefingService {
 			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
 			if (t.startDate) line += ` 🛫 ${t.startDate}`;
 			if (t.matrixTag) line += ` ${t.matrixTag}`;
+			if (t.priority) line += ` (Priorité: ${t.priority})`;
 			if (t.energy) line += ` #energie/${t.energy}`;
 			if (t.pieces) line += ` #pieces/${t.pieces}`;
 			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
 			if (noteBasename) line += ` [[${noteBasename}]]`;
+			line += ` (Fichier: "${t.filePath}", Ligne: ${t.lineNumber})`;
 			return line;
 		};
 
-		const overdueText = data.overdueTasks.length > 0
-			? data.overdueTasks.map(formatTaskLine).join('\n')
+		const oneThingText = data.oneThingTask
+			? formatTaskLine(data.oneThingTask)
+			: 'Aucune tâche majeure détectée.';
+
+		const quickWinsText = (data.quickWinTasks && data.quickWinTasks.length > 0)
+			? data.quickWinTasks.map(formatTaskLine).join('\n')
+			: 'Aucune tâche rapide identifiée.';
+
+		const overdueText = (data.overdueTasks && data.overdueTasks.length > 0)
+			? data.overdueTasks.slice(0, 35).map(formatTaskLine).join('\n')
 			: 'Aucune tâche en retard.';
 
-		const todayText = data.todayTasks.length > 0
+		const staleText = (data.staleTasks && data.staleTasks.length > 0)
+			? data.staleTasks.slice(0, 35).map(formatTaskLine).join('\n')
+			: 'Aucune tâche ancienne en souffrance.';
+
+		const todayText = (data.todayTasks && data.todayTasks.length > 0)
 			? data.todayTasks.map(formatTaskLine).join('\n')
 			: 'Aucune tâche expressément planifiée pour aujourd\'hui.';
 
-		const priorityText = data.priorityTasks.length > 0
+		const priorityText = (data.priorityTasks && data.priorityTasks.length > 0)
 			? data.priorityTasks.slice(0, 8).map(formatTaskLine).join('\n')
 			: 'Aucune tâche Q1/Q2 prioritaire.';
 
-		const inboxText = data.inboxTasks.length > 0
-			? data.inboxTasks.slice(0, 5).map(formatTaskLine).join('\n')
+		const inboxText = (data.inboxTasks && data.inboxTasks.length > 0)
+			? data.inboxTasks.slice(0, 20).map(formatTaskLine).join('\n')
 			: 'Aucun élément en boîte de réception.';
+
+		const looseNotesText = (data.inboxNotePreviews && data.inboxNotePreviews.length > 0)
+			? data.inboxNotePreviews.map(n => `- [[${n.name}]] (Chemin: "${n.path}")${n.preview ? ` : "${n.preview}"` : ''}`).join('\n')
+			: 'Aucune note non classée en boîte de réception.';
+
+		const foldersText = (data.folders && data.folders.length > 0)
+			? data.folders.slice(0, 25).join(', ')
+			: 'Racine';
 
 		let focusProjectText = '';
 		if (data.focusProject) {
@@ -174,49 +336,145 @@ export class MorningBriefingService {
 			focusDirectives = `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
 		}
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et matrice d'Eisenhower.
+		let systemPrompt = '';
+		let userMessage = '';
+
+		if (data.isRecoveryMode) {
+			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et reprise sereine après pause (Soft Landing & Décongestion large du coffre).
+
+SITUATION DU COFFRE :
+Le coffre est en état d'encombrement / de reprise (${data.inactivityText}, ${data.overdueTasks.length} tâches en retard dont ${data.staleTasks.length} anciennes/obsolètes, ${data.inboxNotePreviews.length} notes non classées).
 
 TON OBJECTIF :
-Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie.
+Fournir un Briefing du Matin en **Mode Reprise & Décongestion Large**. Accueille chaleureusement l'utilisateur, déculpabilise-le totalement sur le retard accumulé, et propose un plan de journée recentré accompagné d'un **TRI LARGE et EXHAUSTIF** de toutes les tâches en retard et notes en vrac.
+
+CONSIGNE DE STYLE STRICTE :
+- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et bienveillant.
+
+CONSIGNES DE REDACTION EN MODE REPRISE :
+1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}
+2. **Structure du Briefing de Reprise** :
+   - **Accueil & Bilan Déculpabilisant** (2 phrases bienveillantes pour poser un cadre serein)
+   - **Le Quick Win du Jour** (1 micro-tâche simple de 5 min pour amorcer le mouvement sans effort au format \`- [ ] ... [[Note]]\`)
+   - **The One Thing** (La seule tâche prioritaire et stratégique incontournable du jour selon l'énergie ${data.energy}/10 au format \`- [ ] ... [[Note]]\`)
+   - **Plan de Tri & Décongestion Large** :
+     - Annule systématiquement sans culpabilité les réunions passées et tâches obsolètes depuis longtemps sans conséquences actuelles (\`newStatus: "cancelled"\`).
+     - Replanifie à aujourd'hui (${data.dateStr}) ou à une date réaliste les tâches prioritaires.
+     - Rétrograde en Q2 ou déleste les échéances (\`newDueDate: null\`) des tâches secondaires pour faire baisser la pression mentale.
+     - Propose le rangement et le renommage explicite de chaque note en vrac vers son projet ou domaine pertinent (\`type: "move_note"\`, \`type: "rename_note"\`).
+   - **Conseil de Sérénité & Rythme** (Un conseil motivant pour garder l'esprit léger)
+3. **Format des Tâches Recommandées** :
+   - Format standard : \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
+4. **Bloc d'Actions Structurées (OBLIGATOIRE - Bloc \`\`\`json:actions)** :
+Termine TOUJOURS ta réponse par un bloc de code JSON \`\`\`json:actions exhaustif contenant TOUTES les propositions d'actions (reports, annulations, rangements et renommages) afin que l'utilisateur puisse appliquer l'ensemble du tri large en 1 clic :
+\`\`\`json:actions
+[
+  {
+    "type": "update_task",
+    "targetPath": "1 Notes partagés Antoine/Tracker menage.md",
+    "lineNumber": 15,
+    "taskTitle": "Passer l'aspirateur et la serpillère si besoin",
+    "newDueDate": "${data.dateStr}",
+    "reason": "Replanifier à aujourd'hui"
+  },
+  {
+    "type": "update_task",
+    "targetPath": "Note quotidienne/28-12-2025.md",
+    "lineNumber": 18,
+    "taskTitle": "Prendre médicament allergie",
+    "newStatus": "cancelled",
+    "reason": "Tâche médicale obsolète datant de 2025"
+  },
+  {
+    "type": "move_note",
+    "targetPath": "Notes en vrac/Liste d'appel VŒUX 2026.md",
+    "destinationFolder": "01 - Projets",
+    "newFileName": "Vœux 2026 - Liste d'appels.md",
+    "description": "Ranger et renommer la liste d'appel dans les projets"
+  },
+  {
+    "type": "rename_note",
+    "targetPath": "00 - Inbox/Sans titre.md",
+    "newFileName": "Idées Projet X.md",
+    "description": "Donner un nom clair et explicite à la note"
+  }
+]
+\`\`\`
+Utilise les chemins exacts et numéros de ligne fournis.`;
+
+			userMessage = `Voici la situation actuelle de mon coffre pour ce ${data.formattedDate} (${data.inactivityText}, Niveau d'énergie : ${data.energy}/10 - ${data.modeText}) :
+
+Dossiers disponibles : ${foldersText}
+Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
+Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
+${focusProjectText}
+TACHE MAJEURE DETECTEE (THE ONE THING) :
+${oneThingText}
+
+QUICK WINS DISPONIBLES :
+${quickWinsText}
+
+TACHES EN RETARD ET ANCIENNES (${data.overdueTasks.length} au total) :
+${overdueText}
+
+TACHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
+${staleText}
+
+NOTES EN VRAC ET BOITE DE RECEPTION (${data.inboxNotePreviews.length} notes non rangées / ${data.inboxTasks.length} tâches en vrac) :
+Notes en vrac :
+${looseNotesText}
+
+Tâches en vrac :
+${inboxText}
+${dailyNoteSnippet}
+Propose-moi mon briefing en mode reprise avec un tri large et déculpabilisant des tâches et notes, accompagné du bloc json:actions pour que je puisse tout appliquer en 1 clic. N'utilise aucun émoji dans ta réponse textuelle.`;
+
+		} else {
+			// Mode Briefing Quotidien standard
+			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et matrice d'Eisenhower.
+
+TON OBJECTIF :
+Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie (${data.energy}/10 - ${data.modeText}).
 
 CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et professionnel.
 
 CONSIGNES DE REDACTION :
-1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.
-2. **Adaptation au Niveau d'Énergie (${data.energy}/10 - ${data.modeText})** :
-   - Si Énergie 1-3 (Mode Économie) : Protège l'utilisateur ! Recommande 1 seule tâche essentielle maximum et propose de délester ou reporter le reste sans culpabiliser.
-   - Si Énergie 4-7 (Mode Équilibré) : 1 grande tâche Q1 le matin + 2 ou 3 tâches secondaires Q2 l'après-midi.
-   - Si Énergie 8-10 (Plein Potentiel) : Focus sur les chantiers complexes, les créations de fond et les projets prioritaires.${focusDirectives}
-3. **Format des Tâches Recommandées** :
-   - Écris TOUTES les tâches au format Obsidian Tasks standard : \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
-   - Conserve les wikilinks vers les notes sources (ex: \`[[Acme Project]]\`, \`[[Maison]]\`).
-   - N'entoure JAMAIS les wikilinks de backticks (\`[[...]]\`).
-4. **Structure du Briefing** :
+1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}
+2. **Structure du Briefing** :
    - **Cap du Jour** (Le focus ou projet n°1 incontournable)
    - **Plan de Journée Recommandé** (Les tâches sélectionnées et ordonnées selon l'énergie)
-   - **Alertes & Points d'Attention** (Urgences réelles ou tâches en souffrance à traiter ou reporter)
-   - **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)`;
+   - **Alertes & Points d'Attention** (Urgences réelles ou points de vigilance)
+   - **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)
+3. **Format des Tâches Recommandées** :
+   - \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
+4. **Actions Exécutables (Bloc JSON \`\`\`json:actions)** :
+Si des actions concrètes sont proposées, inclus le bloc JSON \`\`\`json:actions afin que l'utilisateur puisse les approuver en 1 clic.`;
 
-		const userMessage = `Voici l'état actuel de mon coffre pour ce ${data.formattedDate} :
+			userMessage = `Voici l'état actuel de mon coffre pour ce ${data.formattedDate} :
 
 Niveau d'énergie : ${data.energy}/10 (${data.modeText})
-Projets actifs : ${data.projects.join(', ') || 'Aucun'}
-Contacts récents : ${data.contacts.join(', ') || 'Aucun'}
+Dossiers disponibles : ${foldersText}
+Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
+Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
-TACHES EN RETARD :
-${overdueText}
-
 TACHES PLANIFIEES POUR AUJOURD'HUI :
 ${todayText}
 
 TACHES PRIORITAIRES (Q1 / Q2) :
 ${priorityText}
 
-TACHES EN BOITE DE RECEPTION (INBOX) :
+TACHES EN RETARD (${data.overdueTasks.length} détectées) :
+${overdueText}
+
+TACHES EN BOITE DE RECEPTION / NOTES EN VRAC (${data.inboxTasks.length} détectées) :
 ${inboxText}
+
+NOTES EN VRAC :
+${looseNotesText}
 ${dailyNoteSnippet}
-Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'utilise aucun émoji dans ta réponse.`;
+Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le bloc json:actions pour les actions proposées. N'utilise aucun émoji dans ta réponse textuelle.`;
+		}
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -225,13 +483,75 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'util
 	}
 
 	/**
+	 * Extrait les propositions d'actions JSON retournées par l'IA et les valide.
+	 */
+	public static extractProposalsFromResponse(
+		responseText: string,
+		vaultTasks: ObsidianTask[] = [],
+		todayStr?: string
+	): { cleanText: string; proposals: ActionProposal[] } {
+		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
+
+		if (!jsonMatch) {
+			return {
+				cleanText: responseText.trim(),
+				proposals: []
+			};
+		}
+
+		const cleanText = responseText.replace(jsonMatch[0], '').trim();
+
+		try {
+			const parsed = JSON.parse(jsonMatch[1].trim());
+			if (Array.isArray(parsed) && parsed.length > 0) {
+				const validatedProposals: ActionProposal[] = parsed
+					.filter(p => p && typeof p === 'object' && p.type)
+					.map((p, index) => {
+						const rawTarget = p.targetPath || (p.folder ? `${p.folder}/${p.fileName || 'Note'}` : p.fileName) || p.description || 'Note';
+						const targetPath = String(rawTarget).replace(/[\r\n]+/g, ' ').trim();
+						const lineNum = Number(p.lineNumber || 1);
+
+						const matchedTask = vaultTasks.find(vt => vt.filePath === targetPath && vt.lineNumber === lineNum)
+							|| vaultTasks.find(vt => vt.filePath === targetPath);
+
+						const taskTitle = p.taskTitle || matchedTask?.title || p.description || 'Tâche';
+						const prop: ActionProposal = {
+							...p,
+							id: p.id || `briefing-ai-${index}-${Date.now()}`,
+							type: p.type,
+							targetPath,
+							lineNumber: lineNum,
+							taskTitle,
+							description: p.description || p.reason || taskTitle,
+							selected: true
+						};
+
+						return TaskSafetyGuard.sanitizeProposal(prop, matchedTask, todayStr);
+					});
+
+				return {
+					cleanText,
+					proposals: validatedProposals
+				};
+			}
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur de parsing des actions JSON du briefing:', err);
+		}
+
+		return {
+			cleanText,
+			proposals: []
+		};
+	}
+
+	/**
 	 * Exécute la génération du briefing en streaming.
 	 */
 	public static async generateBriefing(
 		app: App,
 		plugin: SecondBrainPlugin,
-		signal: AbortSignal,
-		onChunk: (chunk: string, fullText: string) => void,
+		signal?: AbortSignal,
+		onChunk?: (chunk: string, fullText: string) => void,
 		focusProject?: string
 	): Promise<{ text: string; data: BriefingVaultData; allTasks: ObsidianTask[] }> {
 		const data = await this.collectBriefingData(app, plugin, focusProject);
@@ -244,7 +564,7 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'util
 			model: plugin.settings.llmModel,
 			productId: plugin.settings.infomaniakProductId,
 			apiKey,
-			signal
+			signal: signal || new AbortController().signal
 		};
 
 		let generatedText = '';
@@ -281,14 +601,9 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui. N'util
 		briefingText: string,
 		dateStr: string
 	): Promise<string> {
-		const folderPath = normalizePath(plugin.settings.dailyNotesFolder);
-		const filePath = normalizePath(`${folderPath}/${dateStr}.md`);
-
-		// Création du dossier si nécessaire
-		const folder = app.vault.getFolderByPath(folderPath);
-		if (!folder) {
-			await app.vault.createFolder(folderPath);
-		}
+		const vaultContext = new VaultContextService(app, plugin.settings);
+		const dailyRes = await vaultContext.getOrCreateDailyNote(dateStr, plugin.settings.dailyNoteTemplatePath);
+		const filePath = dailyRes.path;
 
 		const cleanText = DailyNoteFormatter.formatForDailyNote(briefingText);
 		const sectionHeader = '## 🌅 Briefing & Focus du Jour';

@@ -3,6 +3,8 @@ import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
+import { ActionPreviewWidget } from './actionPreviewWidget';
+import { ActionExecutor } from '../services/actionExecutor';
 import { MorningBriefingService, BriefingVaultData } from '../services/morningBriefingService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import { VaultContextService } from '../services/vaultContextService';
@@ -224,6 +226,20 @@ export class BriefingView extends ItemView {
 
 		const textDisplayEl = this.contentElWrapper.createEl('div', { cls: 'sbm-briefing-text-display sbm-msg-streaming' });
 
+		// 0. Ouverture immédiate de la note quotidienne du jour si configurée
+		if (this.plugin.settings.autoOpenDailyNoteOnBriefing) {
+			try {
+				const vaultContext = new VaultContextService(this.app, this.plugin.settings);
+				const todayStr = new Date().toISOString().split('T')[0];
+				const dailyRes = await vaultContext.getOrCreateDailyNote(todayStr, this.plugin.settings.dailyNoteTemplatePath);
+				if (dailyRes.path) {
+					await this.app.workspace.openLinkText(dailyRes.path, '', false);
+				}
+			} catch (e) {
+				console.warn('[Second Brain Manager] Impossible d\'ouvrir la note quotidienne:', e);
+			}
+		}
+
 		this.currentAbortController = new AbortController();
 
 		try {
@@ -239,7 +255,14 @@ export class BriefingView extends ItemView {
 				this.selectedProject
 			);
 
-			this.generatedBriefingText = result.text;
+			// 1. Extraction des propositions d'actions structurées et nettoyage du texte markdown
+			const { cleanText, proposals } = MorningBriefingService.extractProposalsFromResponse(
+				result.text,
+				this.vaultTasks,
+				result.data.dateStr
+			);
+
+			this.generatedBriefingText = cleanText;
 			this.briefingVaultData = result.data;
 			this.vaultTasks = result.allTasks;
 
@@ -247,8 +270,33 @@ export class BriefingView extends ItemView {
 			textDisplayEl.removeClass('sbm-msg-streaming');
 			textDisplayEl.empty();
 
-			// 1. Barre d'actions d'application directe (Daily note + Planification)
+			// 0. Bannière d'encombrement & mode reprise
+			if (result.data.isRecoveryMode || result.data.isCluttered) {
+				const clutterBanner = textDisplayEl.createDiv({ cls: 'sbm-clutter-alert-banner is-recovery-active' });
+				const infoBox = clutterBanner.createDiv({ cls: 'sbm-clutter-info' });
+				infoBox.createSpan({ cls: 'sbm-clutter-title', text: '🧹 Mode Reprise & Décongestion activé (Tri Large)' });
+				infoBox.createSpan({
+					cls: 'sbm-clutter-desc',
+					text: `${result.data.overdueTasks.length} tâches en retard et ${result.data.inboxNotePreviews.length} notes non classées détectées (${result.data.inactivityText}). Un tri large et déculpabilisant a été préparé ci-dessous.`
+				});
+			}
+
+			// 1. Barre d'actions du document (Copier + Daily note + Planification)
 			const briefingActionBar = textDisplayEl.createDiv({ cls: 'sbm-briefing-document-actions' });
+
+			const copyBtn = briefingActionBar.createEl('button', {
+				cls: 'sbm-doc-action-btn',
+				text: '📋 Copier la réponse'
+			});
+			copyBtn.title = 'Copier l\'intégralité du texte du briefing dans le presse-papier';
+			copyBtn.addEventListener('click', async () => {
+				try {
+					await navigator.clipboard.writeText(cleanText);
+					new Notice('Briefing copié dans le presse-papier !');
+				} catch {
+					new Notice('Impossible de copier automatiquement dans le presse-papier.');
+				}
+			});
 
 			const saveDailyBtn = briefingActionBar.createEl('button', {
 				cls: 'sbm-doc-action-btn',
@@ -259,7 +307,7 @@ export class BriefingView extends ItemView {
 				const path = await MorningBriefingService.saveBriefingToDailyNote(
 					this.app,
 					this.plugin,
-					this.generatedBriefingText,
+					cleanText,
 					result.data.dateStr
 				);
 				new Notice(`Briefing enregistré dans [[${path}]] !`);
@@ -280,12 +328,26 @@ export class BriefingView extends ItemView {
 				new Notice(`${count} tâche(s) planifiée(s) pour aujourd'hui !`);
 			});
 
-			// 2. Rendu du corps Markdown
-			const cleanedText = result.text.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
+			// 2. Widget interactif des propositions d'actions avec boutons Approuver / Rejeter
+			if (proposals.length > 0) {
+				const executor = new ActionExecutor(this.app, this.plugin.settings);
+				ActionPreviewWidget.render(
+					textDisplayEl,
+					proposals,
+					executor,
+					this.app,
+					() => {
+						new Notice('Modifications du briefing appliquées avec succès !');
+					}
+				);
+			}
+
+			// 3. Rendu du corps Markdown
+			const cleanedText = cleanText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
 			const textBodyContainer = textDisplayEl.createDiv({ cls: 'sbm-briefing-rendered-body' });
 			await MarkdownRenderer.render(this.app, cleanedText, textBodyContainer, '', this);
 
-			// 3. Remplacement des tâches markdown par des widgets interactifs in-place
+			// 4. Remplacement des tâches markdown par des widgets interactifs in-place
 			await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
 
 		} catch (err: unknown) {
