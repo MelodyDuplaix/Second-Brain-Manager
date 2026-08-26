@@ -1,7 +1,7 @@
 {
 	"id": "second-brain-manager",
 	"name": "Second Brain Manager",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"minAppVersion": "0.15.0",
 	"description": "Agent personnel local pour la gestion du coffre, des tâches Markdown, du briefing quotidien et de la gamification.",
 	"author": "Melody Duplaix",

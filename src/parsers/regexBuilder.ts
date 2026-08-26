@@ -29,7 +29,7 @@ export class DynamicRegexBuilder {
 		return new RegExp(`(?:\\[|\\()(?:${names})::\\s*(?:\\[\\[)?([^\\]\\)\\n]+?)(?:\\]\\])?(?:\\s*\\]|\\))`, 'i');
 	}
 
-	public static readonly DATAVIEW_ANY_FIELD_REGEX = /(?:\[|\()[a-zA-Z0-9_À-ÿ-]+::[^\n\]\)]*(?:\]|\))/gi;
+	public static readonly DATAVIEW_ANY_FIELD_REGEX = /(?:\[|\()[a-zA-Z0-9_À-ÿ-]+::[^\n\])]*(?:\]|\))/gi;
 
 	public static normalizeDate(rawDate?: string): string | undefined {
 		if (!rawDate) return undefined;

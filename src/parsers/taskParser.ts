@@ -36,7 +36,6 @@ export class TaskParser {
 		const dvStartRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['start']);
 		const dvCompletedRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['completion', 'completed', 'done']);
 		const dvCancelledRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['cancelled', 'canceled']);
-		const dvCreatedRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['created']);
 		const dvRecurrenceRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['repeat', 'recurrence']);
 		const dvPriorityRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['priority', 'priorite']);
 		const dvEnergyRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['energy', 'energie']);
