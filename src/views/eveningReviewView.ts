@@ -222,6 +222,11 @@ export class EveningReviewView extends ItemView {
 					result.data.dateStr
 				);
 				new Notice(`Revue du soir enregistrée dans [[${path}]] !`);
+				saveDailyBtn.setText('📄 Ouvrir la Daily Note');
+				saveDailyBtn.addClass('is-saved');
+				saveDailyBtn.onclick = async () => {
+					await this.app.workspace.openLinkText(path, '', false);
+				};
 			});
 
 			if (result.data.unfinishedTodayTasks.length > 0) {

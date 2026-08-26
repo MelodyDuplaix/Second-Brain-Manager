@@ -11,6 +11,7 @@ import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts 
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { EnergyLevelModal } from './modals/energyLevelModal';
+import { BriefingEnergyModal } from './modals/briefingEnergyModal';
 import { NoteActionsService } from './services/noteActionsService';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig {
@@ -129,7 +130,9 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 
 		this.addRibbonIcon('sun', 'Briefing du matin (avec tri & reprise)', () => {
-			this.activateBriefingView();
+			new BriefingEnergyModal(this.app, this, (energy) => {
+				void this.activateBriefingView(energy);
+			}).open();
 		});
 
 		this.addRibbonIcon('moon', 'Revue du soir', () => {
@@ -177,7 +180,9 @@ export default class SecondBrainPlugin extends Plugin {
 			id: 'ouvrir-briefing',
 			name: 'Ouvrir le briefing du matin',
 			callback: () => {
-				this.activateBriefingView();
+				new BriefingEnergyModal(this.app, this, (energy) => {
+					void this.activateBriefingView(energy);
+				}).open();
 			}
 		});
 
@@ -193,7 +198,9 @@ export default class SecondBrainPlugin extends Plugin {
 			id: 'ouvrir-reprise-pause',
 			name: 'Reprendre après une pause',
 			callback: () => {
-				this.activateRecoveryView();
+				new BriefingEnergyModal(this.app, this, (energy) => {
+					void this.activateBriefingView(energy);
+				}).open();
 			}
 		});
 
@@ -356,7 +363,7 @@ export default class SecondBrainPlugin extends Plugin {
 		}
 	}
 
-	async activateBriefingView() {
+	async activateBriefingView(requestedEnergy?: number) {
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_BRIEFING)[0];
 
@@ -370,6 +377,11 @@ export default class SecondBrainPlugin extends Plugin {
 
 		if (leaf) {
 			workspace.revealLeaf(leaf);
+			if (leaf.view instanceof BriefingView) {
+				if (requestedEnergy !== undefined) {
+					await (leaf.view as BriefingView).launchBriefingWithEnergy(requestedEnergy);
+				}
+			}
 		}
 
 		if (this.settings.autoOpenDailyNoteOnBriefing) {

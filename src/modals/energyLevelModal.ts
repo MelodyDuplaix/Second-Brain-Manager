@@ -38,7 +38,7 @@ export class EnergyLevelModal extends Modal {
 			});
 
 			btn.createSpan({ text: i.toString(), cls: 'sbm-energy-num-val' });
-			const modeLabel = i <= 3 ? 'Éco' : i <= 7 ? 'Équilibré' : 'Plein';
+			const modeLabel = i <= 3 ? '⚡ Éco' : i <= 7 ? '🌱 Équilibré' : '🔥 Plein';
 			btn.createSpan({ text: modeLabel, cls: 'sbm-energy-num-sub' });
 
 			btn.addEventListener('click', async () => {

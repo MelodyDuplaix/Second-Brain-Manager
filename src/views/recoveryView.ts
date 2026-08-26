@@ -239,6 +239,11 @@ export class RecoveryView extends ItemView {
 					this.recoveryVaultData?.dateStr
 				);
 				new Notice(`Plan de reprise enregistré dans [[${path}]] !`);
+				saveDailyBtn.setText('📄 Ouvrir la Daily Note');
+				saveDailyBtn.addClass('is-saved');
+				saveDailyBtn.onclick = async () => {
+					await this.app.workspace.openLinkText(path, '', false);
+				};
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
 				new Notice(`Erreur lors de l'enregistrement : ${message}`);

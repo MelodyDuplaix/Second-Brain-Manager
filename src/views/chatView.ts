@@ -421,6 +421,24 @@ export class ChatView extends ItemView {
 
 				if (msg.proposals && msg.proposals.length > 0) {
 					ActionPreviewWidget.render(bubbleEl, msg.proposals, this.actionExecutor, this.app);
+
+					const noteCreations = msg.proposals.filter(p => p.type === 'create_note');
+					if (noteCreations.length > 0) {
+						const directButtonsContainer = bubbleEl.createDiv({ cls: 'sbm-direct-open-note-container' });
+						noteCreations.forEach(nc => {
+							const createProp = nc as any;
+							const targetPath = createProp.targetPath || (createProp.folder ? `${createProp.folder}/${createProp.fileName}` : createProp.fileName);
+							const cleanName = createProp.fileName?.replace(/\.md$/, '') || targetPath.split('/').pop()?.replace(/\.md$/, '') || 'Note';
+							const btn = directButtonsContainer.createEl('button', {
+								cls: 'sbm-direct-open-note-btn',
+								text: `📄 Ouvrir la note : ${cleanName}`
+							});
+							btn.title = `Ouvrir ${targetPath} directement dans l'éditeur`;
+							btn.addEventListener('click', async () => {
+								await ActionPreviewWidget.openNote(this.app, targetPath);
+							});
+						});
+					}
 				}
 			}
 		}
@@ -831,7 +849,25 @@ export class ChatView extends ItemView {
 			await this.upgradeTaskElementsInPlace(textContentEl, agentResponse.text, assistantMsg.tasks);
 
 			if (agentResponse.actionProposals.length > 0) {
-				ActionPreviewWidget.render(bubbleEl, agentResponse.actionProposals, this.actionExecutor);
+				ActionPreviewWidget.render(bubbleEl, agentResponse.actionProposals, this.actionExecutor, this.app);
+
+				const noteCreations = agentResponse.actionProposals.filter(p => p.type === 'create_note');
+				if (noteCreations.length > 0) {
+					const directButtonsContainer = bubbleEl.createDiv({ cls: 'sbm-direct-open-note-container' });
+					noteCreations.forEach(nc => {
+						const createProp = nc as any;
+						const targetPath = createProp.targetPath || (createProp.folder ? `${createProp.folder}/${createProp.fileName}` : createProp.fileName);
+						const cleanName = createProp.fileName?.replace(/\.md$/, '') || targetPath.split('/').pop()?.replace(/\.md$/, '') || 'Note';
+						const btn = directButtonsContainer.createEl('button', {
+							cls: 'sbm-direct-open-note-btn',
+							text: `📄 Ouvrir la note : ${cleanName}`
+						});
+						btn.title = `Ouvrir ${targetPath} directement dans l'éditeur`;
+						btn.addEventListener('click', async () => {
+							await ActionPreviewWidget.openNote(this.app, targetPath);
+						});
+					});
+				}
 			}
 
 			const metaBar = bubbleEl.createEl('div', { cls: 'sbm-msg-meta-bar' });

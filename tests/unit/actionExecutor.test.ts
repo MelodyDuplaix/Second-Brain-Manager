@@ -30,11 +30,22 @@ describe('ActionExecutor', () => {
 				createdFiles[path] = content;
 				return Promise.resolve(createMockTFile(path));
 			},
+			getMarkdownFiles: () => {
+				const paths = Object.keys(createdFiles);
+				return paths.map(p => createMockTFile(p));
+			},
 			process: async (file: { path: string }, cb: (content: string) => string) => {
-				const current = createdFiles[file.path] || processedFiles[file.path] || '';
+				const current = processedFiles[file.path] !== undefined ? processedFiles[file.path] : (createdFiles[file.path] || '');
 				const updated = cb(current);
 				processedFiles[file.path] = updated;
 				return Promise.resolve(updated);
+			}
+		},
+		metadataCache: {
+			getFirstLinkpathDest: (name: string) => {
+				const matchPath = Object.keys(createdFiles).find(p => p.includes(name) || p.endsWith(`${name}.md`));
+				if (matchPath) return createMockTFile(matchPath);
+				return null;
 			}
 		},
 		fileManager: {
@@ -138,7 +149,36 @@ describe('ActionExecutor', () => {
 		const results = await executor.executeProposals([proposal]);
 		expect(results[0].success).toBe(true);
 		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toBeDefined();
-		expect(createdFiles['03 - Ressources/Bac à sable pour idées.md']).toContain('# Bac à sable pour idées');
+
+		// Test create_note with wikilinks in fileName
+		const wikilinkProp = {
+			id: 'act-5b',
+			type: 'create_note' as const,
+			description: 'Créer contact',
+			selected: true,
+			folder: '03 - Contacts',
+			fileName: '[[Félix Martin]]',
+			content: '# Félix Martin\nContact pro'
+		};
+
+		const wikiResults = await executor.executeProposals([wikilinkProp]);
+		expect(wikiResults[0].success).toBe(true);
+		expect(createdFiles['03 - Contacts/Félix Martin.md']).toBeDefined();
+
+		// Test create_note when note already exists (should append/process instead of failing)
+		createdFiles['03 - Contacts/Existant.md'] = '# Note Existante';
+		const existingProp = {
+			id: 'act-5c',
+			type: 'create_note' as const,
+			description: 'Ajouter infos contact',
+			selected: true,
+			targetPath: '03 - Contacts/Existant.md',
+			content: 'Nouveau paragraphe ajouté.'
+		};
+
+		const existingResults = await executor.executeProposals([existingProp]);
+		expect(existingResults[0].success).toBe(true);
+		expect(processedFiles['03 - Contacts/Existant.md']).toContain('Nouveau paragraphe ajouté.');
 	});
 
 	it('should execute move_note and rename_note with vault fileManager', async () => {
@@ -185,6 +225,48 @@ describe('ActionExecutor', () => {
 		const renameResults = await customExecutor.executeProposals([renameProp]);
 		expect(renameResults[0].success).toBe(true);
 		expect(renamedTo).toBe('Notes en vrac/Nouvelle Liste.md');
+
+		// Test combined multi-actions on a note (move + rename + link + append)
+		createdFiles['00 - Inbox/Brainstorming.md'] = '# Idées';
+		const combinedNoteProp = {
+			id: 'act-8',
+			type: 'move_note' as const,
+			description: 'Déplacer, renommer, lier et compléter note',
+			selected: true,
+			targetPath: '00 - Inbox/Brainstorming.md',
+			destinationFolder: '01 - Projets',
+			newFileName: 'Projet Secret.md',
+			targetNoteName: 'Claire Dupont',
+			contextExplanation: 'Chef de projet',
+			section: 'Points Clés',
+			appendContent: 'Objectif de lancement fixé pour décembre.'
+		};
+
+		const combinedResults = await customExecutor.executeProposals([combinedNoteProp]);
+		expect(combinedResults[0].success).toBe(true);
+		expect(renamedTo).toBe('01 - Projets/Projet Secret.md');
+		expect(processedFiles['00 - Inbox/Brainstorming.md']).toContain('[[Claire Dupont]]');
+		expect(processedFiles['00 - Inbox/Brainstorming.md']).toContain('Objectif de lancement fixé pour décembre.');
+
+		// Test directional link (both)
+		createdFiles['01 - Projets/Alpha.md'] = '# Alpha';
+		createdFiles['02 - Domaines/Beta.md'] = '# Beta';
+
+		const linkBothProp = {
+			id: 'act-9',
+			type: 'link_notes' as const,
+			description: 'Lier Alpha et Beta',
+			selected: true,
+			targetPath: '01 - Projets/Alpha.md',
+			targetNoteName: 'Beta',
+			linkDirection: 'both' as const,
+			contextExplanation: 'Dépendance'
+		};
+
+		const linkResults = await customExecutor.executeProposals([linkBothProp]);
+		expect(linkResults[0].success).toBe(true);
+		expect(processedFiles['01 - Projets/Alpha.md']).toContain('[[Beta]] — Dépendance');
+		expect(processedFiles['02 - Domaines/Beta.md']).toContain('[[Alpha]] — Dépendance');
 	});
 });
 

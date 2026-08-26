@@ -48,7 +48,7 @@ export class ActionExecutor {
 				let folder = proposal.folder;
 				const fileName = proposal.fileName;
 
-				// Si targetPath est manquant mais folder et fileName sont fournis
+				// 1. Déduction du dossier et du nom de fichier si l'un ou l'autre est manquant
 				if (!targetPath && (folder || fileName)) {
 					folder = folder || this.settings.inboxFolder || '00 - Boîte de réception';
 					const rawName = fileName || proposal.description || 'Nouvelle note';
@@ -57,36 +57,52 @@ export class ActionExecutor {
 					targetPath = `${this.settings.inboxFolder || '00 - Boîte de réception'}/${proposal.description || 'Nouvelle note'}`;
 				}
 
-				// Nettoyage des sauts de ligne et caractères interdits dans le chemin
-				targetPath = targetPath.replace(/[\r\n]+/g, ' ').replace(/[\\:*?"<>|]/g, '').trim();
-				if (!targetPath.endsWith('.md')) {
-					targetPath += '.md';
+				// 2. Nettoyage et normalisation des chemins et noms de fichiers
+				// Supprime les crochets [[...]], les sauts de ligne, et les caractères interdits par Obsidian (* \ / < > : | ? [ ] # ^)
+				targetPath = targetPath
+					.replace(/^\[\[/, '')
+					.replace(/\]\]$/, '')
+					.replace(/[\r\n]+/g, ' ')
+					.trim();
+
+				if (folder) {
+					folder = folder
+						.replace(/^\[\[/, '')
+						.replace(/\]\]$/, '')
+						.replace(/[\\:*?"<>|#^[\]]/g, '')
+						.trim();
 				}
 
-				// Extraction du dossier parent et du nom de fichier
 				const parts = targetPath.split('/');
-				const cleanFileName = parts.pop() || 'Note.md';
-				const folderPath = parts.length > 0 ? parts.join('/') : (folder || this.settings.inboxFolder || '');
+				let rawFileName = parts.pop() || fileName || 'Nouvelle note';
+				rawFileName = rawFileName
+					.replace(/^\[\[/, '')
+					.replace(/\]\]$/, '')
+					.replace(/[\\:*?"<>|#^[\]]/g, '')
+					.trim();
 
-				const finalPath = normalizePath(folderPath ? `${folderPath}/${cleanFileName}` : cleanFileName);
-
-				if (folderPath) {
-					await this.ensureFolderExists(normalizePath(folderPath));
+				if (!rawFileName.endsWith('.md')) {
+					rawFileName += '.md';
 				}
 
-				const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
-				if (existing) {
-					return {
-						proposalId: proposal.id,
-						success: false,
-						message: `La note "${finalPath}" existe déjà.`,
-						createdOrModifiedPath: finalPath
-					};
+				const folderPath = parts.length > 0
+					? parts.join('/').replace(/[\\:*?"<>|#^[\]]/g, '').trim()
+					: (folder || this.settings.inboxFolder || '00 - Boîte de réception');
+
+				const normalizedFolder = normalizePath(folderPath);
+				const finalPath = normalizePath(normalizedFolder && normalizedFolder !== '.' && normalizedFolder !== '/'
+					? `${normalizedFolder}/${rawFileName}`
+					: rawFileName);
+
+				// 3. S'assurer que le dossier parent existe
+				if (normalizedFolder && normalizedFolder !== '.' && normalizedFolder !== '/') {
+					await this.ensureFolderExists(normalizedFolder);
 				}
 
+				// 4. Préparation du contenu complet
 				let fullContent = typeof proposal.content === 'string' ? proposal.content : '';
 				if (!fullContent.trim()) {
-					const titleHeading = cleanFileName.replace(/\.md$/, '');
+					const titleHeading = rawFileName.replace(/\.md$/, '');
 					fullContent = `# ${titleHeading}\n\n${proposal.description ? `> ${proposal.description}\n\n` : ''}`;
 				}
 
@@ -95,13 +111,31 @@ export class ActionExecutor {
 					fullContent = `${tagsHeader}\n\n${fullContent}`;
 				}
 
-				await this.app.vault.create(finalPath, fullContent);
-				return {
-					proposalId: proposal.id,
-					success: true,
-					message: `Note "${finalPath}" créée avec succès.`,
-					createdOrModifiedPath: finalPath
-				};
+				// 5. Création ou mise à jour sécurisée si le fichier existe déjà
+				const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
+				if (existing instanceof TFile) {
+					await this.app.vault.process(existing, (oldContent) => {
+						if (!oldContent.trim()) {
+							return fullContent;
+						}
+						return `${oldContent.trim()}\n\n---\n\n${fullContent}`;
+					});
+
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Note existante "[[${rawFileName.replace('.md', '')}]]" complétée dans "${normalizedFolder}".`,
+						createdOrModifiedPath: finalPath
+					};
+				} else {
+					await this.app.vault.create(finalPath, fullContent);
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Note "[[${rawFileName.replace('.md', '')}]]" créée avec succès dans "${normalizedFolder}".`,
+						createdOrModifiedPath: finalPath
+					};
+				}
 			}
 
 			case 'append_to_note': {
@@ -169,23 +203,19 @@ export class ActionExecutor {
 					};
 				}
 
-				const linkText = `- [[${proposal.targetNoteName}]]${proposal.contextExplanation ? ` — ${proposal.contextExplanation}` : ''}`;
-				await this.app.vault.process(file, (content) => {
-					if (content.includes(`[[${proposal.targetNoteName}]]`)) {
-						return content; // Lien déjà présent
-					}
-					return `${content.trim()}\n\n### Liens associés\n${linkText}\n`;
-				});
+				const direction = proposal.linkDirection || 'forward';
+				const summary = await this.executeNoteLink(file, proposal.targetNoteName, direction, proposal.contextExplanation);
 
 				return {
 					proposalId: proposal.id,
 					success: true,
-					message: `Lien vers "[[${proposal.targetNoteName}]]" inséré dans "${normalizedPath}".`,
+					message: `Liaison effectuée : ${summary}.`,
 					createdOrModifiedPath: normalizedPath
 				};
 			}
 
-			case 'move_note': {
+			case 'move_note':
+			case 'rename_note': {
 				const sourcePath = normalizePath(proposal.targetPath);
 				const file = this.app.vault.getFileByPath(sourcePath) || this.app.vault.getAbstractFileByPath(sourcePath);
 
@@ -216,56 +246,54 @@ export class ActionExecutor {
 					? normalizePath(`${destFolder}/${finalFileName}`)
 					: normalizePath(finalFileName);
 
-				// Déplacement et/ou renommage propre avec mise à jour des liens internes Obsidian
-				await this.app.fileManager.renameFile(file, newPath);
+				let currentFile: TFile = file;
 
-				const actionDesc = proposal.newFileName && proposal.destinationFolder
-					? `Note déplacée et renommée vers "${newPath}".`
-					: proposal.newFileName
-						? `Note renommée en "${finalFileName}".`
-						: `Note déplacée vers "${newPath}".`;
+				// 1. Déplacement et/ou renommage si le chemin a changé
+				if (newPath !== sourcePath) {
+					await this.app.fileManager.renameFile(file, newPath);
+					const renamed = this.app.vault.getFileByPath(newPath) || this.app.vault.getAbstractFileByPath(newPath);
+					if (renamed instanceof TFile) {
+						currentFile = renamed;
+					}
+				}
+
+				// 2. Si liaison avec une autre note demandée
+				if (proposal.targetNoteName) {
+					const direction = proposal.linkDirection || 'forward';
+					await this.executeNoteLink(currentFile, proposal.targetNoteName, direction, (proposal as any).contextExplanation);
+				}
+
+				// 3. Si ajout de contenu / texte demandé
+				if ((proposal as any).appendContent) {
+					const textToAppend = (proposal as any).appendContent;
+					const section = (proposal as any).section;
+					await this.app.vault.process(currentFile, (content) => {
+						if (section) {
+							const sectionHeader = `## ${section}`;
+							if (content.includes(sectionHeader)) {
+								return content.replace(sectionHeader, `${sectionHeader}\n\n${textToAppend}`);
+							} else {
+								return `${content.trim()}\n\n${sectionHeader}\n${textToAppend}\n`;
+							}
+						}
+						return `${content.trim()}\n\n${textToAppend}\n`;
+					});
+				}
+
+				const actionsDesc: string[] = [];
+				if (proposal.destinationFolder && destFolder !== fallbackParent) actionsDesc.push(`déplacée vers "${destFolder}"`);
+				if (proposal.newFileName && proposal.newFileName !== file.name) actionsDesc.push(`renommée en "${finalFileName}"`);
+				if (proposal.targetNoteName) actionsDesc.push(`liée à [[${proposal.targetNoteName}]] (${proposal.linkDirection || 'forward'})`);
+				if ((proposal as any).appendContent) actionsDesc.push(`contenu ajouté`);
+
+				const summary = actionsDesc.length > 0
+					? `Note ${actionsDesc.join(', ')}.`
+					: `Note traitée ("${newPath}").`;
 
 				return {
 					proposalId: proposal.id,
 					success: true,
-					message: actionDesc,
-					createdOrModifiedPath: newPath
-				};
-			}
-
-			case 'rename_note': {
-				const sourcePath = normalizePath(proposal.targetPath);
-				const file = this.app.vault.getFileByPath(sourcePath) || this.app.vault.getAbstractFileByPath(sourcePath);
-
-				if (!(file instanceof TFile)) {
-					return {
-						proposalId: proposal.id,
-						success: false,
-						message: `Fichier source introuvable pour renommage : "${sourcePath}".`,
-						createdOrModifiedPath: sourcePath
-					};
-				}
-
-				let newName = proposal.newFileName.trim();
-				if (!newName.endsWith('.md')) {
-					newName += '.md';
-				}
-
-				const fallbackParent = sourcePath.includes('/') ? sourcePath.split('/').slice(0, -1).join('/') : '';
-				const parentDir = (file.parent && file.parent.path && file.parent.path !== '/')
-					? file.parent.path
-					: fallbackParent;
-
-				const newPath = parentDir && parentDir !== '/'
-					? normalizePath(`${parentDir}/${newName}`)
-					: normalizePath(newName);
-
-				await this.app.fileManager.renameFile(file, newPath);
-
-				return {
-					proposalId: proposal.id,
-					success: true,
-					message: `Note renommée en "${newName}".`,
+					message: summary,
 					createdOrModifiedPath: newPath
 				};
 			}
@@ -448,18 +476,83 @@ export class ActionExecutor {
 		const normalized = normalizePath(folderPath);
 		if (!normalized || normalized === '/' || normalized === '.') return;
 
-		const folder = this.app.vault.getFolderByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
-		if (folder instanceof TFolder) return;
+		try {
+			const folder = (this.app.vault as any).getFolderByPath ? (this.app.vault as any).getFolderByPath(normalized) : this.app.vault.getAbstractFileByPath(normalized);
+			if (folder instanceof TFolder) return;
+		} catch {
+			// continue
+		}
 
 		const parts = normalized.split('/');
 		let current = '';
 
 		for (const part of parts) {
 			current = current ? `${current}/${part}` : part;
-			const existing = this.app.vault.getFolderByPath(current) || this.app.vault.getAbstractFileByPath(current);
-			if (!existing) {
-				await this.app.vault.createFolder(current);
+			try {
+				const existing = (this.app.vault as any).getFolderByPath ? (this.app.vault as any).getFolderByPath(current) : this.app.vault.getAbstractFileByPath(current);
+				if (!existing) {
+					await this.app.vault.createFolder(current);
+				}
+			} catch {
+				// Dossier existant ou créé en parallèle
 			}
 		}
+	}
+
+	public async executeNoteLink(
+		sourceFile: TFile,
+		targetNoteName: string,
+		direction: 'forward' | 'backward' | 'both' = 'forward',
+		explanation?: string
+	): Promise<string> {
+		const cleanTargetName = targetNoteName
+			.replace(/^\[\[/, '')
+			.replace(/\]\]$/, '')
+			.replace(/\.md$/, '')
+			.trim();
+
+		const sourceBasename = sourceFile.basename || sourceFile.name.replace(/\.md$/, '');
+
+		// Trouver le fichier cible dans le coffre
+		let targetFile: TFile | null = null;
+		const dest = this.app.metadataCache.getFirstLinkpathDest(cleanTargetName, sourceFile.path);
+		if (dest instanceof TFile) {
+			targetFile = dest;
+		} else {
+			const mdFiles = this.app.vault.getMarkdownFiles();
+			targetFile = mdFiles.find(f => f.basename.toLowerCase() === cleanTargetName.toLowerCase() || f.name.toLowerCase() === `${cleanTargetName.toLowerCase()}.md`) || null;
+		}
+
+		const messages: string[] = [];
+
+		// 1. Sens Forward ou Both : insérer [[targetNoteName]] dans sourceFile
+		if (direction === 'forward' || direction === 'both') {
+			const linkText = `- [[${cleanTargetName}]]${explanation ? ` — ${explanation}` : ''}`;
+			await this.app.vault.process(sourceFile, (content) => {
+				if (content.includes(`[[${cleanTargetName}]]`)) {
+					return content;
+				}
+				return `${content.trim()}\n\n### Liens associés\n${linkText}\n`;
+			});
+			messages.push(`lien vers [[${cleanTargetName}]] dans [[${sourceBasename}]]`);
+		}
+
+		// 2. Sens Backward ou Both : insérer [[sourceBasename]] dans targetFile
+		if (direction === 'backward' || direction === 'both') {
+			if (targetFile instanceof TFile) {
+				const reverseLinkText = `- [[${sourceBasename}]]${explanation ? ` — ${explanation}` : ''}`;
+				await this.app.vault.process(targetFile, (content) => {
+					if (content.includes(`[[${sourceBasename}]]`)) {
+						return content;
+					}
+					return `${content.trim()}\n\n### Liens associés\n${reverseLinkText}\n`;
+				});
+				messages.push(`lien vers [[${sourceBasename}]] dans [[${cleanTargetName}]]`);
+			} else {
+				messages.push(`note cible [[${cleanTargetName}]] introuvable pour liaison inverse`);
+			}
+		}
+
+		return messages.join(' et ');
 	}
 }

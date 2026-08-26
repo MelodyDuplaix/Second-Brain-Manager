@@ -92,9 +92,12 @@ export interface DecomposeTaskActionProposal extends BaseActionProposal {
 	}>;
 }
 
+export type LinkDirection = 'forward' | 'backward' | 'both';
+
 export interface LinkNotesActionProposal extends BaseActionProposal {
 	type: 'link_notes';
 	targetNoteName: string;
+	linkDirection?: LinkDirection;
 	contextExplanation?: string;
 }
 
@@ -102,11 +105,20 @@ export interface MoveNoteActionProposal extends BaseActionProposal {
 	type: 'move_note';
 	destinationFolder?: string;
 	newFileName?: string;
+	targetNoteName?: string;
+	linkDirection?: LinkDirection;
+	contextExplanation?: string;
+	appendContent?: string;
+	section?: string;
+	tags?: string[];
 }
 
 export interface RenameNoteActionProposal extends BaseActionProposal {
 	type: 'rename_note';
 	newFileName: string;
+	destinationFolder?: string;
+	targetNoteName?: string;
+	linkDirection?: LinkDirection;
 }
 
 export type ActionProposal =

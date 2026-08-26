@@ -48,12 +48,21 @@ export class BriefingView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		await this.render();
-		// Lancement automatique du briefing en tâche de fond immédiate (non-bloquant pour l'ouverture de la vue)
 		if (!this.generatedBriefingText) {
 			window.setTimeout(() => {
-				void this.triggerBriefingGeneration();
-			}, 50);
+				if (!this.isGenerating && !this.generatedBriefingText) {
+					void this.triggerBriefingGeneration();
+				}
+			}, 100);
 		}
+	}
+
+	public async launchBriefingWithEnergy(energy: number): Promise<void> {
+		this.plugin.settings.energyLevel = energy;
+		this.cancelCurrentGeneration();
+		this.generatedBriefingText = '';
+		await this.render();
+		void this.triggerBriefingGeneration();
 	}
 
 	async onClose(): Promise<void> {
@@ -311,6 +320,11 @@ export class BriefingView extends ItemView {
 					result.data.dateStr
 				);
 				new Notice(`Briefing enregistré dans [[${path}]] !`);
+				saveDailyBtn.setText('📄 Ouvrir la Daily Note');
+				saveDailyBtn.addClass('is-saved');
+				saveDailyBtn.onclick = async () => {
+					await this.app.workspace.openLinkText(path, '', false);
+				};
 			});
 
 			const planTasksBtn = briefingActionBar.createEl('button', {
