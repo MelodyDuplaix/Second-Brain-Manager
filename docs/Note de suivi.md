@@ -17,6 +17,17 @@ Ce document sert de journal de bord et de référence architecturale pour le dé
 
 ## 2. Historique des Réalisations & Journal des Modifications
 
+### 🚀 Version 0.5.2 (27 Août 2026) — Persistance Disque, Synchronisation Directe de l'Éditeur & Correction Mutation de Tâches
+- **Correction Critique de Mutation dans le Tiroir d'Édition (`create_task` vs `update_task`) ([`actionPreviewWidget.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/actionPreviewWidget.ts))** :
+  - Rendu dédié pour les propositions `create_task` dans le tiroir d'édition multi-actions (`renderMultiActionEditDrawer`) et les boutons rapides (dates, quadrants, énergie, priorité).
+  - Élimination des conversions forcées en `update_task` pour garantir la création effective de la tâche lors de l'exécution.
+- **Persistance Disque & Synchronisation Temps Réel des Éditeurs Ouverts ([`actionExecutor.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/actionExecutor.ts))** :
+  - Double synchronisation : écriture directe sur le disque via `vault.modify` avec garde `isTFile` stricte, et mise à jour instantanée en mémoire des documents ouverts dans le workspace (`app.workspace.iterateAllLeaves`, `editorView.editor.setValue`).
+  - Détection dynamique et préservation absolue des fins de ligne Windows (`\r\n` vs `\n`).
+- **Résolution Canonique Floue & Insensibilité aux Accents ([`vaultContextService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/vaultContextService.ts))** :
+  - Détection automatique et déterministe des notes cibles même en cas d'omission d'accents ou de chemins partiels (`stripAccents` + `normalizeCanonicalKey`).
+  - Injection systématique du chemin canonique de la note active dans le prompt système du LLM.
+
 ### 🚀 Version 0.5.1 (27 Août 2026) — Différenciation Semaine / Planning & Correctifs CI
 - **Différenciation claire des Vues Semaine & Planning ([`calendarView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/calendarView.ts), [`styles.css`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/styles.css))** :
   - **Vue Semaine** : Grille complète des 7 jours de la semaine (Lundi à Dimanche) affichant les cartes des jours avec rendez-vous et un statut `Libre` pour les jours disponibles.
