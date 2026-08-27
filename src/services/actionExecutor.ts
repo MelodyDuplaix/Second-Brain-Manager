@@ -11,7 +11,7 @@ import {
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { GoogleCalendarService } from './googleCalendarService';
-import { VaultContextService, normalizeCanonicalKey } from './vaultContextService';
+import { VaultContextService, normalizeCanonicalKey, isTFile } from './vaultContextService';
 import { SecondBrainSettings } from '../main';
 
 export class ActionExecutor {
@@ -27,13 +27,44 @@ export class ActionExecutor {
 
 	/**
 	 * Synchronise le contenu modifié à la fois dans les onglets d'éditeurs actuellement ouverts (MarkdownView.editor)
-	 * et dans le coffre sur disque (app.vault.process / modify) pour éviter tout conflit d'écrasement par auto-save.
+	 * et directement sur le disque (app.vault.modify) de façon atomique et déterministe.
 	 */
 	public async updateFileAndOpenEditors(file: TFile, updater: (content: string) => string): Promise<boolean> {
 		let modified = false;
 		const targetCanonicalKey = normalizeCanonicalKey(file.path);
 
-		// 1. Synchronisation instantanée dans les éditeurs ouverts (Live Preview / Mode Source)
+		// 1. Lecture et écriture directe sur disque via Vault API
+		let newContent = '';
+		try {
+			const oldContent = await this.app.vault.read(file);
+			newContent = updater(oldContent);
+			if (newContent !== oldContent) {
+				await this.app.vault.modify(file, newContent);
+				modified = true;
+				console.log(`[Second Brain Manager] Fichier "${file.path}" modifié avec succès sur le disque.`);
+			} else {
+				console.warn(`[Second Brain Manager] Le contenu de "${file.path}" n'a pas changé après application de l'updater.`);
+			}
+		} catch (vaultErr) {
+			console.error(`[Second Brain Manager] Échec lors de la modification de "${file.path}" via vault.modify:`, vaultErr);
+			// Fallback process si read/modify a rencontré un souci
+			try {
+				if (typeof (this.app.vault as any).process === 'function') {
+					await (this.app.vault as any).process(file, (content: string) => {
+						const updated = updater(content);
+						if (updated !== content) {
+							modified = true;
+							newContent = updated;
+						}
+						return updated;
+					});
+				}
+			} catch (procErr) {
+				console.error(`[Second Brain Manager] Échec du fallback vault.process:`, procErr);
+			}
+		}
+
+		// 2. Synchronisation instantanée dans les éditeurs ouverts (Live Preview / Mode Source)
 		try {
 			if (this.app.workspace && typeof this.app.workspace.getLeavesOfType === 'function') {
 				const leaves = this.app.workspace.getLeavesOfType('markdown');
@@ -41,13 +72,9 @@ export class ActionExecutor {
 					const view = leaf.view as MarkdownView;
 					if (view && (view as any).file && view.editor) {
 						const leafPath = (view as any).file.path;
-						const leafCanonicalKey = normalizeCanonicalKey(leafPath);
-						if (leafCanonicalKey === targetCanonicalKey) {
-							const currentText = view.editor.getValue();
-							const updatedText = updater(currentText);
-							if (updatedText !== currentText) {
-								view.editor.setValue(updatedText);
-								modified = true;
+						if (normalizeCanonicalKey(leafPath) === targetCanonicalKey) {
+							if (newContent) {
+								view.editor.setValue(newContent);
 							}
 						}
 					}
@@ -55,28 +82,6 @@ export class ActionExecutor {
 			}
 		} catch (editorErr) {
 			console.warn('[Second Brain Manager] Erreur lors de la synchronisation de l\'éditeur ouvert:', editorErr);
-		}
-
-		// 2. Persistance dans le coffre (disque)
-		try {
-			if (typeof (this.app.vault as any).process === 'function') {
-				await (this.app.vault as any).process(file, (content: string) => {
-					const updated = updater(content);
-					if (updated !== content) {
-						modified = true;
-					}
-					return updated;
-				});
-			} else if (typeof (this.app.vault as any).read === 'function' && typeof (this.app.vault as any).modify === 'function') {
-				const oldContent = await this.app.vault.read(file);
-				const newContent = updater(oldContent);
-				if (newContent !== oldContent) {
-					await this.app.vault.modify(file, newContent);
-					modified = true;
-				}
-			}
-		} catch (procErr) {
-			console.warn('[Second Brain Manager] Erreur lors de la persistance vault:', procErr);
 		}
 
 		return modified;
@@ -94,10 +99,13 @@ export class ActionExecutor {
 			}
 
 			try {
+				console.log(`[Second Brain Manager] Exécution de la proposition (${proposal.type}) pour "${proposal.targetPath}":`, proposal);
 				const result = await this.executeSingleProposal(proposal);
+				console.log(`[Second Brain Manager] Résultat de l'exécution:`, result);
 				results.push(result);
 			} catch (err: unknown) {
 				const errorMsg = err instanceof Error ? err.message : String(err);
+				console.error(`[Second Brain Manager] Erreur lors de l'exécution de la proposition:`, err);
 				results.push({
 					proposalId: proposal.id,
 					success: false,
@@ -168,7 +176,7 @@ export class ActionExecutor {
 			const dailyCheck = await this.vaultContext.getDailyNote(targetDate);
 			if (dailyCheck.exists) {
 				const f = this.app.vault.getFileByPath(dailyCheck.path) || this.app.vault.getAbstractFileByPath(dailyCheck.path);
-				if (f instanceof TFile) {
+				if (isTFile(f)) {
 					return { file: f, path: dailyCheck.path, created: false };
 				}
 			}
@@ -183,7 +191,7 @@ export class ActionExecutor {
 
 		// 2. Résolution canonique déterministe (sans devinette, insensible aux accents, à la casse et aux sous-dossiers)
 		const canonicalFile = this.vaultContext.resolveFileCanonically(clean);
-		if (canonicalFile instanceof TFile) {
+		if (isTFile(canonicalFile)) {
 			return { file: canonicalFile, path: normalizePath(canonicalFile.path), created: false };
 		}
 
@@ -216,7 +224,7 @@ export class ActionExecutor {
 				: fileName);
 
 			const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
-			if (existing instanceof TFile) {
+			if (isTFile(existing)) {
 				return { file: existing, path: finalPath, created: false };
 			}
 
@@ -409,7 +417,7 @@ export class ActionExecutor {
 				});
 
 				const file = resolved.file;
-				if (!file || !(file instanceof TFile)) {
+				if (!file || !isTFile(file)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
@@ -419,7 +427,7 @@ export class ActionExecutor {
 				}
 
 				if (!resolved.created) {
-					await this.app.vault.process(file, (oldContent) => {
+					await this.updateFileAndOpenEditors(file, (oldContent) => {
 						if (!oldContent.trim()) {
 							return fullContent;
 						}
@@ -449,7 +457,7 @@ export class ActionExecutor {
 				});
 
 				const file = resolved.file;
-				if (!file || !(file instanceof TFile)) {
+				if (!file || !isTFile(file)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
@@ -494,7 +502,7 @@ export class ActionExecutor {
 				const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
 				const file = resolved.file;
 
-				if (!file || !(file instanceof TFile)) {
+				if (!file || !isTFile(file)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
@@ -519,7 +527,7 @@ export class ActionExecutor {
 				const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
 				const file = resolved.file;
 
-				if (!file || !(file instanceof TFile)) {
+				if (!file || !isTFile(file)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
@@ -661,7 +669,7 @@ export class ActionExecutor {
 		});
 
 		const file = resolved.file;
-		if (!file || !(file instanceof TFile)) {
+		if (!file || !isTFile(file)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
@@ -749,7 +757,7 @@ export class ActionExecutor {
 		const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
 		const file = resolved.file;
 
-		if (!file || !(file instanceof TFile)) {
+		if (!file || !isTFile(file)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
@@ -828,7 +836,7 @@ export class ActionExecutor {
 		const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
 		const file = resolved.file;
 
-		if (!file || !(file instanceof TFile)) {
+		if (!file || !isTFile(file)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
@@ -941,7 +949,7 @@ export class ActionExecutor {
 
 		// 2. Sens Backward ou Both : insérer [[sourceBasename]] dans targetFile
 		if (direction === 'backward' || direction === 'both') {
-			if (targetFile instanceof TFile) {
+			if (targetFile && isTFile(targetFile)) {
 				const reverseLinkText = `- [[${sourceBasename}]]${explanation ? ` — ${explanation}` : ''}`;
 				await this.updateFileAndOpenEditors(targetFile, (content) => {
 					if (content.includes(`[[${sourceBasename}]]`)) {
@@ -949,7 +957,7 @@ export class ActionExecutor {
 					}
 					return `${content.trim()}\n\n### Liens associés\n${reverseLinkText}\n`;
 				});
-				messages.push(`lien vers [[${sourceBasename}]] dans [[${cleanTargetName}]]`);
+				messages.push(`lien inverse vers [[${sourceBasename}]] dans [[${cleanTargetName}]]`);
 			} else {
 				messages.push(`note cible [[${cleanTargetName}]] introuvable pour liaison inverse`);
 			}

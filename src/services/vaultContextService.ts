@@ -59,6 +59,13 @@ export function stripAccents(str: string): string {
 		.trim();
 }
 
+/**
+ * Vérifie de manière robuste et cross-realm si un objet est un fichier TFile.
+ */
+export function isTFile(file: unknown): file is TFile {
+	return Boolean(file && typeof file === 'object' && typeof (file as any).path === 'string' && (file as any).extension !== undefined);
+}
+
 export class VaultContextService {
 	private app: App;
 	private settings: SecondBrainSettings;
@@ -87,21 +94,21 @@ export class VaultContextService {
 		// 1. Si la recherche cible explicitement la note active
 		if (lowerClean === 'active' || lowerClean === 'current' || lowerClean === 'note active' || lowerClean === 'cette note') {
 			const active = activeFile || this.app.workspace?.getActiveFile?.();
-			if (active instanceof TFile) return active;
+			if (isTFile(active)) return active;
 		}
 
 		// 2. Recherche exacte directe via Vault
 		const directNorm = normalizePath(clean.endsWith('.md') ? clean : `${clean}.md`);
 		let file = this.app.vault.getFileByPath(directNorm) || this.app.vault.getAbstractFileByPath(directNorm);
-		if (file instanceof TFile) return file;
+		if (isTFile(file)) return file;
 
 		const directWithoutExt = normalizePath(clean);
 		file = this.app.vault.getFileByPath(directWithoutExt) || this.app.vault.getAbstractFileByPath(directWithoutExt);
-		if (file instanceof TFile) return file;
+		if (isTFile(file)) return file;
 
 		// 3. Comparaison avec la note active
 		const effectiveActive = activeFile || this.app.workspace?.getActiveFile?.();
-		if (effectiveActive instanceof TFile) {
+		if (isTFile(effectiveActive)) {
 			const activeKey = normalizeCanonicalKey(effectiveActive.basename);
 			const queryKey = normalizeCanonicalKey(clean);
 			if (activeKey === queryKey || normalizeCanonicalKey(effectiveActive.path) === queryKey) {
@@ -114,9 +121,9 @@ export class VaultContextService {
 		if (this.app.metadataCache && typeof this.app.metadataCache.getFirstLinkpathDest === 'function') {
 			try {
 				const dest = this.app.metadataCache.getFirstLinkpathDest(baseOnly, '');
-				if (dest instanceof TFile) return dest;
+				if (isTFile(dest)) return dest;
 				const destFull = this.app.metadataCache.getFirstLinkpathDest(clean, '');
-				if (destFull instanceof TFile) return destFull;
+				if (isTFile(destFull)) return destFull;
 			} catch {
 				// ignore
 			}
@@ -130,15 +137,15 @@ export class VaultContextService {
 
 			// Match A : Correspondance exacte clé normalisée sur le nom de fichier (basename)
 			const exactBase = mdFiles.find(f => normalizeCanonicalKey(f.basename) === baseKey || normalizeCanonicalKey(f.basename) === queryKey);
-			if (exactBase) return exactBase;
+			if (exactBase && isTFile(exactBase)) return exactBase;
 
 			// Match B : Correspondance exacte clé normalisée sur le chemin complet
 			const exactPath = mdFiles.find(f => normalizeCanonicalKey(f.path) === queryKey);
-			if (exactPath) return exactPath;
+			if (exactPath && isTFile(exactPath)) return exactPath;
 
 			// Match C : Fin de chemin (ex: "mfrb/tacheafairemfrb")
 			const endPath = mdFiles.find(f => normalizeCanonicalKey(f.path).endsWith(queryKey));
-			if (endPath) return endPath;
+			if (endPath && isTFile(endPath)) return endPath;
 
 			// Match D : Intersection de mots-clés (Fuzzy word tokens)
 			const queryTokens = stripAccents(clean).split(/[^a-z0-9]+/).filter(w => w.length >= 2);
