@@ -11,15 +11,18 @@ import {
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { GoogleCalendarService } from './googleCalendarService';
+import { VaultContextService } from './vaultContextService';
 import { SecondBrainSettings } from '../main';
 
 export class ActionExecutor {
 	private app: App;
 	private settings: SecondBrainSettings;
+	private vaultContext: VaultContextService;
 
-	constructor(app: App, settings: SecondBrainSettings) {
+	constructor(app: App, settings: SecondBrainSettings, vaultContext?: VaultContextService) {
 		this.app = app;
 		this.settings = settings;
+		this.vaultContext = vaultContext || new VaultContextService(app, settings);
 	}
 
 	/**
@@ -50,6 +53,333 @@ export class ActionExecutor {
 		return results;
 	}
 
+	/**
+	 * Résout intelligemment le fichier cible d'une action à partir d'un chemin, nom de note,
+	 * date ou mention de journal / note quotidienne, et le crée si demandé.
+	 */
+	public async resolveTargetFile(
+		rawPath: string,
+		options: {
+			createIfMissing?: boolean;
+			isDailyNote?: boolean;
+			defaultFolder?: string;
+			initialContent?: string;
+		} = {}
+	): Promise<{ file: TFile | null; path: string; created: boolean }> {
+		if (!rawPath || typeof rawPath !== 'string') {
+			rawPath = '';
+		}
+
+		let clean = rawPath
+			.replace(/^\[\[/, '')
+			.replace(/\]\]$/, '')
+			.replace(/[\r\n]+/g, ' ')
+			.trim();
+
+		// Nettoyage des guillemets éventuels
+		clean = clean.replace(/^["']/, '').replace(/["']$/, '').trim();
+
+		const lower = clean.toLowerCase();
+
+		// 1. Détection note quotidienne / Journal
+		const isDailyExplicit = options.isDailyNote ||
+			lower.includes('note quotidienne') ||
+			lower.includes('journal') ||
+			lower.includes('daily note') ||
+			lower.includes('daily-note') ||
+			lower.includes('dailynote') ||
+			lower.includes('quotidienne') ||
+			lower.includes("aujourd'hui") ||
+			lower.includes('aujourdhui') ||
+			/\b\d{4}-\d{2}-\d{2}\b/.test(clean) ||
+			/\b\d{2}-\d{2}-\d{4}\b/.test(clean);
+
+		if (isDailyExplicit) {
+			// Extraction date si présente
+			const isoMatch = clean.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+			const frMatch = clean.match(/\b(\d{2}-\d{2}-\d{4})\b/);
+			let targetDate: string | undefined;
+			if (isoMatch) {
+				targetDate = isoMatch[1];
+			} else if (frMatch) {
+				const parts = frMatch[1].split('-');
+				targetDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+			} else {
+				targetDate = new Date().toISOString().split('T')[0];
+			}
+
+			const dailyCheck = await this.vaultContext.getDailyNote(targetDate);
+			if (dailyCheck.exists) {
+				const f = this.app.vault.getFileByPath(dailyCheck.path) || this.app.vault.getAbstractFileByPath(dailyCheck.path);
+				if (f instanceof TFile) {
+					return { file: f, path: dailyCheck.path, created: false };
+				}
+			}
+
+			if (options.createIfMissing) {
+				const dailyRes = await this.vaultContext.getOrCreateDailyNote(targetDate);
+				return { file: dailyRes.file, path: dailyRes.path, created: dailyRes.created };
+			} else {
+				return { file: null, path: dailyCheck.path, created: false };
+			}
+		}
+
+		// 2. Vérification directe par chemin normalisé
+		const directNorm = normalizePath(clean.endsWith('.md') ? clean : `${clean}.md`);
+		let file = this.app.vault.getFileByPath(directNorm) || this.app.vault.getAbstractFileByPath(directNorm);
+		if (file instanceof TFile) {
+			return { file, path: directNorm, created: false };
+		}
+
+		const directWithoutExt = normalizePath(clean);
+		file = this.app.vault.getFileByPath(directWithoutExt) || this.app.vault.getAbstractFileByPath(directWithoutExt);
+		if (file instanceof TFile) {
+			return { file, path: directWithoutExt, created: false };
+		}
+
+		// 3. Recherche via Obsidian metadataCache / Linkpath
+		const baseOnly = clean.split('/').pop()?.replace(/\.md$/, '').trim() || clean;
+		if (this.app.metadataCache && typeof this.app.metadataCache.getFirstLinkpathDest === 'function') {
+			try {
+				const dest = this.app.metadataCache.getFirstLinkpathDest(baseOnly, '');
+				if (dest instanceof TFile) {
+					return { file: dest, path: normalizePath(dest.path), created: false };
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		// 4. Recherche dans tous les fichiers markdown du coffre
+		if (typeof this.app.vault.getMarkdownFiles === 'function') {
+			const mdFiles = this.app.vault.getMarkdownFiles();
+			const lowerBase = baseOnly.toLowerCase();
+
+			// A. Match exact sur le nom de fichier / basename
+			const exact = mdFiles.find(f => f.basename.toLowerCase() === lowerBase || f.name.toLowerCase() === lowerBase);
+			if (exact) {
+				return { file: exact, path: normalizePath(exact.path), created: false };
+			}
+
+			// B. Match sur fin de chemin (ex: 'MFRB/Notes.md')
+			const endMatch = mdFiles.find(f => normalizePath(f.path).toLowerCase().endsWith(directNorm.toLowerCase()));
+			if (endMatch) {
+				return { file: endMatch, path: normalizePath(endMatch.path), created: false };
+			}
+
+			// C. Match partiel intelligent (ex: recherche 'MFRB' -> 'Note rangés/MFRB/Tâche à faire MFRB.md')
+			if (lowerBase.length >= 3) {
+				const taskKeywords = ['tâche', 'tache', 'task', 'todo', 'à faire', 'a faire', 'action'];
+				
+				// Priorité 1 : Fichiers dont le chemin ou le dossier contient la recherche ET dont le nom contient un mot-clé de tâches
+				const taskMatch = mdFiles.find(f => {
+					const pLower = f.path.toLowerCase();
+					const bLower = f.basename.toLowerCase();
+					const matchesBase = pLower.includes(lowerBase) || bLower.includes(lowerBase);
+					const hasTaskKeyword = taskKeywords.some(kw => bLower.includes(kw));
+					return matchesBase && hasTaskKeyword;
+				});
+				if (taskMatch) {
+					return { file: taskMatch, path: normalizePath(taskMatch.path), created: false };
+				}
+
+				// Priorité 2 : Fichier dont le nom contient directement le terme
+				const partial = mdFiles.find(f => f.basename.toLowerCase().includes(lowerBase));
+				if (partial) {
+					return { file: partial, path: normalizePath(partial.path), created: false };
+				}
+
+				// Priorité 3 : N'importe quel fichier dans un dossier portant ce nom
+				const folderMatch = mdFiles.find(f => normalizePath(f.path).toLowerCase().includes(`/${lowerBase}/`));
+				if (folderMatch) {
+					return { file: folderMatch, path: normalizePath(folderMatch.path), created: false };
+				}
+			}
+		}
+
+		// 5. Si introuvable et création demandée
+		if (options.createIfMissing) {
+			let folder = options.defaultFolder;
+			let fileName = baseOnly;
+
+			if (clean.includes('/')) {
+				const parts = clean.split('/');
+				fileName = parts.pop() || 'Nouvelle note';
+				folder = parts.join('/');
+			} else if (!folder) {
+				folder = this.settings.inboxFolder || '00 - Boîte de réception';
+			}
+
+			fileName = fileName.replace(/[\\:*?"<>|#^[\]]/g, '').trim();
+			if (!fileName.endsWith('.md')) {
+				fileName += '.md';
+			}
+
+			const normFolder = normalizePath(folder);
+			if (normFolder && normFolder !== '.' && normFolder !== '/') {
+				await this.ensureFolderExists(normFolder);
+			}
+
+			const finalPath = normalizePath(normFolder && normFolder !== '.' && normFolder !== '/'
+				? `${normFolder}/${fileName}`
+				: fileName);
+
+			const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
+			if (existing instanceof TFile) {
+				return { file: existing, path: finalPath, created: false };
+			}
+
+			const content = options.initialContent !== undefined ? options.initialContent : `# ${fileName.replace(/\.md$/, '')}\n\n`;
+			const createdFile = await this.app.vault.create(finalPath, content);
+			return { file: createdFile, path: finalPath, created: true };
+		}
+
+		return { file: null, path: directNorm, created: false };
+	}
+
+	/**
+	 * Insère intelligemment une ligne de tâche dans le contenu d'une note.
+	 * 1. Recherche une section de tâches actives (ex: "## Taches à faire", "## À faire", "## Tâches", "## Actions").
+	 *    Exclut explicitement les sections de tâches terminées ("## Taches faites", "## Tâches terminées", "## Archives").
+	 * 2. Si trouvée, insère après la dernière tâche existante de cette section ou directement sous le titre.
+	 * 3. Sinon, si des tâches existent ailleurs dans la note (hors blocs de code), insère après la dernière tâche.
+	 * 4. Sinon, insère avant un éventuel callout de pied de page (navigation/footer) ou à la fin de la note.
+	 */
+	public static insertTaskIntoNoteContent(content: string, taskLine: string): string {
+		const lines = content.split('\n');
+
+		const cleanHeadingForComparison = (str: string): string => {
+			return str.trim()
+				.replace(/^#{1,6}\s+/, '')
+				.normalize('NFD').replace(/[\u0300-\u036f]/g, '') // supprime les accents : à->a, â->a, é->e, etc.
+				.toLowerCase()
+				.replace(/[^\w\s-]/g, '')
+				.trim();
+		};
+
+		const isExcludedSection = (cleaned: string): boolean => {
+			const excludedKeywords = ['faites', 'terminees', 'archives', 'journal', 'log', 'history', 'liens', 'links', 'references', 'demain', 'tomorrow', 'done', 'completed', 'finished'];
+			return excludedKeywords.some(kw => cleaned.includes(kw));
+		};
+
+		const isActiveTaskSection = (cleaned: string): boolean => {
+			if (isExcludedSection(cleaned)) return false;
+			const activePrefixes = [
+				'taches a faire', 'taches du jour', 'a faire', 'actions a faire',
+				'to do', 'todo', 'tasks', 'active tasks', 'next actions', 'action items',
+				'programme', 'objectifs', 'goals', 'objectives', 'focus', 'priorites', 'priorities'
+			];
+			return activePrefixes.some(kw => cleaned === kw || cleaned.startsWith(kw + ' ') || cleaned.includes(kw));
+		};
+
+		const isGenericTaskSection = (cleaned: string): boolean => {
+			if (isExcludedSection(cleaned)) return false;
+			const genericKeywords = ['taches', 'tache', 'tasks', 'task', 'actions', 'action'];
+			return genericKeywords.some(kw => cleaned === kw || cleaned.startsWith(kw + ' '));
+		};
+
+		let targetHeaderIdx = -1;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i].trim();
+			// On ne cible que les sous-titres (H2 à H6) pour ne pas confondre avec le titre principal H1 de la note
+			if (/^#{2,6}\s+/.test(line)) {
+				const cleaned = cleanHeadingForComparison(line);
+				if (isActiveTaskSection(cleaned)) {
+					targetHeaderIdx = i;
+					break;
+				}
+			}
+		}
+
+		if (targetHeaderIdx === -1) {
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (/^#{2,6}\s+/.test(line)) {
+					const cleaned = cleanHeadingForComparison(line);
+					if (isGenericTaskSection(cleaned)) {
+						targetHeaderIdx = i;
+						break;
+					}
+				}
+			}
+		}
+
+		// Si un en-tête de section a été trouvé
+		if (targetHeaderIdx !== -1) {
+			let insertIdx = targetHeaderIdx + 1;
+			let inCodeBlock = false;
+			let lastTaskIdx = -1;
+
+			for (let i = targetHeaderIdx + 1; i < lines.length; i++) {
+				const trimmed = lines[i].trim();
+				if (trimmed.startsWith('```')) {
+					inCodeBlock = !inCodeBlock;
+					if (inCodeBlock && lastTaskIdx === -1) {
+						insertIdx = i;
+						break;
+					}
+				}
+				if (inCodeBlock) continue;
+
+				if (/^#{1,3}\s+/.test(trimmed)) {
+					break;
+				}
+
+				if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
+					lastTaskIdx = i;
+					insertIdx = i + 1;
+				} else if (lastTaskIdx !== -1 && trimmed === '') {
+					insertIdx = i;
+					break;
+				}
+			}
+
+			lines.splice(insertIdx, 0, taskLine);
+			return lines.join('\n');
+		}
+
+		// 2. Si pas de section dédiée trouvée, chercher la dernière tâche markdown du document (hors code block)
+		let lastDocTaskIdx = -1;
+		let inCode = false;
+		for (let i = 0; i < lines.length; i++) {
+			const trimmed = lines[i].trim();
+			if (trimmed.startsWith('```')) {
+				inCode = !inCode;
+				continue;
+			}
+			if (!inCode && (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]'))) {
+				lastDocTaskIdx = i;
+			}
+		}
+
+		if (lastDocTaskIdx !== -1) {
+			lines.splice(lastDocTaskIdx + 1, 0, taskLine);
+			return lines.join('\n');
+		}
+
+		// 3. Chercher si la note se termine par un footer / navigation callout (ex: >[!column, >[!day, ---)
+		let footerStartIdx = -1;
+		for (let i = lines.length - 1; i >= 0; i--) {
+			const trimmed = lines[i].trim();
+			if (trimmed.startsWith('>[!column') || trimmed.startsWith('>[!day') || trimmed.startsWith('---') || trimmed.startsWith('*Note créée')) {
+				footerStartIdx = i;
+			} else if (footerStartIdx !== -1 && trimmed === '') {
+				// Continue backwards
+			} else if (footerStartIdx !== -1) {
+				break;
+			}
+		}
+
+		if (footerStartIdx > 0) {
+			lines.splice(footerStartIdx, 0, taskLine, '');
+			return lines.join('\n');
+		}
+
+		// 4. Par défaut, ajouter à la fin
+		return `${content.trim()}\n\n${taskLine}\n`;
+	}
+
 	private async executeSingleProposal(proposal: ActionProposal): Promise<ActionResult> {
 		switch (proposal.type) {
 			case 'create_note': {
@@ -57,7 +387,6 @@ export class ActionExecutor {
 				let folder = proposal.folder;
 				const fileName = proposal.fileName;
 
-				// 1. Déduction du dossier et du nom de fichier si l'un ou l'autre est manquant
 				if (!targetPath && (folder || fileName)) {
 					folder = folder || this.settings.inboxFolder || '00 - Boîte de réception';
 					const rawName = fileName || proposal.description || 'Nouvelle note';
@@ -66,50 +395,8 @@ export class ActionExecutor {
 					targetPath = `${this.settings.inboxFolder || '00 - Boîte de réception'}/${proposal.description || 'Nouvelle note'}`;
 				}
 
-				// 2. Nettoyage et normalisation des chemins et noms de fichiers
-				// Supprime les crochets [[...]], les sauts de ligne, et les caractères interdits par Obsidian (* \ / < > : | ? [ ] # ^)
-				targetPath = targetPath
-					.replace(/^\[\[/, '')
-					.replace(/\]\]$/, '')
-					.replace(/[\r\n]+/g, ' ')
-					.trim();
-
-				if (folder) {
-					folder = folder
-						.replace(/^\[\[/, '')
-						.replace(/\]\]$/, '')
-						.replace(/[\\:*?"<>|#^[\]]/g, '')
-						.trim();
-				}
-
-				const parts = targetPath.split('/');
-				let rawFileName = parts.pop() || fileName || 'Nouvelle note';
-				rawFileName = rawFileName
-					.replace(/^\[\[/, '')
-					.replace(/\]\]$/, '')
-					.replace(/[\\:*?"<>|#^[\]]/g, '')
-					.trim();
-
-				if (!rawFileName.endsWith('.md')) {
-					rawFileName += '.md';
-				}
-
-				const folderPath = parts.length > 0
-					? parts.join('/').replace(/[\\:*?"<>|#^[\]]/g, '').trim()
-					: (folder || this.settings.inboxFolder || '00 - Boîte de réception');
-
-				const normalizedFolder = normalizePath(folderPath);
-				const finalPath = normalizePath(normalizedFolder && normalizedFolder !== '.' && normalizedFolder !== '/'
-					? `${normalizedFolder}/${rawFileName}`
-					: rawFileName);
-
-				// 3. S'assurer que le dossier parent existe
-				if (normalizedFolder && normalizedFolder !== '.' && normalizedFolder !== '/') {
-					await this.ensureFolderExists(normalizedFolder);
-				}
-
-				// 4. Préparation du contenu complet
 				let fullContent = typeof proposal.content === 'string' ? proposal.content : '';
+				const rawFileName = fileName || targetPath.split('/').pop()?.replace(/\.md$/, '') || 'Nouvelle note';
 				if (!fullContent.trim()) {
 					const titleHeading = rawFileName.replace(/\.md$/, '');
 					fullContent = `# ${titleHeading}\n\n${proposal.description ? `> ${proposal.description}\n\n` : ''}`;
@@ -120,10 +407,24 @@ export class ActionExecutor {
 					fullContent = `${tagsHeader}\n\n${fullContent}`;
 				}
 
-				// 5. Création ou mise à jour sécurisée si le fichier existe déjà
-				const existing = this.app.vault.getFileByPath(finalPath) || this.app.vault.getAbstractFileByPath(finalPath);
-				if (existing instanceof TFile) {
-					await this.app.vault.process(existing, (oldContent) => {
+				const resolved = await this.resolveTargetFile(targetPath, {
+					createIfMissing: true,
+					defaultFolder: folder || this.settings.inboxFolder || '00 - Boîte de réception',
+					initialContent: fullContent
+				});
+
+				const file = resolved.file;
+				if (!file || !(file instanceof TFile)) {
+					return {
+						proposalId: proposal.id,
+						success: false,
+						message: `Impossible d'accéder au fichier : "${targetPath}".`,
+						createdOrModifiedPath: resolved.path
+					};
+				}
+
+				if (!resolved.created) {
+					await this.app.vault.process(file, (oldContent) => {
 						if (!oldContent.trim()) {
 							return fullContent;
 						}
@@ -133,37 +434,32 @@ export class ActionExecutor {
 					return {
 						proposalId: proposal.id,
 						success: true,
-						message: `Note existante "[[${rawFileName.replace('.md', '')}]]" complétée dans "${normalizedFolder}".`,
-						createdOrModifiedPath: finalPath
+						message: `Note existante "[[${file.basename}]]" complétée dans "${file.parent?.path || ''}".`,
+						createdOrModifiedPath: resolved.path
 					};
 				} else {
-					await this.app.vault.create(finalPath, fullContent);
 					return {
 						proposalId: proposal.id,
 						success: true,
-						message: `Note "[[${rawFileName.replace('.md', '')}]]" créée avec succès dans "${normalizedFolder}".`,
-						createdOrModifiedPath: finalPath
+						message: `Note "[[${file.basename}]]" créée avec succès dans "${file.parent?.path || ''}".`,
+						createdOrModifiedPath: resolved.path
 					};
 				}
 			}
 
 			case 'append_to_note': {
-				const normalizedPath = normalizePath(proposal.targetPath);
-				let file = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+				const resolved = await this.resolveTargetFile(proposal.targetPath, {
+					createIfMissing: true,
+					defaultFolder: this.settings.inboxFolder || '00 - Boîte de réception'
+				});
 
-				// Si le fichier n'existe pas (ex: daily note pas encore créée), on le crée
-				if (!file) {
-					const folder = normalizedPath.split('/').slice(0, -1).join('/');
-					if (folder) await this.ensureFolderExists(folder);
-					file = await this.app.vault.create(normalizedPath, '');
-				}
-
-				if (!(file instanceof TFile)) {
+				const file = resolved.file;
+				if (!file || !(file instanceof TFile)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
-						message: `Fichier introuvable : "${normalizedPath}".`,
-						createdOrModifiedPath: normalizedPath
+						message: `Fichier introuvable : "${proposal.targetPath}".`,
+						createdOrModifiedPath: resolved.path
 					};
 				}
 
@@ -182,8 +478,8 @@ export class ActionExecutor {
 				return {
 					proposalId: proposal.id,
 					success: true,
-					message: `Contenu ajouté dans "${normalizedPath}".`,
-					createdOrModifiedPath: normalizedPath
+					message: `Contenu ajouté dans "[[${file.basename}]]".`,
+					createdOrModifiedPath: resolved.path
 				};
 			}
 
@@ -200,15 +496,15 @@ export class ActionExecutor {
 			}
 
 			case 'link_notes': {
-				const normalizedPath = normalizePath(proposal.targetPath);
-				const file = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+				const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
+				const file = resolved.file;
 
-				if (!(file instanceof TFile)) {
+				if (!file || !(file instanceof TFile)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
-						message: `Fichier introuvable pour liaison : "${normalizedPath}".`,
-						createdOrModifiedPath: normalizedPath
+						message: `Fichier introuvable pour liaison : "${proposal.targetPath}".`,
+						createdOrModifiedPath: resolved.path
 					};
 				}
 
@@ -219,24 +515,25 @@ export class ActionExecutor {
 					proposalId: proposal.id,
 					success: true,
 					message: `Liaison effectuée : ${summary}.`,
-					createdOrModifiedPath: normalizedPath
+					createdOrModifiedPath: resolved.path
 				};
 			}
 
 			case 'move_note':
 			case 'rename_note': {
-				const sourcePath = normalizePath(proposal.targetPath);
-				const file = this.app.vault.getFileByPath(sourcePath) || this.app.vault.getAbstractFileByPath(sourcePath);
+				const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
+				const file = resolved.file;
 
-				if (!(file instanceof TFile)) {
+				if (!file || !(file instanceof TFile)) {
 					return {
 						proposalId: proposal.id,
 						success: false,
-						message: `Fichier source introuvable : "${sourcePath}".`,
-						createdOrModifiedPath: sourcePath
+						message: `Fichier source introuvable : "${proposal.targetPath}".`,
+						createdOrModifiedPath: resolved.path
 					};
 				}
 
+				const sourcePath = normalizePath(file.path);
 				const fallbackParent = sourcePath.includes('/') ? sourcePath.split('/').slice(0, -1).join('/') : '';
 				const destFolder = proposal.destinationFolder 
 					? normalizePath(proposal.destinationFolder) 
@@ -257,7 +554,6 @@ export class ActionExecutor {
 
 				let currentFile: TFile = file;
 
-				// 1. Déplacement et/ou renommage si le chemin a changé
 				if (newPath !== sourcePath) {
 					await this.app.fileManager.renameFile(file, newPath);
 					const renamed = this.app.vault.getFileByPath(newPath) || this.app.vault.getAbstractFileByPath(newPath);
@@ -266,13 +562,11 @@ export class ActionExecutor {
 					}
 				}
 
-				// 2. Si liaison avec une autre note demandée
 				if (proposal.targetNoteName) {
 					const direction = proposal.linkDirection || 'forward';
 					await this.executeNoteLink(currentFile, proposal.targetNoteName, direction, (proposal as any).contextExplanation);
 				}
 
-				// 3. Si ajout de contenu / texte demandé
 				if ((proposal as any).appendContent) {
 					const textToAppend = (proposal as any).appendContent;
 					const section = (proposal as any).section;
@@ -366,22 +660,39 @@ export class ActionExecutor {
 	}
 
 	private async executeCreateTask(proposal: CreateTaskActionProposal): Promise<ActionResult> {
-		const normalizedPath = normalizePath(proposal.targetPath);
-		let file = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+		const resolved = await this.resolveTargetFile(proposal.targetPath, {
+			createIfMissing: true,
+			defaultFolder: this.settings.dailyNotesFolder || '04 - Journal'
+		});
 
-		if (!file) {
-			const folder = normalizedPath.split('/').slice(0, -1).join('/');
-			if (folder) await this.ensureFolderExists(folder);
-			file = await this.app.vault.create(normalizedPath, `# ${normalizedPath.split('/').pop()?.replace('.md', '')}\n\n`);
-		}
-
-		if (!(file instanceof TFile)) {
+		const file = resolved.file;
+		if (!file || !(file instanceof TFile)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
-				message: `Impossible d'accéder au fichier : "${normalizedPath}".`,
-				createdOrModifiedPath: normalizedPath
+				message: `Impossible d'accéder au fichier : "${proposal.targetPath}".`,
+				createdOrModifiedPath: resolved.path
 			};
+		}
+
+		// Si la note cible est une note quotidienne (ou mentionne aujourd'hui/date) et qu'aucune date planifiée n'est spécifiée,
+		// on assigne automatiquement la date de la note comme scheduledDate pour alimenter les requêtes Obsidian Tasks / Dataview
+		const isDailyNote = resolved.path.toLowerCase().includes('journal') ||
+			resolved.path.toLowerCase().includes('quotidienne') ||
+			/\b\d{4}-\d{2}-\d{2}\b/.test(resolved.path) ||
+			/\b\d{2}-\d{2}-\d{4}\b/.test(resolved.path);
+
+		if (isDailyNote && !proposal.scheduledDate) {
+			const isoMatch = resolved.path.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+			const frMatch = resolved.path.match(/\b(\d{2}-\d{2}-\d{4})\b/);
+			if (isoMatch) {
+				proposal.scheduledDate = isoMatch[1];
+			} else if (frMatch) {
+				const parts = frMatch[1].split('-');
+				proposal.scheduledDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+			} else {
+				proposal.scheduledDate = new Date().toISOString().split('T')[0];
+			}
 		}
 
 		const cleanTitle = TaskMutator.cleanTaskPrefix(proposal.taskTitle);
@@ -425,34 +736,63 @@ export class ActionExecutor {
 			taskLine = `${taskLine} ^${proposal.blockId.replace(/^\^/, '')}`;
 		}
 
-		await this.app.vault.process(file, (content) => {
-			return `${content.trim()}\n${taskLine}\n`;
-		});
+		let insertedSuccessfully = false;
+		try {
+			if (typeof (this.app.vault as any).process === 'function') {
+				await this.app.vault.process(file, (content) => {
+					const updated = ActionExecutor.insertTaskIntoNoteContent(content, taskLine);
+					if (updated !== content) {
+						insertedSuccessfully = true;
+					}
+					return updated;
+				});
+			}
+		} catch (procErr) {
+			console.warn('[Second Brain Manager] vault.process a échoué, passage à vault.modify:', procErr);
+		}
+
+		if (!insertedSuccessfully) {
+			const oldContent = await this.app.vault.read(file);
+			const newContent = ActionExecutor.insertTaskIntoNoteContent(oldContent, taskLine);
+			await this.app.vault.modify(file, newContent);
+		}
+
+		const noteBase = file.basename || resolved.path.split('/').pop()?.replace('.md', '') || resolved.path;
 
 		return {
 			proposalId: proposal.id,
 			success: true,
-			message: `Tâche créée : "${proposal.taskTitle}" dans "${normalizedPath}".`,
-			createdOrModifiedPath: normalizedPath
+			message: `Tâche créée : "${proposal.taskTitle}" dans "[[${noteBase}]]".`,
+			createdOrModifiedPath: resolved.path
 		};
 	}
 
 	private async executeUpdateTask(proposal: UpdateTaskActionProposal): Promise<ActionResult> {
-		const normalizedPath = normalizePath(proposal.targetPath);
-		const file = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+		const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
+		const file = resolved.file;
 
-		if (!(file instanceof TFile)) {
+		if (!file || !(file instanceof TFile)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
-				message: `Fichier introuvable : "${normalizedPath}".`,
-				createdOrModifiedPath: normalizedPath
+				message: `Fichier introuvable : "${proposal.targetPath}".`,
+				createdOrModifiedPath: resolved.path
 			};
 		}
 
 		await this.app.vault.process(file, (content) => {
 			const lines = content.split('\n');
-			const lineIdx = proposal.lineNumber - 1;
+			let lineIdx = proposal.lineNumber - 1;
+
+			if (lines[lineIdx] === undefined || !lines[lineIdx].includes('- [')) {
+				if (proposal.taskTitle) {
+					const cleanSearch = TaskMutator.cleanTaskPrefix(proposal.taskTitle).toLowerCase();
+					const foundIdx = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+					if (foundIdx !== -1) {
+						lineIdx = foundIdx;
+					}
+				}
+			}
 
 			if (lines[lineIdx] !== undefined) {
 				let line = lines[lineIdx];
@@ -501,27 +841,34 @@ export class ActionExecutor {
 		return {
 			proposalId: proposal.id,
 			success: true,
-			message: `Tâche à la ligne ${proposal.lineNumber} mise à jour dans "${normalizedPath}".`,
-			createdOrModifiedPath: normalizedPath
+			message: `Tâche à la ligne ${proposal.lineNumber} mise à jour dans "[[${file.basename}]]".`,
+			createdOrModifiedPath: resolved.path
 		};
 	}
 
 	private async executeDecomposeTask(proposal: DecomposeTaskActionProposal): Promise<ActionResult> {
-		const normalizedPath = normalizePath(proposal.targetPath);
-		const file = this.app.vault.getFileByPath(normalizedPath) || this.app.vault.getAbstractFileByPath(normalizedPath);
+		const resolved = await this.resolveTargetFile(proposal.targetPath, { createIfMissing: false });
+		const file = resolved.file;
 
-		if (!(file instanceof TFile)) {
+		if (!file || !(file instanceof TFile)) {
 			return {
 				proposalId: proposal.id,
 				success: false,
-				message: `Fichier introuvable : "${normalizedPath}".`,
-				createdOrModifiedPath: normalizedPath
+				message: `Fichier introuvable : "${proposal.targetPath}".`,
+				createdOrModifiedPath: resolved.path
 			};
 		}
 
 		await this.app.vault.process(file, (content) => {
 			const lines = content.split('\n');
-			const lineIdx = proposal.parentLineNumber - 1;
+			let lineIdx = proposal.parentLineNumber - 1;
+
+			if (lines[lineIdx] === undefined || !lines[lineIdx].includes('- [')) {
+				const foundIdx = lines.findIndex(l => l.includes('- ['));
+				if (foundIdx !== -1) {
+					lineIdx = foundIdx;
+				}
+			}
 
 			if (lines[lineIdx] !== undefined) {
 				const parentLine = lines[lineIdx];
@@ -550,8 +897,8 @@ export class ActionExecutor {
 		return {
 			proposalId: proposal.id,
 			success: true,
-			message: `${proposal.subtasks.length} sous-tâches insérées dans "${normalizedPath}".`,
-			createdOrModifiedPath: normalizedPath
+			message: `${proposal.subtasks.length} sous-tâches insérées dans "[[${file.basename}]]".`,
+			createdOrModifiedPath: resolved.path
 		};
 	}
 
@@ -597,14 +944,8 @@ export class ActionExecutor {
 		const sourceBasename = sourceFile.basename || sourceFile.name.replace(/\.md$/, '');
 
 		// Trouver le fichier cible dans le coffre
-		let targetFile: TFile | null = null;
-		const dest = this.app.metadataCache.getFirstLinkpathDest(cleanTargetName, sourceFile.path);
-		if (dest instanceof TFile) {
-			targetFile = dest;
-		} else {
-			const mdFiles = this.app.vault.getMarkdownFiles();
-			targetFile = mdFiles.find(f => f.basename.toLowerCase() === cleanTargetName.toLowerCase() || f.name.toLowerCase() === `${cleanTargetName.toLowerCase()}.md`) || null;
-		}
+		const targetResolved = await this.resolveTargetFile(cleanTargetName, { createIfMissing: false });
+		const targetFile = targetResolved.file;
 
 		const messages: string[] = [];
 

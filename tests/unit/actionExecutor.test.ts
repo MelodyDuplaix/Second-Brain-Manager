@@ -268,5 +268,93 @@ describe('ActionExecutor', () => {
 		expect(processedFiles['01 - Projets/Alpha.md']).toContain('[[Beta]] — Dépendance');
 		expect(processedFiles['02 - Domaines/Beta.md']).toContain('[[Alpha]] — Dépendance');
 	});
+
+	it('should resolve fuzzy daily note path and create task in daily note', async () => {
+		const dailyTaskProp: CreateTaskActionProposal = {
+			id: 'act-daily-fuzzy',
+			type: 'create_task',
+			description: 'Vérifier gouttière',
+			selected: true,
+			targetPath: 'Note quotidienne/2026-08-27.md',
+			taskTitle: 'Vérifier gouttière',
+			dueDate: '2026-08-27',
+			priority: 'high'
+		};
+
+		const results = await executor.executeProposals([dailyTaskProp]);
+		expect(results[0].success).toBe(true);
+		expect(results[0].createdOrModifiedPath).toBe('04 - Journal/2026-08-27.md');
+		expect(createdFiles['04 - Journal/2026-08-27.md'] || processedFiles['04 - Journal/2026-08-27.md']).toBeDefined();
+	});
+
+	it('should resolve fuzzy vault note path by partial basename and create task', async () => {
+		createdFiles['Chaos/1 Notes partagés Antoine/MFRB/Tâches MFRB - Gestion désintéressée.md'] = '# Tâches MFRB\n\n## Tâches\n';
+
+		const mfrbTaskProp: CreateTaskActionProposal = {
+			id: 'act-mfrb-fuzzy',
+			type: 'create_task',
+			description: 'Lancement relance adhésion mfrb',
+			selected: true,
+			targetPath: 'MFRB',
+			taskTitle: 'lancement relance adhésion mfrb (urgence absolue)',
+			priority: 'highest'
+		};
+
+		const results = await executor.executeProposals([mfrbTaskProp]);
+		expect(results[0].success).toBe(true);
+		expect(results[0].createdOrModifiedPath).toBe('Chaos/1 Notes partagés Antoine/MFRB/Tâches MFRB - Gestion désintéressée.md');
+		expect(processedFiles['Chaos/1 Notes partagés Antoine/MFRB/Tâches MFRB - Gestion désintéressée.md']).toContain('lancement relance adhésion mfrb');
+	});
+
+	it('should accurately insert task under ## Taches à faire and not under ## Taches faites or inside code blocks', () => {
+		const dailyContent = `>[!column|no-t txt-c collapse]
+> >[[26-08-2026|Hier]]
+
+## Taches faites
+\`\`\`dataview
+TASK
+WHERE completion = date("2026-08-27")
+\`\`\`
+
+## Taches à faire 
+
+- [x] Préparer journée du
+- [x] Prendre médicament allergie
+
+## Taches prévu aujourd'hui
+\`\`\`tasks
+not done
+scheduled today
+\`\`\`
+
+>[!column|no-t txt-c collapse]
+> >[[28-08-2026|Demain]]`;
+
+		const newTask = '- [ ] vérifier gouttière [scheduled:: 2026-08-27]';
+		const updated = ActionExecutor.insertTaskIntoNoteContent(dailyContent, newTask);
+
+		expect(updated).toContain('## Taches à faire \n\n- [x] Préparer journée du\n- [x] Prendre médicament allergie\n- [ ] vérifier gouttière [scheduled:: 2026-08-27]');
+		expect(updated).not.toContain('## Taches faites\n- [ ] vérifier gouttière');
+	});
+
+	it('should insert task under ## À faire avant le 1er septembre 2026 in project notes', () => {
+		const projectContent = `# Tâche à faire MFRB
+
+## À faire avant le 1er septembre 2026
+
+- [ ] Faire une notice sur le document planning partagé #tm/q1
+
+## Notes liées
+
+- [[CA MFRB]]
+
+---
+*Note créée le 2026-08-26*`;
+
+		const newTask = '- [ ] relance adhésion mfrb [priority:: high]';
+		const updated = ActionExecutor.insertTaskIntoNoteContent(projectContent, newTask);
+
+		expect(updated).toContain('## À faire avant le 1er septembre 2026\n\n- [ ] Faire une notice sur le document planning partagé #tm/q1\n- [ ] relance adhésion mfrb [priority:: high]\n\n## Notes liées');
+	});
 });
 

@@ -1065,7 +1065,7 @@ export class ActionPreviewWidget {
 
 		const resHeader = widgetEl.createDiv({ cls: 'sbm-results-header' });
 		resHeader.createEl('h4', {
-			text: `🎉 ${successResults.length} modification${successResults.length > 1 ? 's' : ''} appliquée${successResults.length > 1 ? 's' : ''} avec succès !`,
+			text: `${successResults.length > 0 ? '🎉' : '⚠️'} ${successResults.length} modification${successResults.length > 1 ? 's' : ''} appliquée${successResults.length > 1 ? 's' : ''} avec succès !`,
 			cls: 'sbm-results-title'
 		});
 
@@ -1078,18 +1078,20 @@ export class ActionPreviewWidget {
 			});
 		}
 
-		// Liste des notes créées ou déplacées avec boutons directs pour les ouvrir
-		const createdNotes = selectedProposals.filter(p => p.type === 'create_note' || p.type === 'move_note' || p.type === 'rename_note');
-		
-		if (createdNotes.length > 0 && app) {
+		// Liste des notes créées ou modifiées avec succès avec boutons directs pour les ouvrir
+		const successfulPaths = Array.from(new Set(
+			successResults
+				.map(r => r.createdOrModifiedPath)
+				.filter((p): p is string => Boolean(p) && p !== 'Google Calendar')
+		));
+
+		if (successfulPaths.length > 0 && app) {
 			const notesSection = widgetEl.createDiv({ cls: 'sbm-results-notes-section' });
-			notesSection.createEl('span', { cls: 'sbm-results-notes-label', text: '📄 Notes créées ou organisées :' });
+			notesSection.createEl('span', { cls: 'sbm-results-notes-label', text: '📄 Notes créées ou modifiées :' });
 
 			const notesList = notesSection.createDiv({ cls: 'sbm-results-notes-list' });
 
-			createdNotes.forEach(p => {
-				const matchingResult = results.find(r => r.proposalId === p.id);
-				const finalPath = matchingResult?.createdOrModifiedPath || p.targetPath;
+			successfulPaths.forEach(finalPath => {
 				const basename = finalPath.split('/').pop()?.replace(/\.md$/, '') || finalPath;
 
 				const noteCard = notesList.createDiv({ cls: 'sbm-result-note-card' });

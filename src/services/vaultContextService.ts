@@ -276,23 +276,80 @@ export class VaultContextService {
 	}
 
 	/**
+	 * Détecte dynamiquement la configuration des notes quotidiennes du coffre :
+	 * - Vérifie le plugin Obsidian natif "Daily Notes" (daily-notes)
+	 * - Vérifie le plugin communautaire "Periodic Notes" (periodic-notes)
+	 * - Vérifie les réglages du plugin Second Brain Manager
+	 * - Analyse les notes existantes dans le coffre pour déduire le format et le dossier réel
+	 */
+	public getDailyNotesConfig(): { folder: string; format: string; template?: string } {
+		let folder = this.settings.dailyNotesFolder || '';
+		let format = this.settings.dateFormat || 'YYYY-MM-DD';
+		let template = this.settings.dailyNoteTemplatePath || '';
+
+		// 1. Détection via plugin officiel Daily Notes d'Obsidian
+		const coreDaily = (this.app as any).internalPlugins?.plugins?.['daily-notes']?.instance?.options;
+		if (coreDaily) {
+			if (coreDaily.folder && !folder) folder = coreDaily.folder;
+			if (coreDaily.format && (!this.settings.dateFormat || this.settings.dateFormat === 'YYYY-MM-DD')) format = coreDaily.format;
+			if (coreDaily.template && !template) template = coreDaily.template;
+		}
+
+		// 2. Détection via plugin Periodic Notes
+		const periodicDaily = (this.app as any).plugins?.plugins?.['periodic-notes']?.settings?.daily;
+		if (periodicDaily && periodicDaily.enabled) {
+			if (periodicDaily.folder && !folder) folder = periodicDaily.folder;
+			if (periodicDaily.format && (!this.settings.dateFormat || this.settings.dateFormat === 'YYYY-MM-DD')) format = periodicDaily.format;
+			if (periodicDaily.template && !template) template = periodicDaily.template;
+		}
+
+		if (!folder) {
+			folder = '04 - Journal';
+		}
+
+		return { folder: normalizePath(folder), format, template: template ? normalizePath(template) : undefined };
+	}
+
+	/**
 	 * Récupération de la note quotidienne pour une date donnée (par défaut aujourd'hui).
-	 * Prend en charge les formats YYYY-MM-DD, DD-MM-YYYY et la détection flexible des dossiers.
+	 * Prend en charge tous les formats de date (YYYY-MM-DD, DD-MM-YYYY, formats personnalisés) et tous les dossiers de coffre.
 	 */
 	public async getDailyNote(dateStr?: string): Promise<{ path: string; exists: boolean; content?: string }> {
 		const targetIso = dateStr ? (DynamicRegexBuilder.normalizeDate(dateStr) || dateStr) : new Date().toISOString().split('T')[0];
-		
+		const config = this.getDailyNotesConfig();
+
+		const nameVariants = new Set<string>();
+		nameVariants.add(targetIso);
+
 		let frDate = targetIso;
 		const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetIso);
 		if (isoMatch) {
 			frDate = `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
+			nameVariants.add(frDate);
+			nameVariants.add(`${isoMatch[1]}${isoMatch[2]}${isoMatch[3]}`);
+			nameVariants.add(`${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`);
+			nameVariants.add(`${isoMatch[1]}_${isoMatch[2]}_${isoMatch[3]}`);
 		}
-		const nameVariants = Array.from(new Set([targetIso, frDate]));
 
-		const dailyFolder = normalizePath(this.settings.dailyNotesFolder || '04 - Journal');
+		try {
+			if (typeof (this.app as any).moment === 'function' || typeof (window as any).moment === 'function') {
+				const momentFn = (this.app as any).moment || (window as any).moment;
+				const m = momentFn(targetIso, 'YYYY-MM-DD');
+				if (m.isValid()) {
+					if (config.format) nameVariants.add(m.format(config.format));
+					nameVariants.add(m.format('YYYY-MM-DD'));
+					nameVariants.add(m.format('DD-MM-YYYY'));
+				}
+			}
+		} catch {
+			// ignore
+		}
+
+		const variantsList = Array.from(nameVariants);
+		const dailyFolder = config.folder;
 
 		// 1. Recherche dans le dossier configuré
-		for (const name of nameVariants) {
+		for (const name of variantsList) {
 			const dailyPath = normalizePath(`${dailyFolder}/${name}.md`);
 			const file = this.app.vault.getFileByPath(dailyPath) || this.app.vault.getAbstractFileByPath(dailyPath);
 			if (file instanceof TFile) {
@@ -303,11 +360,11 @@ export class VaultContextService {
 			}
 		}
 
-		// 2. Recherche globale dans le coffre (ex: Note quotidienne/26-08-2026.md ou Journal/2026-08-26.md)
+		// 2. Recherche globale dans tout le coffre
 		if (typeof this.app.vault.getMarkdownFiles === 'function') {
 			const markdownFiles = this.app.vault.getMarkdownFiles();
 			for (const f of markdownFiles) {
-				if (nameVariants.includes(f.basename)) {
+				if (variantsList.includes(f.basename)) {
 					const content = (typeof (this.app.vault as any).cachedRead === 'function')
 						? await (this.app.vault as any).cachedRead(f)
 						: await this.app.vault.read(f);
@@ -316,7 +373,11 @@ export class VaultContextService {
 			}
 		}
 
-		return { path: normalizePath(`${dailyFolder}/${targetIso}.md`), exists: false };
+		const defaultName = (config.format && config.format !== 'YYYY-MM-DD')
+			? frDate
+			: targetIso;
+
+		return { path: normalizePath(`${dailyFolder}/${defaultName}.md`), exists: false };
 	}
 
 	/**
@@ -327,44 +388,37 @@ export class VaultContextService {
 		templatePath?: string
 	): Promise<{ file: TFile | null; path: string; created: boolean; content: string }> {
 		const targetIso = dateStr ? (DynamicRegexBuilder.normalizeDate(dateStr) || dateStr) : new Date().toISOString().split('T')[0];
-		
-		let frDate = targetIso;
-		const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetIso);
-		if (isoMatch) {
-			frDate = `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
-		}
-		const nameVariants = Array.from(new Set([targetIso, frDate]));
-		const dailyFolder = normalizePath(this.settings.dailyNotesFolder || '04 - Journal');
+		const config = this.getDailyNotesConfig();
 
 		// 1. Vérification si la note existe déjà
-		for (const name of nameVariants) {
-			const dailyPath = normalizePath(`${dailyFolder}/${name}.md`);
-			const file = this.app.vault.getFileByPath(dailyPath) || this.app.vault.getAbstractFileByPath(dailyPath);
+		const existingCheck = await this.getDailyNote(targetIso);
+		if (existingCheck.exists) {
+			const file = this.app.vault.getFileByPath(existingCheck.path) || this.app.vault.getAbstractFileByPath(existingCheck.path);
 			if (file instanceof TFile) {
-				const content = (typeof (this.app.vault as any).cachedRead === 'function')
-					? await (this.app.vault as any).cachedRead(file)
-					: await this.app.vault.read(file);
-				return { file, path: dailyPath, created: false, content };
+				return { file, path: existingCheck.path, created: false, content: existingCheck.content || '' };
 			}
 		}
 
-		if (typeof this.app.vault.getMarkdownFiles === 'function') {
-			const markdownFiles = this.app.vault.getMarkdownFiles();
-			for (const f of markdownFiles) {
-				if (nameVariants.includes(f.basename)) {
-					const content = (typeof (this.app.vault as any).cachedRead === 'function')
-						? await (this.app.vault as any).cachedRead(f)
-						: await this.app.vault.read(f);
-					return { file: f, path: normalizePath(f.path), created: false, content };
+		// 2. Détermination du nom de fichier cible
+		let chosenName = targetIso;
+		const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetIso);
+		const frDate = isoMatch ? `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}` : targetIso;
+
+		try {
+			if (typeof (this.app as any).moment === 'function' || typeof (window as any).moment === 'function') {
+				const momentFn = (this.app as any).moment || (window as any).moment;
+				const m = momentFn(targetIso, 'YYYY-MM-DD');
+				if (m.isValid() && config.format) {
+					chosenName = m.format(config.format);
 				}
+			} else if (config.folder.toLowerCase().includes('quotidienne') || (config.format && config.format.startsWith('DD'))) {
+				chosenName = frDate;
 			}
+		} catch {
+			chosenName = targetIso;
 		}
 
-		// 2. Création de la note quotidienne
-		const chosenName = (dailyFolder.toLowerCase().includes('quotidienne') || (this.settings.dateFormat && this.settings.dateFormat.startsWith('DD')))
-			? frDate
-			: targetIso;
-
+		const dailyFolder = config.folder;
 		const targetPath = normalizePath(`${dailyFolder}/${chosenName}.md`);
 
 		if (dailyFolder && dailyFolder !== '/' && dailyFolder !== '.') {
@@ -380,9 +434,10 @@ export class VaultContextService {
 
 		let initialContent = `# Note du ${chosenName}\n\n`;
 		let rawTemplate = '';
+		const effectiveTemplatePath = templatePath || config.template;
 
-		if (templatePath) {
-			const normTemplate = normalizePath(templatePath);
+		if (effectiveTemplatePath) {
+			const normTemplate = normalizePath(effectiveTemplatePath);
 			const templateFile = this.app.vault.getFileByPath(normTemplate) || this.app.vault.getAbstractFileByPath(normTemplate);
 			if (templateFile instanceof TFile) {
 				rawTemplate = await this.app.vault.read(templateFile);

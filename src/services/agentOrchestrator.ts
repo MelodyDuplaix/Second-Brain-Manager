@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, normalizePath } from 'obsidian';
 import { ChatMessage, LLMConfig } from '../models/llm';
 import { LLMService } from './llmService';
 import { VaultContextService } from './vaultContextService';
@@ -65,23 +65,45 @@ export class AgentOrchestrator {
 		}
 
 		const taskSyntaxDocs = TaskMutator.getTaskSyntaxPromptDescription(this.settings);
+		const dailyConfig = this.vaultContext.getDailyNotesConfig();
+		const dailyNotesFolder = dailyConfig.folder;
+		
+		let chosenName = today;
+		try {
+			if (typeof (this.app as any).moment === 'function' || typeof (window as any).moment === 'function') {
+				const momentFn = (this.app as any).moment || (window as any).moment;
+				const m = momentFn(today, 'YYYY-MM-DD');
+				if (m.isValid() && dailyConfig.format) {
+					chosenName = m.format(dailyConfig.format);
+				}
+			} else {
+				const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today);
+				const frDate = isoMatch ? `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}` : today;
+				chosenName = (dailyNotesFolder.toLowerCase().includes('quotidienne') || (dailyConfig.format && dailyConfig.format.startsWith('DD'))) ? frDate : today;
+			}
+		} catch {
+			chosenName = today;
+		}
+
+		const dailyNoteTodayPath = `${dailyNotesFolder}/${chosenName}.md`;
 
 		return `Tu es l'assistant personnel intelligent "Second Brain Manager" intégré au coffre Obsidian de l'utilisateur.
 
 CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Date du jour : ${today}
+- Note quotidienne du jour (Journal) : "${dailyNoteTodayPath}"
+- Dossier Journal (Daily notes) : "${dailyNotesFolder}"
+- Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"
 - Niveau d'énergie actuel : ${energy}/10 (${energy <= 3 ? 'Mode Économie' : 'Mode Plein Potentiel'})
 - Format des tâches configuré : ${this.settings.taskFormat}
 - Format de priorité matrice : ${this.settings.matrixProvider}
-- Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"
-- Dossier Journal (Daily notes) : "${this.settings.dailyNotesFolder}"
 - Projets existants : ${structure.projects.slice(0, 20).join(', ') || 'Aucun'}
 - Contacts existants : ${structure.contacts.slice(0, 20).join(', ') || 'Aucun'}
 - Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}
 
 COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 1. RECHERCHE D'INFORMATIONS :
-   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`).
+   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact, emplacement d'un projet), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`).
 
 2. CONSULTATION VS MODIFICATION (RÈGLE IMPORTANTE) :
    - Pour les demandes d'information ou de planning (ex: "Quel est mon planning ?", "Qu'est-ce qui est en retard ?", "Résume mes priorités") :
@@ -90,18 +112,28 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 ${taskSyntaxDocs}
      -> NE PROPOSE PAS de modifications/créations d'actions (\`propose_create_task\`, \`propose_update_task\`) SAUF si l'utilisateur a explicitement demandé de modifier, replanifier ou créer.
    - Ne génère des propositions d'actions d'écriture (\`propose_create_note\`, \`propose_create_task\`, \`propose_update_task\`, \`propose_decompose_task\`, \`propose_link_notes\`) QUE si :
-     a) L'utilisateur le demande expressément (ex: "Reporte ces tâches", "Crée la tâche X", "Décompose la tâche Y").
+     a) L'utilisateur le demande expressément (ex: "Reporte ces tâches", "Crée la tâche X", "Rajoute à faire...", "Décompose la tâche Y").
      b) L'utilisateur relate une réunion / prise de note avec des actions et personnes concrètes à enregistrer.
 
-3. RÈGLE ESSENTIELLE SUR LES LIENS :
+3. RÈGLE CRITIQUE SUR LA NOTE QUOTIDIENNE / JOURNAL :
+   - Si l'utilisateur demande d'ajouter, noter ou planifier quelque chose dans sa "note quotidienne", son "journal", pour "aujourd'hui" ou sans note cible explicite :
+     -> Utilise TOUJOURS le chemin "${dailyNoteTodayPath}" comme \`filePath\` ou \`targetPath\`.
+
+4. RÈGLE CRITIQUE SUR LA CRÉATION DE TÂCHES :
+   - Si l'utilisateur demande de créer ou d'ajouter une ou plusieurs tâches (ex: "Rajoute à faire...", "Crée la tâche...", "Ajoute dans le projet X : faire Y et dans la note quotidienne : faire Z") :
+     -> Appelle TOUJOURS l'outil \`propose_create_task\` pour chaque tâche demandée.
+     -> N'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
+     -> Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
+
+5. RÈGLE ESSENTIELLE SUR LES LIENS :
    - Écris TOUJOURS les wikilinks directs : [[NomNote]] ou [[Dossier/NomNote]].
    - NE METS JAMAIS de backticks autour des wikilinks (Écris [[Claire]] et JAMAIS \\\`[[Claire]]\\\`).
 
-4. RÈGLE ESSENTIELLE SUR LE FORMAT DES TÂCHES ET SOUS-TÂCHES :
+6. RÈGLE ESSENTIELLE SUR LE FORMAT DES TÂCHES ET SOUS-TÂCHES :
    - Lorsque tu appelles \`propose_create_task\` ou \`propose_decompose_task\`, fournis UNIQUEMENT le texte brut de l'intitulé dans \`taskTitle\` ou dans la liste \`subtasks\`, SANS ajouter "- [ ]" ni "[ ]" ni puces au début (ex: "Rédiger le plan", et JAMAIS "- [ ] Rédiger le plan").
    - Si tu rédiges une liste de tâches dans ton texte Markdown de réponse, chaque tâche doit commencer par un seul et unique "- [ ] " (ex: "- [ ] Titre", et JAMAIS "- [ ] - [ ] Titre" ni "- [ ] [ ] Titre").
 
-5. CONSIGNE DE STYLE STRICTE :
+7. CONSIGNE DE STYLE STRICTE :
    - N'utilise AUCUN émoji dans tes réponses textuelles (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
 
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :

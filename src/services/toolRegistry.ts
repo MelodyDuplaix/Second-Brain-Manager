@@ -152,11 +152,11 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_append_to_note',
-			description: 'Propose d\'ajouter une entrée ou un compte-rendu dans une note existante ou la note quotidienne.',
+			description: 'Propose d\'ajouter une entrée ou un texte dans une note existante ou la note quotidienne.',
 			parameters: {
 				type: 'object',
 				properties: {
-					filePath: { type: 'string', description: 'Chemin du fichier (ex: "04 - Journal/2026-08-17.md").' },
+					filePath: { type: 'string', description: 'Chemin relatif du fichier cible (ex: "04 - Journal/2026-08-27.md" ou "01 - Projets/Projet.md").' },
 					entryText: { type: 'string', description: 'Texte formaté à ajouter.' },
 					section: { type: 'string', description: 'Titre de la section sous laquelle insérer (optionnel).' }
 				},
@@ -165,11 +165,11 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_create_task',
-			description: 'Propose la création d\'une tâche Markdown canonique compatible Obsidian Tasks dans un fichier.',
+			description: 'Propose la création d\'une tâche Markdown canonique compatible Obsidian Tasks dans un fichier ou la note quotidienne.',
 			parameters: {
 				type: 'object',
 				properties: {
-					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche.' },
+					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche (ex: "04 - Journal/2026-08-27.md" pour la note quotidienne, ou chemin/nom de note de projet).' },
 					taskTitle: { type: 'string', description: 'Intitulé brut de la tâche, sans case à cocher ni puce de liste (ex: "Rédiger le rapport").' },
 					dueDate: { type: 'string', description: 'Date d\'échéance (YYYY-MM-DD).' },
 					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },
@@ -185,7 +185,7 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_update_task',
-			description: 'Propose la modification d\'une tâche existante (date, statut, quadrant, énergie, priorité).',
+			description: 'Propose la modification d\'une tâche existante (date, statut, quadrant, énergie, priorité). NE PAS UTILISER pour créer de nouvelles tâches.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -202,7 +202,7 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_decompose_task',
-			description: 'Propose le découpage d\'une tâche complexe en sous-tâches ordonnées.',
+			description: 'Propose le découpage d\'une tâche complexe existante en sous-tâches ordonnées.',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -232,11 +232,11 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_move_note',
-			description: 'Propose de déplacer une note (ex: de l\'Inbox vers un dossier Domaine ou Projet).',
+			description: 'Propose de déplacer ou ranger une note existante vers un dossier (NE PAS UTILISER pour créer des tâches).',
 			parameters: {
 				type: 'object',
 				properties: {
-					sourceFilePath: { type: 'string', description: 'Chemin actuel du fichier.' },
+					sourceFilePath: { type: 'string', description: 'Chemin actuel du fichier à déplacer.' },
 					destinationFolder: { type: 'string', description: 'Dossier de destination (ex: "01 - Projets").' }
 				},
 				required: ['sourceFilePath', 'destinationFolder']
