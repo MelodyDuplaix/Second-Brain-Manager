@@ -283,7 +283,7 @@ export class CalendarView extends ItemView {
 		const firstDayOfMonth = new Date(year, month, 1);
 		const lastDayOfMonth = new Date(year, month + 1, 0);
 
-		let startDayOfWeek = (firstDayOfMonth.getDay() + 6) % 7; // Lundi = 0
+		const startDayOfWeek = (firstDayOfMonth.getDay() + 6) % 7; // Lundi = 0
 
 		const todayStr = this.formatDateKey(new Date());
 		const selectedStr = this.formatDateKey(this.currentDate);

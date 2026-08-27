@@ -436,7 +436,7 @@ export class VaultContextService {
 				const tomorrowFr = `${String(tomorrow.getDate()).padStart(2, '0')}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${tomorrow.getFullYear()}`;
 				const tomorrowIso = tomorrow.toISOString().split('T')[0];
 
-				let parsedContent = rawTemplate
+				const parsedContent = rawTemplate
 					.replace(/\{\{date\}\}/gi, chosenName)
 					.replace(/\{\{title\}\}/gi, chosenName)
 					.replace(/\{\{yesterday\}\}/gi, yesterdayFr)

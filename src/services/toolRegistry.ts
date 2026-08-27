@@ -444,7 +444,7 @@ export class ToolRegistry {
 					const formatted = events.map(ev => {
 						const start = ev.start.dateTime || ev.start.date;
 						const end = ev.end.dateTime || ev.end.date;
-						let timeInfo = ev.allDay ? 'Toute la journée' : `${start?.split('T')[1]?.slice(0, 5) || ''} - ${end?.split('T')[1]?.slice(0, 5) || ''}`;
+						const timeInfo = ev.allDay ? 'Toute la journée' : `${start?.split('T')[1]?.slice(0, 5) || ''} - ${end?.split('T')[1]?.slice(0, 5) || ''}`;
 						let line = `- [Agenda: ${ev.calendarName || 'Principal'}] ${ev.start.date || start?.split('T')[0]} (${timeInfo}) : **${ev.summary}** (ID: \`${ev.id}\`)`;
 						if (ev.location) line += ` | 📍 Lieu : ${ev.location}`;
 						if (ev.description) line += ` | 📝 Notes : ${ev.description.replace(/\n+/g, ' ').slice(0, 150)}`;
