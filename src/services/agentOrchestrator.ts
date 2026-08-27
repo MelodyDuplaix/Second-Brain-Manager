@@ -45,11 +45,20 @@ export class AgentOrchestrator {
 	/**
 	 * Construit le prompt système enrichi avec la date, l'énergie, les projets, contacts et outils.
 	 */
-	public buildSystemPrompt(attachedContextNotes?: Array<{ path: string; title: string; content: string }>): string {
+	public buildSystemPrompt(
+		attachedContextNotes?: Array<{ path: string; title: string; content: string }>,
+		activeFile?: TFile | null
+	): string {
 		const today = new Date().toISOString().split('T')[0];
 		const energy = this.settings.energyLevel;
 		const structure = this.vaultContext.getVaultStructure();
 		const toolDocs = ToolRegistry.getSystemPromptToolDocumentation();
+
+		let activeNoteInfo = '';
+		const effectiveActive = activeFile || this.app.workspace?.getActiveFile?.();
+		if (effectiveActive instanceof TFile) {
+			activeNoteInfo = `\n- NOTE ACTUELLEMENT OUVERTE DANS L'ÉDITEUR : "${normalizePath(effectiveActive.path)}" (Titre : "${effectiveActive.basename}")`;
+		}
 
 		let attachedContextText = '';
 		if (attachedContextNotes && attachedContextNotes.length > 0) {
@@ -93,7 +102,7 @@ CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Date du jour : ${today}
 - Note quotidienne du jour (Journal) : "${dailyNoteTodayPath}"
 - Dossier Journal (Daily notes) : "${dailyNotesFolder}"
-- Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"
+- Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"${activeNoteInfo}
 - Niveau d'énergie actuel : ${energy}/10 (${energy <= 3 ? 'Mode Économie' : 'Mode Plein Potentiel'})
 - Format des tâches configuré : ${this.settings.taskFormat}
 - Format de priorité matrice : ${this.settings.matrixProvider}
@@ -119,8 +128,12 @@ ${taskSyntaxDocs}
    - Si l'utilisateur demande d'ajouter, noter ou planifier quelque chose dans sa "note quotidienne", son "journal", pour "aujourd'hui" ou sans note cible explicite :
      -> Utilise TOUJOURS le chemin "${dailyNoteTodayPath}" comme \`filePath\` ou \`targetPath\`.
 
-4. RÈGLE CRITIQUE SUR LA CRÉATION DE TÂCHES :
-   - Si l'utilisateur demande de créer ou d'ajouter une ou plusieurs tâches (ex: "Rajoute à faire...", "Crée la tâche...", "Ajoute dans le projet X : faire Y et dans la note quotidienne : faire Z") :
+4. RÈGLE CRITIQUE SUR LE CHEMIN DES NOTES & LA CRÉATION DE TÂCHES :
+   - Si la note cible est la note actuellement ouverte ou que l'utilisateur dit "dans cette note", "ici", ou nomme la note ouverte :
+     -> Utilise TOUJOURS le chemin canonique de la note ouverte (ex: "${effectiveActive instanceof TFile ? normalizePath(effectiveActive.path) : ''}") comme \`filePath\`.
+   - Si l'utilisateur nomme un projet ou une note existante du coffre :
+     -> Utilise le chemin complet retourné par les recherches (ex: "Note rangés/MFRB/Tâche à faire MFRB.md" ou "01 - Projets/Second Brain.md") ou le nom exact de la note.
+   - Si l'utilisateur demande de créer ou d'ajouter une ou plusieurs tâches (ex: "Rajoute à faire...", "Crée la tâche...", "Ajoute dans le projet X : faire Y") :
      -> Appelle TOUJOURS l'outil \`propose_create_task\` pour chaque tâche demandée.
      -> N'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
      -> Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
@@ -158,13 +171,14 @@ ${toolDocs}`;
 		config: LLMConfig,
 		attachedContextNotes: Array<{ path: string; title: string; content: string }>,
 		onStatusUpdate: (status: AgentStepEvent) => void,
-		onChunk: (chunk: string, fullVisibleText: string) => void
+		onChunk: (chunk: string, fullVisibleText: string) => void,
+		activeFile?: TFile | null
 	): Promise<AgentResponse> {
 		// Optimisation de la latence : fenêtre glissante des 8 derniers messages pour accélérer le préfill GPU
 		const trimmedHistory = conversationHistory.length > 8 ? conversationHistory.slice(-8) : conversationHistory;
 
 		const messages: ChatMessage[] = [
-			{ role: 'system', content: this.buildSystemPrompt(attachedContextNotes) },
+			{ role: 'system', content: this.buildSystemPrompt(attachedContextNotes, activeFile) },
 			...trimmedHistory
 		];
 

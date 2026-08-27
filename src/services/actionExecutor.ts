@@ -124,81 +124,15 @@ export class ActionExecutor {
 			}
 		}
 
-		// 2. Vérification directe par chemin normalisé
-		const directNorm = normalizePath(clean.endsWith('.md') ? clean : `${clean}.md`);
-		let file = this.app.vault.getFileByPath(directNorm) || this.app.vault.getAbstractFileByPath(directNorm);
-		if (file instanceof TFile) {
-			return { file, path: directNorm, created: false };
+		// 2. Résolution canonique déterministe (sans devinette, insensible aux accents, à la casse et aux sous-dossiers)
+		const canonicalFile = this.vaultContext.resolveFileCanonically(clean);
+		if (canonicalFile instanceof TFile) {
+			return { file: canonicalFile, path: normalizePath(canonicalFile.path), created: false };
 		}
 
-		const directWithoutExt = normalizePath(clean);
-		file = this.app.vault.getFileByPath(directWithoutExt) || this.app.vault.getAbstractFileByPath(directWithoutExt);
-		if (file instanceof TFile) {
-			return { file, path: directWithoutExt, created: false };
-		}
-
-		// 3. Recherche via Obsidian metadataCache / Linkpath
-		const baseOnly = clean.split('/').pop()?.replace(/\.md$/, '').trim() || clean;
-		if (this.app.metadataCache && typeof this.app.metadataCache.getFirstLinkpathDest === 'function') {
-			try {
-				const dest = this.app.metadataCache.getFirstLinkpathDest(baseOnly, '');
-				if (dest instanceof TFile) {
-					return { file: dest, path: normalizePath(dest.path), created: false };
-				}
-			} catch {
-				// ignore
-			}
-		}
-
-		// 4. Recherche dans tous les fichiers markdown du coffre
-		if (typeof this.app.vault.getMarkdownFiles === 'function') {
-			const mdFiles = this.app.vault.getMarkdownFiles();
-			const lowerBase = baseOnly.toLowerCase();
-
-			// A. Match exact sur le nom de fichier / basename
-			const exact = mdFiles.find(f => f.basename.toLowerCase() === lowerBase || f.name.toLowerCase() === lowerBase);
-			if (exact) {
-				return { file: exact, path: normalizePath(exact.path), created: false };
-			}
-
-			// B. Match sur fin de chemin (ex: 'MFRB/Notes.md')
-			const endMatch = mdFiles.find(f => normalizePath(f.path).toLowerCase().endsWith(directNorm.toLowerCase()));
-			if (endMatch) {
-				return { file: endMatch, path: normalizePath(endMatch.path), created: false };
-			}
-
-			// C. Match partiel intelligent (ex: recherche 'MFRB' -> 'Note rangés/MFRB/Tâche à faire MFRB.md')
-			if (lowerBase.length >= 3) {
-				const taskKeywords = ['tâche', 'tache', 'task', 'todo', 'à faire', 'a faire', 'action'];
-				
-				// Priorité 1 : Fichiers dont le chemin ou le dossier contient la recherche ET dont le nom contient un mot-clé de tâches
-				const taskMatch = mdFiles.find(f => {
-					const pLower = f.path.toLowerCase();
-					const bLower = f.basename.toLowerCase();
-					const matchesBase = pLower.includes(lowerBase) || bLower.includes(lowerBase);
-					const hasTaskKeyword = taskKeywords.some(kw => bLower.includes(kw));
-					return matchesBase && hasTaskKeyword;
-				});
-				if (taskMatch) {
-					return { file: taskMatch, path: normalizePath(taskMatch.path), created: false };
-				}
-
-				// Priorité 2 : Fichier dont le nom contient directement le terme
-				const partial = mdFiles.find(f => f.basename.toLowerCase().includes(lowerBase));
-				if (partial) {
-					return { file: partial, path: normalizePath(partial.path), created: false };
-				}
-
-				// Priorité 3 : N'importe quel fichier dans un dossier portant ce nom
-				const folderMatch = mdFiles.find(f => normalizePath(f.path).toLowerCase().includes(`/${lowerBase}/`));
-				if (folderMatch) {
-					return { file: folderMatch, path: normalizePath(folderMatch.path), created: false };
-				}
-			}
-		}
-
-		// 5. Si introuvable et création demandée
+		// 3. Si introuvable et création demandée
 		if (options.createIfMissing) {
+			const baseOnly = clean.split('/').pop()?.replace(/\.md$/, '').trim() || clean;
 			let folder = options.defaultFolder;
 			let fileName = baseOnly;
 
@@ -234,6 +168,7 @@ export class ActionExecutor {
 			return { file: createdFile, path: finalPath, created: true };
 		}
 
+		const directNorm = normalizePath(clean.endsWith('.md') ? clean : `${clean}.md`);
 		return { file: null, path: directNorm, created: false };
 	}
 

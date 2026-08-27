@@ -356,5 +356,33 @@ scheduled today
 
 		expect(updated).toContain('## À faire avant le 1er septembre 2026\n\n- [ ] Faire une notice sur le document planning partagé #tm/q1\n- [ ] relance adhésion mfrb [priority:: high]\n\n## Notes liées');
 	});
+
+	it('should resolve note with accents when requested without accents (tache a faire mfrb -> Tâche à faire MFRB)', async () => {
+		createdFiles['Note rangés/MFRB/Tâche à faire MFRB.md'] = '# Tâche à faire MFRB\n\n## À faire avant le 1er septembre 2026\n\n- [ ] Première tâche';
+
+		const mfrbAccentProp: CreateTaskActionProposal = {
+			id: 'act-mfrb-accent',
+			type: 'create_task',
+			description: 'Faire relance adhésion',
+			selected: true,
+			targetPath: 'tache a faire mfrb',
+			taskTitle: 'faire relance adhésion expiré',
+			priority: 'high'
+		};
+
+		const results = await executor.executeProposals([mfrbAccentProp]);
+		expect(results[0].success).toBe(true);
+		expect(results[0].createdOrModifiedPath).toBe('Note rangés/MFRB/Tâche à faire MFRB.md');
+		expect(processedFiles['Note rangés/MFRB/Tâche à faire MFRB.md']).toContain('faire relance adhésion expiré');
+	});
+
+	it('should resolve note without createIfMissing for update_task even with accent differences', async () => {
+		createdFiles['Note rangés/MFRB/Tâche à faire MFRB.md'] = '# Tâche à faire MFRB\n\n## Tâches\n- [ ] Première tâche';
+
+		const resolved = await executor.resolveTargetFile('tache a faire mfrb', { createIfMissing: false });
+		expect(resolved.file).not.toBeNull();
+		expect(resolved.path).toBe('Note rangés/MFRB/Tâche à faire MFRB.md');
+		expect(resolved.created).toBe(false);
+	});
 });
 

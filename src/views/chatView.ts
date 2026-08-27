@@ -801,6 +801,18 @@ export class ChatView extends ItemView {
 				}
 			}
 
+			let currentActiveFile: TFile | null = this.lastActiveFile || this.app.workspace.getActiveFile();
+			if (!currentActiveFile) {
+				const mdLeaves = this.app.workspace.getLeavesOfType('markdown');
+				for (const leaf of mdLeaves) {
+					const view = leaf.view as MarkdownView;
+					if (view && view.file instanceof TFile) {
+						currentActiveFile = view.file;
+						break;
+					}
+				}
+			}
+
 			const agentResponse = await this.orchestrator.executeAgentLoop(
 				this.messages.slice(0, -1),
 				config,
@@ -819,7 +831,8 @@ export class ChatView extends ItemView {
 					const cleaned = this.cleanWikilinkSyntax(fullVisibleText);
 					textContentEl.setText(cleaned);
 					this.scrollToBottom();
-				}
+				},
+				currentActiveFile
 			);
 
 			bubbleEl.removeClass('sbm-msg-streaming');

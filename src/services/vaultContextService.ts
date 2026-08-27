@@ -31,6 +31,34 @@ export interface VaultStructureSummary {
 	totalMarkdownFiles: number;
 }
 
+/**
+ * Normalise une chaîne en clé canonique alphanumérique sans accents ni ponctuation ni espaces.
+ * "Note rangés/MFRB/Tâche à faire MFRB.md" -> "noterangesmfrbtacheafairemfrb"
+ */
+export function normalizeCanonicalKey(input: string): string {
+	if (!input || typeof input !== 'string') return '';
+	return input
+		.replace(/^\[\[/, '')
+		.replace(/\]\]$/, '')
+		.replace(/\.md$/i, '')
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Supprime les accents et diacritiques d'une chaîne tout en conservant les séparateurs.
+ */
+export function stripAccents(str: string): string {
+	if (!str || typeof str !== 'string') return '';
+	return str
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.trim();
+}
+
 export class VaultContextService {
 	private app: App;
 	private settings: SecondBrainSettings;
@@ -38,6 +66,113 @@ export class VaultContextService {
 	constructor(app: App, settings: SecondBrainSettings) {
 		this.app = app;
 		this.settings = settings;
+	}
+
+	/**
+	 * Résolution canonique déterministe d'un fichier dans le coffre (sans devinette ni sensibilité aux accents/casse/chemins relatifs).
+	 */
+	public resolveFileCanonically(rawPath: string, activeFile?: TFile | null): TFile | null {
+		if (!rawPath || typeof rawPath !== 'string') return null;
+
+		let clean = rawPath
+			.replace(/^\[\[/, '')
+			.replace(/\]\]$/, '')
+			.replace(/[\r\n]+/g, ' ')
+			.trim();
+		clean = clean.replace(/^["']/, '').replace(/["']$/, '').trim();
+		if (!clean) return null;
+
+		const lowerClean = clean.toLowerCase();
+
+		// 1. Si la recherche cible explicitement la note active
+		if (lowerClean === 'active' || lowerClean === 'current' || lowerClean === 'note active' || lowerClean === 'cette note') {
+			const active = activeFile || this.app.workspace?.getActiveFile?.();
+			if (active instanceof TFile) return active;
+		}
+
+		// 2. Recherche exacte directe via Vault
+		const directNorm = normalizePath(clean.endsWith('.md') ? clean : `${clean}.md`);
+		let file = this.app.vault.getFileByPath(directNorm) || this.app.vault.getAbstractFileByPath(directNorm);
+		if (file instanceof TFile) return file;
+
+		const directWithoutExt = normalizePath(clean);
+		file = this.app.vault.getFileByPath(directWithoutExt) || this.app.vault.getAbstractFileByPath(directWithoutExt);
+		if (file instanceof TFile) return file;
+
+		// 3. Comparaison avec la note active
+		const effectiveActive = activeFile || this.app.workspace?.getActiveFile?.();
+		if (effectiveActive instanceof TFile) {
+			const activeKey = normalizeCanonicalKey(effectiveActive.basename);
+			const queryKey = normalizeCanonicalKey(clean);
+			if (activeKey === queryKey || normalizeCanonicalKey(effectiveActive.path) === queryKey) {
+				return effectiveActive;
+			}
+		}
+
+		// 4. Moteur de liens natif Obsidian (metadataCache)
+		const baseOnly = clean.split('/').pop()?.replace(/\.md$/, '').trim() || clean;
+		if (this.app.metadataCache && typeof this.app.metadataCache.getFirstLinkpathDest === 'function') {
+			try {
+				const dest = this.app.metadataCache.getFirstLinkpathDest(baseOnly, '');
+				if (dest instanceof TFile) return dest;
+				const destFull = this.app.metadataCache.getFirstLinkpathDest(clean, '');
+				if (destFull instanceof TFile) return destFull;
+			} catch {
+				// ignore
+			}
+		}
+
+		// 5. Index canonique (Normalisation sans accents, ponctuation, espaces)
+		if (typeof this.app.vault.getMarkdownFiles === 'function') {
+			const mdFiles = this.app.vault.getMarkdownFiles();
+			const queryKey = normalizeCanonicalKey(clean);
+			const baseKey = normalizeCanonicalKey(baseOnly);
+
+			// Match A : Correspondance exacte clé normalisée sur le nom de fichier (basename)
+			const exactBase = mdFiles.find(f => normalizeCanonicalKey(f.basename) === baseKey || normalizeCanonicalKey(f.basename) === queryKey);
+			if (exactBase) return exactBase;
+
+			// Match B : Correspondance exacte clé normalisée sur le chemin complet
+			const exactPath = mdFiles.find(f => normalizeCanonicalKey(f.path) === queryKey);
+			if (exactPath) return exactPath;
+
+			// Match C : Fin de chemin (ex: "mfrb/tacheafairemfrb")
+			const endPath = mdFiles.find(f => normalizeCanonicalKey(f.path).endsWith(queryKey));
+			if (endPath) return endPath;
+
+			// Match D : Intersection de mots-clés (Fuzzy word tokens)
+			const queryTokens = stripAccents(clean).split(/[^a-z0-9]+/).filter(w => w.length >= 2);
+			if (queryTokens.length > 0) {
+				let bestFile: TFile | null = null;
+				let bestScore = 0;
+
+				for (const f of mdFiles) {
+					const baseNorm = stripAccents(f.basename);
+					const pathNorm = stripAccents(f.path);
+					let matchedTokens = 0;
+
+					for (const token of queryTokens) {
+						if (baseNorm.includes(token)) {
+							matchedTokens += 2; // Priorité élevée si dans le nom de fichier
+						} else if (pathNorm.includes(token)) {
+							matchedTokens += 1;
+						}
+					}
+
+					const maxPossible = queryTokens.length * 2;
+					const score = matchedTokens / maxPossible;
+
+					if (score > bestScore && (matchedTokens >= queryTokens.length || score >= 0.7)) {
+						bestScore = score;
+						bestFile = f;
+					}
+				}
+
+				if (bestFile) return bestFile;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -209,8 +344,7 @@ export class VaultContextService {
 	 * Lecture sécurisée du contenu d'une note.
 	 */
 	public async readNote(filePath: string, maxCharacters = 4000): Promise<{ path: string; title: string; content: string; truncated: boolean } | null> {
-		const normalized = normalizePath(filePath);
-		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
+		const file = this.resolveFileCanonically(filePath);
 
 		if (!(file instanceof TFile)) {
 			return null;
@@ -221,7 +355,7 @@ export class VaultContextService {
 		const content = truncated ? fullContent.slice(0, maxCharacters) + '\n\n... [Contenu tronqué pour la taille du contexte]' : fullContent;
 
 		return {
-			path: normalized,
+			path: normalizePath(file.path),
 			title: file.basename,
 			content,
 			truncated
@@ -232,8 +366,7 @@ export class VaultContextService {
 	 * Analyse des liens entrants (backlinks) et sortants (outlinks) d'une note.
 	 */
 	public async getNoteConnections(filePath: string): Promise<NoteConnections | null> {
-		const normalized = normalizePath(filePath);
-		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
+		const file = this.resolveFileCanonically(filePath);
 
 		if (!(file instanceof TFile)) {
 			return null;
