@@ -9,7 +9,9 @@ export type ActionType =
 	| 'decompose_task'
 	| 'link_notes'
 	| 'move_note'
-	| 'rename_note';
+	| 'rename_note'
+	| 'create_calendar_event'
+	| 'update_calendar_event';
 
 export interface BaseActionProposal {
 	id: string;
@@ -121,6 +123,31 @@ export interface RenameNoteActionProposal extends BaseActionProposal {
 	linkDirection?: LinkDirection;
 }
 
+export interface CreateCalendarEventActionProposal extends BaseActionProposal {
+	type: 'create_calendar_event';
+	title: string;
+	startDate: string;
+	startTime?: string;
+	endDate?: string;
+	endTime?: string;
+	eventDescription?: string;
+	location?: string;
+	calendarId?: string;
+}
+
+export interface UpdateCalendarEventActionProposal extends BaseActionProposal {
+	type: 'update_calendar_event';
+	eventId: string;
+	title?: string;
+	startDate?: string;
+	startTime?: string;
+	endDate?: string;
+	endTime?: string;
+	eventDescription?: string;
+	location?: string;
+	calendarId?: string;
+}
+
 export type ActionProposal =
 	| CreateNoteActionProposal
 	| AppendToNoteActionProposal
@@ -129,7 +156,9 @@ export type ActionProposal =
 	| DecomposeTaskActionProposal
 	| LinkNotesActionProposal
 	| MoveNoteActionProposal
-	| RenameNoteActionProposal;
+	| RenameNoteActionProposal
+	| CreateCalendarEventActionProposal
+	| UpdateCalendarEventActionProposal;
 
 export interface ActionResult {
 	proposalId: string;

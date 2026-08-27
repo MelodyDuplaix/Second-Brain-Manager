@@ -24,12 +24,18 @@ export class DynamicRegexBuilder {
 		return isNumeric ? new RegExp(`#${escaped}\\/(\\d+)`, 'i') : new RegExp(`#${escaped}\\/([a-zA-ZÀ-ÿ0-9_-]+)`, 'i');
 	}
 
+	public static buildTagDateRegex(tagPrefix: string | string[]): RegExp {
+		const names = Array.isArray(tagPrefix) ? tagPrefix.map(p => this.escapeRegex(p)).join('|') : this.escapeRegex(tagPrefix);
+		return new RegExp(`(?:^|\\s)#(?:${names})\\/(?:\\[\\[)?(\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{4}|[^\\]\\s#^]+)(?:\\]\\])?`, 'ui');
+	}
+
 	public static buildDataviewFieldRegex(fieldName: string | string[]): RegExp {
 		const names = Array.isArray(fieldName) ? fieldName.join('|') : fieldName;
 		return new RegExp(`(?:\\[|\\()(?:${names})::\\s*(?:\\[\\[)?([^\\]\\)\\n]+?)(?:\\]\\])?(?:\\s*\\]|\\))`, 'i');
 	}
 
 	public static readonly DATAVIEW_ANY_FIELD_REGEX = /(?:\[|\()[a-zA-Z0-9_À-ÿ-]+::[^\n\])]*(?:\]|\))/gi;
+	public static readonly ANY_TAG_DATE_REGEX = /(?:^|\s)#(?:due|scheduled|start|completion|completed|done|cancelled|canceled)\/(?:\[\[)?[^\s#^\]]+(?:\]\])?/gi;
 
 	public static normalizeDate(rawDate?: string): string | undefined {
 		if (!rawDate) return undefined;

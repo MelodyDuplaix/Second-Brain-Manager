@@ -27,6 +27,7 @@ export interface CompletionEvent {
 	taskText: string;
 	categoryTags?: string[];
 	quadrant?: string;
+	fromSync?: boolean;
 }
 
 export interface CoinRules {

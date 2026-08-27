@@ -5,6 +5,7 @@ import { FolderSuggest } from '../../suggesters/folderSuggest';
 import { FileSuggest } from '../../suggesters/fileSuggest';
 import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
+import { GoogleCalendarService } from '../../services/googleCalendarService';
 
 export class MainPage extends BaseSettingsPage {
 	render(): void {
@@ -431,6 +432,100 @@ export class MainPage extends BaseSettingsPage {
 							.onChange(async (value) => {
 								this.plugin.settings.llmEndpoint = value.trim();
 								await this.plugin.saveSettings();
+							});
+					});
+			});
+		}
+
+		// 6. Google Calendar & Agenda
+		const calGroup = new SettingGroup(this.containerEl).setHeading('Google Calendar et agenda');
+
+		calGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Client ID Google (Obligatoire)')
+				.setDesc('Votre Google Cloud OAuth Client ID (Type Application de bureau ou Application Web).')
+				.addText((text) => {
+					text
+						.setPlaceholder('ex: 123456789-xxx.apps.googleusercontent.com')
+						.setValue(this.plugin.settings.googleClientId || '')
+						.onChange(async (val) => {
+							this.plugin.settings.googleClientId = val.trim();
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+
+		calGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Client Secret Google (Obligatoire)')
+				.setDesc('Votre Google Cloud OAuth Client Secret (GOCSPX-...).')
+				.addText((text) => {
+					text
+						.setPlaceholder('GOCSPX-...')
+						.setValue(this.plugin.settings.googleClientSecret || '')
+						.onChange(async (val) => {
+							this.plugin.settings.googleClientSecret = val.trim();
+							await this.plugin.saveSettings();
+						});
+					text.inputEl.type = 'password';
+				});
+		});
+
+		const isLoggedIn = !!this.plugin.settings.googleRefreshToken;
+
+		if (isLoggedIn) {
+			calGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Statut : 🟢 Connecté à Google Calendar')
+					.setDesc('Votre compte est authentifié. L\'IA a accès à votre agenda pour le briefing et la planification.')
+					.addButton((btn) => {
+						btn
+							.setButtonText('🔄 Tester la connexion')
+							.onClick(async () => {
+								btn.setDisabled(true);
+								btn.setButtonText('⏳ Test...');
+								try {
+									const events = await GoogleCalendarService.getEvents(this.plugin.settings);
+									btn.setDisabled(false);
+									btn.setButtonText('🔄 Tester la connexion');
+									new Notice(`✅ Connexion réussie ! ${events.length} événement(s) récupéré(s).`);
+								} catch (err: unknown) {
+									btn.setDisabled(false);
+									btn.setButtonText('🔄 Tester la connexion');
+									const msg = err instanceof Error ? err.message : String(err);
+									new Notice(`❌ Erreur connexion : ${msg}`);
+								}
+							});
+					})
+					.addButton((btn) => {
+						btn
+							.setButtonText('Déconnecter')
+							.setWarning()
+							.onClick(async () => {
+								await GoogleCalendarService.logoutGoogle(this.plugin);
+								this.render();
+							});
+					});
+			});
+		} else {
+			calGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Lancer l\'approbation Google Calendar')
+					.setDesc('Démarre le serveur local temporaire et ouvre la page d\'autorisation Google dans votre navigateur. Assurez-vous d\'avoir ajouté l\'URI de redirection "http://127.0.0.1:42813/callback" dans votre console Google Cloud.')
+					.addButton((btn) => {
+						btn
+							.setButtonText('🔗 Se connecter à Google Calendar')
+							.setCta()
+							.onClick(async () => {
+								btn.setDisabled(true);
+								btn.setButtonText('⏳ Attente d\'approbation...');
+								await GoogleCalendarService.startGoogleLogin(this.plugin, (success) => {
+									btn.setDisabled(false);
+									btn.setButtonText('🔗 Se connecter à Google Calendar');
+									if (success) {
+										this.render();
+									}
+								});
 							});
 					});
 			});

@@ -353,6 +353,14 @@ export class ActionPreviewWidget {
 		} else if (prop.type === 'append_to_note') {
 			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-append' });
 			badge.setText('📌 Ajouter à note');
+		} else if (prop.type === 'create_calendar_event') {
+			const calProp = prop as any;
+			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-create' });
+			badge.setText(`📅 Agenda : ${calProp.startDate || ''}${calProp.startTime ? ` à ${calProp.startTime}` : ''}`);
+		} else if (prop.type === 'update_calendar_event') {
+			const calProp = prop as any;
+			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-postpone' });
+			badge.setText(`📅 Modifier agenda : ${calProp.title || calProp.eventId}`);
 		} else {
 			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge' });
 			badge.setText('📄 Action note');
@@ -473,6 +481,21 @@ export class ActionPreviewWidget {
 			const notePill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
 			notePill.createSpan({ text: '📝 Création : ' });
 			notePill.createSpan({ text: `${createProp.folder || 'Inbox'}/${createProp.fileName || 'Note.md'}`, cls: 'sbm-diff-new' });
+		} else if (prop.type === 'create_calendar_event') {
+			const calProp = prop as any;
+			const calPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+			calPill.createSpan({ text: '📅 Événement : ' });
+			calPill.createSpan({ text: `${calProp.startDate}${calProp.startTime ? ` à ${calProp.startTime}` : ' (toute la journée)'}`, cls: 'sbm-diff-new' });
+			if (calProp.location) {
+				const locPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+				locPill.createSpan({ text: '📍 ' });
+				locPill.createSpan({ text: calProp.location, cls: 'sbm-diff-new' });
+			}
+		} else if (prop.type === 'update_calendar_event') {
+			const calProp = prop as any;
+			const calPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+			calPill.createSpan({ text: '📅 Modification agenda : ' });
+			calPill.createSpan({ text: calProp.title || calProp.eventId, cls: 'sbm-diff-new' });
 		}
 	}
 

@@ -228,6 +228,39 @@ export class GamificationService {
 	}
 
 	/**
+	 * Enregistre silencieusement une tâche complétée provenant d'une synchronisation distante (Obsidian Sync, iCloud, Git...)
+	 * ou d'une modification externe hors Obsidian, SANS accorder de pièces et SANS modifier le streak.
+	 */
+	public static recordSyncCompletion(
+		task: ObsidianTask,
+		data: PluginData,
+		matrixProvider: string
+	): { newlyRecorded: boolean } {
+		this.ensureDataStructures(data);
+
+		const taskId = this.getStableTaskId(task);
+
+		if (data.completionEvents[taskId]) {
+			return { newlyRecorded: false };
+		}
+
+		const matrixAdapter = MatrixAdapterFactory.createAdapter(matrixProvider);
+		const quadrant = matrixAdapter.getQuadrant(task);
+
+		data.completionEvents[taskId] = {
+			taskId,
+			completedAt: new Date().toISOString(),
+			coins: 0,
+			taskText: task.cleanText,
+			categoryTags: task.domainTags,
+			quadrant: quadrant || undefined,
+			fromSync: true
+		};
+
+		return { newlyRecorded: true };
+	}
+
+	/**
 	 * Enregistre un événement de workflow (Briefing, Revue du soir, Reprise, Rangement de note)
 	 * et met à jour les badges associés.
 	 */
@@ -320,5 +353,127 @@ export class GamificationService {
 			}
 		});
 		return dist;
+	}
+
+	/**
+	 * Archive l'état complet du score (pièces, statistiques, historique des tâches, badges)
+	 * dans une note Markdown du coffre et remet toutes les statistiques de gamification à zéro.
+	 */
+	public static async archiveAndResetGamification(
+		app: any,
+		data: PluginData
+	): Promise<{ success: boolean; archivePath: string; oldBalance: number; tasksCount: number }> {
+		this.ensureDataStructures(data);
+
+		const now = new Date();
+		const dateStr = now.toISOString().split('T')[0];
+		const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+		const readableDateTime = now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' });
+
+		const oldBalance = data.wallet.balance || 0;
+		const oldLifetime = data.wallet.lifetimeEarned || 0;
+		const oldSpent = data.wallet.lifetimeSpent || 0;
+		const oldStreak = data.streak.currentStreak || 0;
+		const oldLongestStreak = data.streak.longestStreak || 0;
+
+		const events = Object.values(data.completionEvents).sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+		const tasksCount = events.length;
+
+		// Badges débloqués
+		const unlockedBadges = BADGE_DEFINITIONS.filter(b => data.badges[b.id]?.unlockedAt).map(b => {
+			const uDate = data.badges[b.id].unlockedAt ? new Date(data.badges[b.id].unlockedAt!).toLocaleDateString('fr-FR') : '';
+			return `- **${b.name}** : ${b.description} *(Débloqué le ${uDate})*`;
+		});
+
+		// Tableau des tâches complétées
+		let taskTable = '| Date & Heure | Tâche | Catégories | Gain |\n| :--- | :--- | :--- | :--- |\n';
+		if (events.length === 0) {
+			taskTable += '| - | Aucune tâche enregistrée | - | 0 🪙 |\n';
+		} else {
+			events.forEach(e => {
+				const d = e.completedAt ? new Date(e.completedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+				const tags = (e.categoryTags || []).join(' ') || '-';
+				const cleanTitle = (e.taskText || 'Tâche').replace(/\|/g, '-');
+				taskTable += `| ${d} | ${cleanTitle} | ${tags} | +${e.coins} 🪙 |\n`;
+			});
+		}
+
+		const archiveContent = `---
+tags:
+  - second-brain/archive-score
+  - gamification/bilan
+date: ${dateStr}
+score_archive: ${oldBalance}
+streak_archive: ${oldStreak}
+tasks_count: ${tasksCount}
+---
+
+# 🪙 Bilan & Archive de Score Gamification
+
+> **Bilan généré le ${readableDateTime}**  
+> Cette note conserve l'historique complet de votre progression avant remise à zéro du compteur de pièces.
+
+## 📊 Statistiques du Portefeuille
+- **Solde final archivé** : **${oldBalance} 🪙**
+- **Total de pièces gagnées à vie** : **${oldLifetime} 🪙**
+- **Total dépensé / utilisé** : **${oldSpent} 🪙**
+- **Série active au moment du reset** : **${oldStreak} jour${oldStreak > 1 ? 's' : ''}** (Record personnel : **${oldLongestStreak} jour${oldLongestStreak > 1 ? 's' : ''}**)
+- **Nombre total de tâches validées** : **${tasksCount}**
+
+## 🏆 Trophées Débloqués (${unlockedBadges.length})
+${unlockedBadges.length > 0 ? unlockedBadges.join('\n') : '*Aucun trophée débloqué lors de cette session.*'}
+
+## 📜 Historique des Tâches Récompensées
+${taskTable}
+
+---
+*Généré automatiquement par le plugin Second Brain Manager.*
+`;
+
+		const folderName = '00 - Archives';
+		const fileName = `Bilan Score & Pièces - ${dateStr} (${timeStr}).md`;
+		const archivePath = `${folderName}/${fileName}`;
+
+		try {
+			if (app && app.vault) {
+				const folderExists = app.vault.getAbstractFileByPath(folderName);
+				if (!folderExists) {
+					try {
+						await app.vault.createFolder(folderName);
+					} catch {
+						// Ignorer si existe déjà
+					}
+				}
+				await app.vault.create(archivePath, archiveContent);
+			}
+		} catch (vaultErr) {
+			console.warn('[Second Brain Manager] Erreur écriture note archive, tentative à la racine:', vaultErr);
+			try {
+				if (app && app.vault) {
+					await app.vault.create(fileName, archiveContent);
+				}
+			} catch (e2) {
+				console.error('[Second Brain Manager] Impossible de créer la note archive:', e2);
+			}
+		}
+
+		// Remise à zéro des statistiques
+		data.wallet = { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
+		data.streak = { currentStreak: 0, longestStreak: 0 };
+		data.completionEvents = {};
+		data.badges = {};
+		data.workflowCounts = {
+			morningBriefings: 0,
+			eveningReviews: 0,
+			recoveries: 0,
+			notesMovedOrCleaned: 0
+		};
+
+		return {
+			success: true,
+			archivePath,
+			oldBalance,
+			tasksCount
+		};
 	}
 }

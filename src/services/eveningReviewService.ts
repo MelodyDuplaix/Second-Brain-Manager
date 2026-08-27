@@ -7,6 +7,7 @@ import { LLMConfig, ChatMessage } from '../models/llm';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { VaultContextService } from './vaultContextService';
 import { GamificationService } from './gamificationService';
+import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import SecondBrainPlugin from '../main';
 
 export interface EveningVaultData {
@@ -119,18 +120,12 @@ export class EveningReviewService {
 	/**
 	 * Construit le prompt système et utilisateur optimisé pour la revue du soir.
 	 */
-	public static buildEveningMessages(data: EveningVaultData): ChatMessage[] {
+	public static buildEveningMessages(data: EveningVaultData, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ChatMessage[] {
 		const formatTaskLine = (t: ObsidianTask): string => {
-			let line = `- [${t.completed ? 'x' : ' '}] ${t.title}`;
-			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
-			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
-			if (t.matrixTag) line += ` ${t.matrixTag}`;
-			if (t.energy) line += ` #energie/${t.energy}`;
-			if (t.pieces) line += ` #pieces/${t.pieces}`;
-			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
-			if (noteBasename) line += ` [[${noteBasename}]]`;
-			return line;
+			return TaskMutator.formatTaskForPrompt(t, config);
 		};
+
+		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(config);
 
 		const completedText = data.completedTodayTasks.length > 0
 			? data.completedTodayTasks.map(formatTaskLine).join('\n')
@@ -159,14 +154,14 @@ TON OBJECTIF :
 Fournir une Revue du Soir chaleureuse, déculpabilisante, constructive et apaisante pour aider l'utilisateur à clôturer sa journée, célébrer ses victoires, trier les tâches ouvertes et libérer sa charge mentale avant la soirée.
 
 CONSIGNE DE STYLE STRICTE :
-- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et apaisant.
+- N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et apaisant.
 
 CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Bienveillant, positif et valorisant. Ne jamais faire de reproches sur les tâches non terminées. Clôturer la journée dans la sérénité.
 2. **Célébration des Victoires** : Valorise les tâches accomplies (${data.completedTodayTasks.length} tâche(s)) et les pièces gagnées (+${data.coinsEarnedToday} pièces).
 3. **Triage Clair des Tâches Restantes** :
-   - Pour les tâches non terminées, propose des options claires : *Reporter à demain* (\`📅\`), *Découper*, *Changer de quadrant*, ou *Abandonner sans regret* (\`- [-]\`).
-   - Format Markdown Tasks standard : \`- [ ] Titre 📅 YYYY-MM-DD #tm/qN [[LienNote]]\` avec wikilinks.
+   - Pour les tâches non terminées, propose des options claires selon la syntaxe configurée :
+${taskSyntaxDesc}
 4. **Nettoyage Mental & Inbox** :
    - Si des notes sont dans l'Inbox, suggère brièvement où les classer (\`01 - Projets/\`, \`03 - Contacts/\`).
 5. **Structure de la Revue** :
@@ -190,7 +185,7 @@ ${overdueText}
 NOTES EN BOITE DE RECEPTION (${data.inboxNotes.length}) :
 ${inboxText}
 ${dailyNoteSnippet}
-Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. N'utilise aucun émoji dans ta réponse.`;
+Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -208,7 +203,7 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		onChunk: (chunk: string, fullText: string) => void
 	): Promise<{ text: string; data: EveningVaultData; allTasks: ObsidianTask[] }> {
 		const data = await this.collectEveningData(app, plugin);
-		const messages = this.buildEveningMessages(data);
+		const messages = this.buildEveningMessages(data, plugin.settings);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
 		const config: LLMConfig = {

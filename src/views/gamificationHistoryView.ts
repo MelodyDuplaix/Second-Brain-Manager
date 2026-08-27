@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, setIcon, Modal, App } from 'obsidian';
 import { GamificationService } from '../services/gamificationService';
 import { DomUtils } from '../utils/domUtils';
 import { BADGE_DEFINITIONS } from '../models/gamification';
@@ -41,7 +41,17 @@ export class GamificationHistoryView extends ItemView {
 		container.addClass('sbm-history-container');
 
 		const headerEl = container.createEl('div', { cls: 'sbm-history-header' });
-		headerEl.createEl('h2', { text: '🪙 Gamification — Portefeuille, séries et trophées' });
+		const titleWrap = headerEl.createDiv({ cls: 'sbm-history-title-wrap' });
+		titleWrap.createEl('h2', { text: '🪙 Gamification — Portefeuille, séries et trophées' });
+
+		const resetBtn = headerEl.createEl('button', {
+			cls: 'sbm-history-reset-btn',
+			text: '🔄 Repartir à zéro'
+		});
+		resetBtn.title = 'Archiver le score actuel dans une note et remettre les compteurs à 0';
+		resetBtn.addEventListener('click', () => {
+			this.openResetConfirmationModal();
+		});
 
 		// Navigation par Onglets
 		const tabNav = container.createEl('div', { cls: 'sbm-tab-nav' });
@@ -457,5 +467,73 @@ export class GamificationHistoryView extends ItemView {
 				}, String(item.coins));
 			}
 		});
+	}
+
+	private openResetConfirmationModal(): void {
+		new ResetGamificationModal(this.app, this.plugin, async () => {
+			const res = await GamificationService.archiveAndResetGamification(this.app, this.plugin.pluginData);
+			if (res.success) {
+				await this.plugin.savePluginData();
+				new Notice(`Score archivé dans "${res.archivePath}". Les compteurs sont remis à 0 !`, 6000);
+				try {
+					await this.app.workspace.openLinkText(res.archivePath, '', false);
+				} catch {
+					// fallback
+				}
+				await this.render();
+			}
+		}).open();
+	}
+}
+
+export class ResetGamificationModal extends Modal {
+	private plugin: SecondBrainPlugin;
+	private onConfirmed: () => Promise<void>;
+
+	constructor(app: App, plugin: SecondBrainPlugin, onConfirmed: () => Promise<void>) {
+		super(app);
+		this.plugin = plugin;
+		this.onConfirmed = onConfirmed;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('sbm-reset-score-modal');
+
+		contentEl.createEl('h2', { text: '🪙 Repartir à zéro & Archiver le score' });
+
+		const currentBalance = this.plugin.pluginData?.wallet?.balance || 0;
+		const currentStreak = this.plugin.pluginData?.streak?.currentStreak || 0;
+		const eventsCount = Object.keys(this.plugin.pluginData?.completionEvents || {}).length;
+
+		const desc = contentEl.createEl('p', {
+			text: `Voulez-vous archiver votre progression actuelle (${currentBalance} 🪙, série de ${currentStreak} j, ${eventsCount} tâches validées) et repartir sur de nouvelles bases ?`
+		});
+		desc.style.lineHeight = '1.45';
+
+		const noteInfo = contentEl.createEl('div', { cls: 'sbm-reset-info-box' });
+		noteInfo.createEl('p', {
+			text: '📁 Une note d\'archive détaillée ("00 - Archives/Bilan Score & Pièces...") contenant l\'ensemble de vos gains, trophées et historique de tâches sera automatiquement créée dans votre coffre.'
+		});
+
+		const actions = contentEl.createDiv({ cls: 'sbm-modal-actions-row' });
+		const cancelBtn = actions.createEl('button', { text: 'Annuler' });
+		cancelBtn.addEventListener('click', () => this.close());
+
+		const confirmBtn = actions.createEl('button', {
+			cls: 'mod-warning',
+			text: '💾 Confirmer l\'archivage et repartir à 0'
+		});
+		confirmBtn.addEventListener('click', async () => {
+			confirmBtn.disabled = true;
+			confirmBtn.setText('Archivage en cours...');
+			this.close();
+			await this.onConfirmed();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }

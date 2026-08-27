@@ -156,5 +156,21 @@ Voici comment écrire une tâche :
 		expect(allTasks.length).toBe(4);
 		expect(allTasks.map(t => t.title)).toEqual(['Parent', 'Subtask 1', 'Nested Subtask 1.1', 'Another Root']);
 	});
+
+	it('should parse tag-based dates and priorities correctly without polluting domainTags or title', () => {
+		const line = '- [x] Rédiger le compte rendu #due/2026-08-30 #scheduled/2026-08-29 #start/2026-08-28 #done/2026-08-31 #priorite/haute #energie/3 #projet #travail';
+		const task = TaskParser.parseLine(line, 'CR.md', 1, DEFAULT_SYNTAX_CONFIG);
+
+		expect(task).not.toBeNull();
+		expect(task?.completed).toBe(true);
+		expect(task?.title).toBe('Rédiger le compte rendu #projet #travail');
+		expect(task?.dueDate).toBe('2026-08-30');
+		expect(task?.scheduledDate).toBe('2026-08-29');
+		expect(task?.startDate).toBe('2026-08-28');
+		expect(task?.completedDate).toBe('2026-08-31');
+		expect(task?.priority).toBe('high');
+		expect(task?.energy).toBe(3);
+		expect(task?.domainTags).toEqual(['#projet', '#travail']);
+	});
 });
 

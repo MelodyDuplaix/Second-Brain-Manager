@@ -10,6 +10,7 @@ import { VaultContextService } from './vaultContextService';
 import { TaskSafetyGuard } from './taskSafetyGuard';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { GamificationService } from './gamificationService';
+import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import SecondBrainPlugin from '../main';
 
 export interface RecoveryVaultData {
@@ -486,19 +487,12 @@ export class RecoveryService {
 	/**
 	 * Construit le prompt système et utilisateur optimisé pour un réembarquement doux et un allègement complet.
 	 */
-	public static buildRecoveryMessages(data: RecoveryVaultData): ChatMessage[] {
+	public static buildRecoveryMessages(data: RecoveryVaultData, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ChatMessage[] {
 		const formatTaskDetailed = (t: ObsidianTask): string => {
-			let line = `- [ ] ${t.title}`;
-			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
-			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
-			if (t.matrixTag) line += ` ${t.matrixTag}`;
-			if (t.priority) line += ` (Priorite: ${t.priority})`;
-			if (t.energy) line += ` #energie/${t.energy}`;
-			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
-			if (noteBasename) line += ` [[${noteBasename}]]`;
-			line += ` [Fichier: "${t.filePath}", Ligne: ${t.lineNumber}]`;
-			return line;
+			return TaskMutator.formatTaskForPrompt(t, config);
 		};
+
+		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(config);
 
 		const oneThingText = data.oneThingTask
 			? formatTaskDetailed(data.oneThingTask)
@@ -530,7 +524,7 @@ TON OBJECTIF :
 Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan deculpabilisant, et proposer un plan de tri et d'allegement structure et exhaustif de ses taches et notes en souffrance.
 
 CONSIGNE DE STYLE STRICTE :
-- N'utilise AUCUN emoji dans ta reponse textuelle. Reste sobre, clair, direct et bienveillant.
+- N'utilise AUCUN emoji dans ta reponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et bienveillant.
 
 DISCERNEMENT SEMANTIQUE ET SECURITE :
 - Fais preuve d'un discernement contextuel approfondi :
@@ -551,7 +545,9 @@ STRUCTURE DE TA REPONSE :
 3. Etape 2 : The One Thing (La seule tache prioritaire et strategique du jour au format \`- [ ] ... [[Note]]\`).
 4. Etape 3 : Plan d'Allegement & Tri Detaille :
    - Traite et justifie les annulations, reports, rangements et renommages de notes en vrac.
-5. Conseil de demarrage (1 phrase motivante).
+5. Format des tâches :
+${taskSyntaxDesc}
+6. Conseil de demarrage (1 phrase motivante).
 
 BLOC D'ACTIONS STRUCTUREES (OBLIGATOIRE A LA FIN DU MESSAGE) :
 A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`\`\`json:actions ... \`\`\` contenant le tableau exhaustif de TOUTES les propositions d'actions pour que l'utilisateur puisse les executer en 1 clic :
@@ -614,7 +610,7 @@ ${staleText}
 NOTES EN VRAC ET BOITE DE RECEPTION :
 ${looseNotesText}
 
-Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et securise des taches et notes, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse.`;
+Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et securise des taches et notes, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse (sauf si la syntaxe des tâches configurée l'exige).`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -632,7 +628,7 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et 
 		onChunk: (chunk: string, fullText: string) => void
 	): Promise<{ text: string; data: RecoveryVaultData; allTasks: ObsidianTask[]; proposals: ActionProposal[] }> {
 		const data = await this.collectRecoveryData(app, plugin);
-		const messages = this.buildRecoveryMessages(data);
+		const messages = this.buildRecoveryMessages(data, plugin.settings);
 
 		// Lecture de toutes les tâches pour enrichissement
 		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];

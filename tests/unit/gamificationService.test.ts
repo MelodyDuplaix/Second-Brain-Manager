@@ -170,4 +170,88 @@ describe('GamificationService', () => {
 			expect(trend[6].coins).toBe(5);
 		});
 	});
+
+	describe('Synchronisation & Complétion distante (Sync)', () => {
+		it('should record sync completion silently without awarding coins or modifying streak', () => {
+			const data = createEmptyPluginData();
+			data.wallet.balance = 10;
+			data.streak.currentStreak = 3;
+
+			const syncTask: ObsidianTask = {
+				rawText: '- [x] Tâche cochée sur mobile 📅 2026-08-27 #tm/q1 #pieces/5',
+				cleanText: 'Tâche cochée sur mobile #tm/q1 #pieces/5',
+				title: 'Tâche cochée sur mobile',
+				completed: true,
+				statusChar: 'x',
+				status: 'done',
+				filePath: '01 - Projets/Mobile.md',
+				lineNumber: 3,
+				indentLevel: 0,
+				pieces: 5,
+				matrixTag: '#tm/q1',
+				domainTags: ['#tm/q1'],
+				subtasks: []
+			};
+
+			const res = GamificationService.recordSyncCompletion(syncTask, data, 'task-matrix');
+			expect(res.newlyRecorded).toBe(true);
+
+			// Solde de pièces intact
+			expect(data.wallet.balance).toBe(10);
+			expect(data.wallet.lifetimeEarned).toBe(0);
+
+			// Série intacte
+			expect(data.streak.currentStreak).toBe(3);
+
+			// Événement enregistré avec 0 pièces et fromSync: true
+			const taskId = GamificationService.getStableTaskId(syncTask);
+			expect(data.completionEvents[taskId]).toBeDefined();
+			expect(data.completionEvents[taskId].coins).toBe(0);
+			expect(data.completionEvents[taskId].fromSync).toBe(true);
+
+			// Deuxième appel idempotent
+			const res2 = GamificationService.recordSyncCompletion(syncTask, data, 'task-matrix');
+			expect(res2.newlyRecorded).toBe(false);
+		});
+	});
+
+	describe('Archivage & Remise à zéro (Repartir à 0)', () => {
+		it('should create archive note and reset all gamification data', async () => {
+			const data = createEmptyPluginData();
+			data.wallet = { balance: 120, lifetimeEarned: 250, lifetimeSpent: 130 };
+			data.streak = { currentStreak: 5, longestStreak: 12 };
+			data.completionEvents['task::1'] = {
+				taskId: 'task::1',
+				completedAt: '2026-08-27T10:00:00.000Z',
+				coins: 10,
+				taskText: 'Tâche test validée'
+			};
+
+			const mockVault = {
+				getAbstractFileByPath: vi.fn().mockReturnValue(null),
+				createFolder: vi.fn().mockResolvedValue(undefined),
+				create: vi.fn().mockResolvedValue(undefined)
+			};
+			const mockApp = { vault: mockVault };
+
+			const res = await GamificationService.archiveAndResetGamification(mockApp, data);
+
+			expect(res.success).toBe(true);
+			expect(res.oldBalance).toBe(120);
+			expect(res.tasksCount).toBe(1);
+			expect(res.archivePath).toContain('00 - Archives/Bilan Score & Pièces');
+
+			expect(mockVault.create).toHaveBeenCalled();
+			const createdContent = mockVault.create.mock.calls[0][1];
+			expect(createdContent).toContain('score_archive: 120');
+			expect(createdContent).toContain('Tâche test validée');
+
+			// Les compteurs sont remis à 0
+			expect(data.wallet.balance).toBe(0);
+			expect(data.wallet.lifetimeEarned).toBe(0);
+			expect(data.streak.currentStreak).toBe(0);
+			expect(data.streak.longestStreak).toBe(0);
+			expect(Object.keys(data.completionEvents).length).toBe(0);
+		});
+	});
 });

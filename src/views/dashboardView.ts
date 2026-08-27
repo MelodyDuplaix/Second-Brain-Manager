@@ -475,12 +475,18 @@ export class DashboardView extends ItemView {
 
 	private async completeTask(task: ObsidianTask): Promise<void> {
 		const todayStr = new Date().toISOString().split('T')[0];
-		await this.mutateTaskLine(task, (line) => TaskMutator.setCompleted(line, true, todayStr, this.plugin.settings));
+		try {
+			this.plugin.isPluginPerformingTaskAction = true;
+			this.plugin.recordUserCheckboxInteraction(task.filePath);
+			await this.mutateTaskLine(task, (line) => TaskMutator.setCompleted(line, true, todayStr, this.plugin.settings));
 
-		const res = GamificationService.processCompletion(task, this.plugin.pluginData, this.plugin.settings.matrixProvider);
-		if (res.rewardGranted) {
-			await this.plugin.savePluginData();
-			new Notice(`🎉 Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙)`);
+			const res = GamificationService.processCompletion(task, this.plugin.pluginData, this.plugin.settings.matrixProvider);
+			if (res.rewardGranted) {
+				await this.plugin.savePluginData();
+				new Notice(`🎉 Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙)`);
+			}
+		} finally {
+			this.plugin.isPluginPerformingTaskAction = false;
 		}
 	}
 

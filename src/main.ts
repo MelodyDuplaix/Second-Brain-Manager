@@ -7,14 +7,16 @@ import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views
 import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
+import { CalendarView, VIEW_TYPE_CALENDAR } from './views/calendarView';
 import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { EnergyLevelModal } from './modals/energyLevelModal';
 import { BriefingEnergyModal } from './modals/briefingEnergyModal';
+import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
 
-export interface SecondBrainSettings extends TaskSyntaxConfig {
+export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings {
 	energyLevel: number;
 	defaultCoinsPerTask: number;
 	matrixProvider: 'focus-first' | 'task-matrix' | 'quad-tasks' | '4d-matrix' | 'custom';
@@ -37,6 +39,7 @@ export interface SecondBrainSettings extends TaskSyntaxConfig {
 
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_SYNTAX_CONFIG,
+	...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
 	energyLevel: 5,
 	defaultCoinsPerTask: 1,
 	matrixProvider: 'task-matrix',
@@ -95,6 +98,12 @@ export default class SecondBrainPlugin extends Plugin {
 	settings: SecondBrainSettings;
 	pluginData: PluginData;
 
+	private lastUserCheckboxTime = 0;
+	private lastUserCheckboxFilePath: string | null = null;
+	private lastUserEditorChangeTime = 0;
+	private lastUserEditorFilePath: string | null = null;
+	public isPluginPerformingTaskAction = false;
+
 	async onload() {
 		await this.loadPluginData();
 
@@ -124,6 +133,11 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new EveningReviewView(leaf, this)
 		);
 
+		this.registerView(
+			VIEW_TYPE_CALENDAR,
+			(leaf) => new CalendarView(leaf, this)
+		);
+
 		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
@@ -139,6 +153,10 @@ export default class SecondBrainPlugin extends Plugin {
 			this.activateEveningReviewView();
 		});
 
+		this.addRibbonIcon('calendar', 'Agenda Google Calendar', () => {
+			this.activateCalendarView();
+		});
+
 		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
 			this.activateHistoryView();
 		});
@@ -149,6 +167,40 @@ export default class SecondBrainPlugin extends Plugin {
 
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText(`Énergie: ${this.settings.energyLevel}/10 | 🪙 ${this.pluginData.wallet.balance}`);
+
+		// Traçage des interactions utilisateur sur les cases à cocher dans l'interface Obsidian
+		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+			const target = evt.target as HTMLElement | null;
+			if (!target) return;
+			if (
+				target.classList.contains('task-list-item-checkbox') ||
+				target.classList.contains('cm-task-checkbox') ||
+				(target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox')
+			) {
+				this.recordUserCheckboxInteraction();
+			}
+		});
+
+		this.registerDomEvent(document, 'change', (evt: Event) => {
+			const target = evt.target as HTMLElement | null;
+			if (!target) return;
+			if (
+				target.classList.contains('task-list-item-checkbox') ||
+				target.classList.contains('cm-task-checkbox') ||
+				(target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox')
+			) {
+				this.recordUserCheckboxInteraction();
+			}
+		});
+
+		// Traçage des modifications actives dans l'éditeur Markdown
+		this.registerEvent(
+			this.app.workspace.on('editor-change', (_editor, info) => {
+				this.lastUserEditorChangeTime = Date.now();
+				const activeFile = (info as any)?.file || this.app.workspace.getActiveFile();
+				this.lastUserEditorFilePath = activeFile?.path || null;
+			})
+		);
 
 		// Écouteur automatique de complétion de tâches dans les fichiers Markdown
 		this.registerEvent(
@@ -217,6 +269,14 @@ export default class SecondBrainPlugin extends Plugin {
 			name: 'Ouvrir l\'historique des pièces et statistiques',
 			callback: () => {
 				this.activateHistoryView();
+			}
+		});
+
+		this.addCommand({
+			id: 'ouvrir-agenda-google',
+			name: 'Ouvrir l\'agenda Google Calendar',
+			callback: () => {
+				this.activateCalendarView();
 			}
 		});
 
@@ -323,23 +383,53 @@ export default class SecondBrainPlugin extends Plugin {
 		// Nettoyage automatique assuré par Obsidian pour les vues et événements enregistrés
 	}
 
+	public recordUserCheckboxInteraction(filePath?: string): void {
+		this.lastUserCheckboxTime = Date.now();
+		const targetPath = filePath || this.app.workspace.getActiveFile()?.path;
+		this.lastUserCheckboxFilePath = targetPath || null;
+	}
+
+	public isLocalUserTaskCheck(filePath: string): boolean {
+		const now = Date.now();
+		const isRecentPluginAction = this.isPluginPerformingTaskAction;
+		const isRecentCheckbox = (now - this.lastUserCheckboxTime < 3500);
+		const isRecentEditor = (now - this.lastUserEditorChangeTime < 3500) && (!this.lastUserEditorFilePath || this.lastUserEditorFilePath === filePath);
+		return isRecentPluginAction || isRecentCheckbox || isRecentEditor;
+	}
+
 	public async checkFileForCompletedTasks(file: TFile): Promise<void> {
+		const isLocal = this.isLocalUserTaskCheck(file.path);
 		const content = await this.app.vault.read(file);
 		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
 
+		let dataModified = false;
+
 		for (const task of tasks) {
 			if (task.completed || task.status === 'done') {
-				const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider);
-				if (res.rewardGranted) {
-					await this.savePluginData();
-					new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
-					if (res.newlyUnlockedBadges && res.newlyUnlockedBadges.length > 0) {
-						for (const badge of res.newlyUnlockedBadges) {
-							new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${badge.name} !\n${badge.description}`, 7000);
+				if (isLocal) {
+					const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider);
+					if (res.rewardGranted) {
+						dataModified = true;
+						new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
+						if (res.newlyUnlockedBadges && res.newlyUnlockedBadges.length > 0) {
+							for (const badge of res.newlyUnlockedBadges) {
+								new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${badge.name} !\n${badge.description}`, 7000);
+							}
 						}
+					}
+				} else {
+					// Tâche cochée hors Obsidian (ex: synchronisation depuis un autre appareil / sync distant)
+					// On enregistre silencieusement pour éviter de distribuer des pièces ou notifications en double
+					const syncRes = GamificationService.recordSyncCompletion(task, this.pluginData, this.settings.matrixProvider);
+					if (syncRes.newlyRecorded) {
+						dataModified = true;
 					}
 				}
 			}
+		}
+
+		if (dataModified) {
+			await this.savePluginData();
 		}
 	}
 
@@ -384,13 +474,13 @@ export default class SecondBrainPlugin extends Plugin {
 			}
 		}
 
-		if (this.settings.autoOpenDailyNoteOnBriefing) {
+		if (this.settings.autoOpenDailyNoteOnBriefing !== false) {
 			try {
 				const vaultContext = new VaultContextService(this.app, this.settings);
 				const todayStr = new Date().toISOString().split('T')[0];
 				const dailyRes = await vaultContext.getOrCreateDailyNote(todayStr, this.settings.dailyNoteTemplatePath);
-				if (dailyRes.path) {
-					await this.app.workspace.openLinkText(dailyRes.path, '', false);
+				if (dailyRes.file) {
+					await vaultContext.openDailyNoteInWorkspace(dailyRes.file);
 				}
 			} catch (e) {
 				console.warn('[Second Brain Manager] Impossible d\'ouvrir la note quotidienne:', e);
@@ -434,6 +524,26 @@ export default class SecondBrainPlugin extends Plugin {
 
 		if (leaf) {
 			workspace.revealLeaf(leaf);
+		}
+	}
+
+	async activateCalendarView() {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)[0];
+
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				leaf = rightLeaf;
+				await leaf.setViewState({ type: VIEW_TYPE_CALENDAR, active: true });
+			}
+		}
+
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+			if (leaf.view instanceof CalendarView) {
+				await (leaf.view as CalendarView).refreshEvents();
+			}
 		}
 	}
 
@@ -497,7 +607,10 @@ export default class SecondBrainPlugin extends Plugin {
 
 	async loadPluginData() {
 		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, await this.loadData());
-		this.settings = raw.settings;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings);
+		if (this.settings.autoOpenDailyNoteOnBriefing === undefined) {
+			this.settings.autoOpenDailyNoteOnBriefing = true;
+		}
 
 		// Normalisation des chemins configurés
 		if (this.settings.inboxFolder) {

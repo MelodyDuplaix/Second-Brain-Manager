@@ -235,17 +235,17 @@ export class BriefingView extends ItemView {
 
 		const textDisplayEl = this.contentElWrapper.createEl('div', { cls: 'sbm-briefing-text-display sbm-msg-streaming' });
 
-		// 0. Ouverture immédiate de la note quotidienne du jour si configurée
-		if (this.plugin.settings.autoOpenDailyNoteOnBriefing) {
+		// 0. Ouverture et création immédiate de la note quotidienne du jour si configurée
+		if (this.plugin.settings.autoOpenDailyNoteOnBriefing !== false) {
 			try {
 				const vaultContext = new VaultContextService(this.app, this.plugin.settings);
 				const todayStr = new Date().toISOString().split('T')[0];
 				const dailyRes = await vaultContext.getOrCreateDailyNote(todayStr, this.plugin.settings.dailyNoteTemplatePath);
-				if (dailyRes.path) {
-					await this.app.workspace.openLinkText(dailyRes.path, '', false);
+				if (dailyRes.file) {
+					await vaultContext.openDailyNoteInWorkspace(dailyRes.file);
 				}
 			} catch (e) {
-				console.warn('[Second Brain Manager] Impossible d\'ouvrir la note quotidienne:', e);
+				console.warn('[Second Brain Manager] Impossible de créer ou d\'ouvrir la note quotidienne:', e);
 			}
 		}
 

@@ -3896,5 +3896,561 @@ textarea.sbm-chat-textarea:focus {
 	transition: all 0.15s ease;
 }
 
+/* ==========================================================================
+   Vue Dédiée Agenda & Google Calendar
+   ========================================================================== */
 
+.sbm-calendar-view-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+	background-color: var(--background-primary);
+	font-family: var(--font-interface);
+}
+
+.sbm-calendar-header {
+	flex-shrink: 0;
+	padding: 12px 18px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	background-color: var(--background-secondary);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sbm-calendar-nav-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.sbm-calendar-title-group {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-calendar-header-icon {
+	color: var(--interactive-accent);
+	font-size: 1.2em;
+	display: inline-flex;
+}
+
+.sbm-calendar-main-title {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-size: 1.15em !important;
+	font-weight: 700;
+	color: var(--text-normal);
+}
+
+.sbm-calendar-controls-group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.sbm-cal-nav-btn {
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 5px 10px;
+	font-size: 0.85em;
+	cursor: pointer;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	transition: all 0.15s ease;
+}
+
+.sbm-cal-nav-btn:hover {
+	color: var(--text-normal);
+	border-color: var(--interactive-accent);
+}
+
+.sbm-cal-today-btn {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-cal-mode-selector {
+	display: inline-flex;
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 2px;
+	gap: 2px;
+}
+
+.sbm-cal-mode-btn {
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	padding: 4px 10px;
+	font-size: 0.82em;
+	cursor: pointer;
+	color: var(--text-muted);
+	transition: all 0.12s ease;
+}
+
+.sbm-cal-mode-btn.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-weight: 600;
+}
+
+.sbm-cal-action-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	border-radius: 6px;
+	padding: 5px 10px;
+	font-size: 0.85em;
+	cursor: pointer;
+}
+
+.sbm-calendar-date-label-row {
+	display: flex;
+	align-items: center;
+}
+
+.sbm-calendar-period-label {
+	font-size: 0.9em;
+	font-weight: 600;
+	color: var(--text-accent);
+}
+
+.sbm-calendar-body {
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.sbm-cal-connect-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	padding: 36px 24px;
+	border-radius: 12px;
+	background-color: var(--background-secondary);
+	border: 1px dashed var(--background-modifier-border);
+	max-width: 520px;
+	margin: 30px auto;
+	gap: 12px;
+}
+
+.sbm-cal-connect-icon {
+	font-size: 2.2em;
+	color: var(--text-muted);
+}
+
+.sbm-cal-connect-actions {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	justify-content: center;
+	margin-top: 10px;
+}
+
+.sbm-cal-day-section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sbm-cal-day-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-bottom: 4px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sbm-cal-day-title {
+	font-weight: 700;
+	font-size: 0.95em;
+	color: var(--text-normal);
+}
+
+.sbm-cal-day-title.is-today {
+	color: var(--interactive-accent);
+}
+
+.sbm-cal-day-count {
+	font-size: 0.8em;
+	color: var(--text-muted);
+}
+
+.sbm-cal-events-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sbm-cal-event-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 10px 14px;
+	border-radius: 8px;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	transition: all 0.15s ease;
+}
+
+.sbm-cal-event-card:hover {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.sbm-cal-time-badge {
+	font-size: 0.82em;
+	font-weight: 600;
+	color: var(--text-accent);
+	background-color: rgba(var(--interactive-accent-rgb), 0.1);
+	padding: 3px 8px;
+	border-radius: 4px;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.sbm-cal-time-badge.all-day {
+	background-color: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.sbm-cal-card-content {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.sbm-cal-card-title {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-size: 0.95em !important;
+	font-weight: 600;
+	color: var(--text-normal);
+	word-break: break-word;
+}
+
+.sbm-cal-location-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 0.8em;
+	color: var(--text-muted);
+}
+
+.sbm-cal-desc-preview {
+	font-size: 0.82em;
+	color: var(--text-muted);
+	line-height: 1.35;
+	word-break: break-word;
+}
+
+.sbm-cal-source-badge {
+	font-size: 0.75em;
+	color: var(--text-faint);
+}
+
+.sbm-cal-card-actions {
+	display: flex;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.sbm-cal-item-action-btn {
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	padding: 4px 6px;
+	color: var(--text-muted);
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.sbm-cal-item-action-btn:hover {
+	border-color: var(--background-modifier-border);
+	color: var(--text-normal);
+	background-color: var(--background-primary);
+}
+
+.sbm-cal-item-action-btn.is-delete:hover {
+	color: var(--text-error);
+	border-color: var(--text-error);
+}
+
+/* Modal Formulaire Événement */
+.sbm-cal-event-modal {
+	padding: 16px 20px;
+}
+
+.sbm-cal-event-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-top: 14px;
+}
+
+.sbm-form-group {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sbm-form-group label {
+	font-size: 0.85em;
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-form-group input,
+.sbm-form-group textarea {
+	width: 100%;
+	padding: 7px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	font-family: inherit;
+	box-sizing: border-box;
+}
+
+.sbm-form-group-inline {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-form-row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;
+}
+
+/* ==========================================================================
+   Vue Agenda pour Sidebar : Mini-Calendrier à points + Liste d'événements
+   ========================================================================== */
+
+.sbm-mini-cal-wrapper {
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	margin-bottom: 12px;
+	width: 100%;
+	box-sizing: border-box;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.sbm-mini-cal-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 0 4px;
+	margin-bottom: 8px;
+}
+
+.sbm-mini-cal-month-label {
+	font-weight: 700;
+	font-size: 0.92em;
+	color: var(--text-normal);
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	transition: background-color 0.15s ease;
+}
+
+.sbm-mini-cal-month-label:hover {
+	background-color: var(--background-modifier-hover);
+	color: var(--text-accent);
+}
+
+.sbm-mini-cal-nav-btn {
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	padding: 3px 6px;
+	cursor: pointer;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.15s ease;
+}
+
+.sbm-mini-cal-nav-btn:hover {
+	background-color: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.sbm-mini-cal-grid {
+	display: grid;
+	grid-template-columns: repeat(7, 1fr);
+	gap: 2px;
+	text-align: center;
+	width: 100%;
+}
+
+.sbm-mini-cal-day-name {
+	font-size: 0.72em;
+	font-weight: 700;
+	color: var(--text-faint);
+	padding: 3px 0;
+	text-transform: uppercase;
+}
+
+.sbm-mini-cal-cell {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 32px;
+	border-radius: 6px;
+	cursor: pointer;
+	position: relative;
+	transition: all 0.12s ease;
+	user-select: none;
+	background-color: transparent;
+	border: 1px solid transparent;
+	padding: 2px 0;
+}
+
+.sbm-mini-cal-cell:hover {
+	background-color: var(--background-modifier-hover);
+	border-color: var(--background-modifier-border);
+}
+
+.sbm-mini-cal-day-num {
+	font-size: 0.84em;
+	font-weight: 500;
+	color: var(--text-normal);
+	line-height: 1;
+}
+
+.sbm-mini-cal-cell.is-other-month .sbm-mini-cal-day-num {
+	color: var(--text-faint);
+	opacity: 0.35;
+}
+
+.sbm-mini-cal-cell.is-today {
+	border: 1px solid var(--interactive-accent);
+}
+
+.sbm-mini-cal-cell.is-today .sbm-mini-cal-day-num {
+	font-weight: 700;
+	color: var(--text-accent);
+}
+
+.sbm-mini-cal-cell.is-selected {
+	background-color: var(--interactive-accent) !important;
+}
+
+.sbm-mini-cal-cell.is-selected .sbm-mini-cal-day-num {
+	color: var(--text-on-accent) !important;
+	font-weight: 700;
+}
+
+.sbm-mini-cal-dots {
+	display: flex;
+	gap: 2px;
+	align-items: center;
+	justify-content: center;
+	height: 4px;
+	margin-top: 2px;
+}
+
+.sbm-mini-cal-dot {
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background-color: var(--text-accent, #3b82f6);
+	display: inline-block;
+}
+
+.sbm-mini-cal-cell.is-selected .sbm-mini-cal-dot {
+	background-color: var(--text-on-accent) !important;
+}
+
+.sbm-cal-events-container {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 100%;
+}
+
+/* ==========================================================================
+   Gamification History & Reset Score Styles
+   ========================================================================== */
+
+.sbm-history-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: 14px;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.sbm-history-header h2 {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-size: 1.2em !important;
+}
+
+.sbm-history-reset-btn {
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 6px 12px;
+	font-size: 0.85em;
+	font-weight: 600;
+	cursor: pointer;
+	color: var(--text-muted);
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	transition: all 0.15s ease;
+}
+
+.sbm-history-reset-btn:hover {
+	color: var(--text-error, #ef4444);
+	border-color: var(--text-error, #ef4444);
+	background-color: rgba(239, 68, 68, 0.08);
+}
+
+.sbm-reset-score-modal {
+	padding: 16px 20px;
+}
+
+.sbm-reset-info-box {
+	background-color: var(--background-secondary);
+	border-left: 3px solid var(--interactive-accent);
+	border-radius: 4px;
+	padding: 10px 14px;
+	margin: 14px 0;
+	font-size: 0.9em;
+	color: var(--text-normal);
+}
+
+.sbm-reset-info-box p {
+	margin: 0 !important;
+}
 

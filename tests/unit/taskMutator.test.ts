@@ -109,15 +109,71 @@ describe('TaskMutator', () => {
 		expect(subtask3).toBe('\t\t- [ ] Implémenter le niveau');
 	});
 
-	it('should update due date preserving Dataview style when task already uses Dataview fields', () => {
+	it('should strictly convert to emoji format when config taskFormat is emoji', () => {
 		const line = '- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22]';
 		const updated = TaskMutator.setDueDate(line, '2026-08-25', DEFAULT_SYNTAX_CONFIG);
-		expect(updated).toBe('- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-25]');
+		expect(updated).toBe('- [ ] Préparer la réunion [scheduled:: 2026-08-20] 📅 2026-08-25');
 	});
 
-	it('should mark Dataview task as completed using [completion:: YYYY-MM-DD]', () => {
+	it('should update due date using Dataview style when taskFormat is dataview', () => {
+		const dvConfig = { ...DEFAULT_SYNTAX_CONFIG, taskFormat: 'dataview' as const };
+		const line = '- [ ] Préparer la réunion 📅 2026-08-20';
+		const updated = TaskMutator.setDueDate(line, '2026-08-25', dvConfig);
+		expect(updated).toBe('- [ ] Préparer la réunion [due:: 2026-08-25]');
+	});
+
+	it('should mark Dataview task as completed using [completion:: YYYY-MM-DD] when taskFormat is dataview', () => {
+		const dvConfig = { ...DEFAULT_SYNTAX_CONFIG, taskFormat: 'dataview' as const };
 		const line = '- [ ] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22]';
-		const updated = TaskMutator.setCompleted(line, true, '2026-08-26', DEFAULT_SYNTAX_CONFIG);
+		const updated = TaskMutator.setCompleted(line, true, '2026-08-26', dvConfig);
 		expect(updated).toBe('- [x] Préparer la réunion [scheduled:: 2026-08-20] [due:: 2026-08-22] [completion:: 2026-08-26]');
+	});
+
+	it('should format task line strictly according to tag format configuration', () => {
+		const tagConfig = { ...DEFAULT_SYNTAX_CONFIG, taskFormat: 'tag' as const, priorityMode: 'tag' as const };
+		const line = TaskMutator.formatTaskLine({
+			title: 'Tâche en format tags',
+			dueDate: '2026-08-30',
+			scheduledDate: '2026-08-29',
+			priority: 'high',
+			energy: 4,
+			pieces: 5,
+			matrixQuadrant: 'q1',
+			domainTags: ['important'],
+			linkedNotes: ['Projet Alpha']
+		}, tagConfig);
+
+		expect(line).toBe('- [ ] Tâche en format tags #due/2026-08-30 #scheduled/2026-08-29 #priorite/high #energie/4 #pieces/5 #tm/q1 #important [[Projet Alpha]]');
+	});
+
+	it('should format task line strictly according to dataview configuration', () => {
+		const dvConfig = { ...DEFAULT_SYNTAX_CONFIG, taskFormat: 'dataview' as const };
+		const line = TaskMutator.formatTaskLine({
+			title: 'Tâche en format dataview',
+			dueDate: '2026-08-30',
+			scheduledDate: '2026-08-29',
+			priority: 'high',
+			energy: 4,
+			pieces: 5,
+			matrixQuadrant: 'q1',
+			linkedNotes: ['Projet Alpha']
+		}, dvConfig);
+
+		expect(line).toBe('- [ ] Tâche en format dataview [due:: 2026-08-30] [scheduled:: 2026-08-29] [priority:: high] [energy:: 4] [pieces:: 5] [matrix:: q1] [[Projet Alpha]]');
+	});
+
+	it('should format task line strictly according to emoji configuration', () => {
+		const line = TaskMutator.formatTaskLine({
+			title: 'Tâche en format standard emoji',
+			dueDate: '2026-08-30',
+			scheduledDate: '2026-08-29',
+			startDate: '2026-08-28',
+			priority: 'high',
+			energy: 3,
+			matrixQuadrant: 'q2',
+			linkedNotes: ['Projet Beta']
+		}, DEFAULT_SYNTAX_CONFIG);
+
+		expect(line).toBe('- [ ] Tâche en format standard emoji 📅 2026-08-30 ⏳ 2026-08-29 🛫 2026-08-28 ⏫ #energie/3 #tm/q2 [[Projet Beta]]');
 	});
 });

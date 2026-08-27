@@ -5,6 +5,7 @@ import { VaultContextService } from './vaultContextService';
 import { ToolRegistry, ToolCallRequest } from './toolRegistry';
 import { ActionProposal } from '../models/actions';
 import { ObsidianTask } from '../models/task';
+import { TaskMutator } from '../mutators/taskMutator';
 import { SecondBrainSettings } from '../main';
 
 export interface AgentStepEvent {
@@ -30,7 +31,7 @@ export class AgentOrchestrator {
 		this.app = app;
 		this.settings = settings;
 		this.vaultContext = new VaultContextService(app, settings);
-		this.toolRegistry = new ToolRegistry(this.vaultContext);
+		this.toolRegistry = new ToolRegistry(this.vaultContext, this.settings);
 	}
 
 	public getVaultContext(): VaultContextService {
@@ -63,11 +64,14 @@ export class AgentOrchestrator {
 			});
 		}
 
+		const taskSyntaxDocs = TaskMutator.getTaskSyntaxPromptDescription(this.settings);
+
 		return `Tu es l'assistant personnel intelligent "Second Brain Manager" intégré au coffre Obsidian de l'utilisateur.
 
 CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Date du jour : ${today}
 - Niveau d'énergie actuel : ${energy}/10 (${energy <= 3 ? 'Mode Économie' : 'Mode Plein Potentiel'})
+- Format des tâches configuré : ${this.settings.taskFormat}
 - Format de priorité matrice : ${this.settings.matrixProvider}
 - Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"
 - Dossier Journal (Daily notes) : "${this.settings.dailyNotesFolder}"
@@ -82,7 +86,8 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 2. CONSULTATION VS MODIFICATION (RÈGLE IMPORTANTE) :
    - Pour les demandes d'information ou de planning (ex: "Quel est mon planning ?", "Qu'est-ce qui est en retard ?", "Résume mes priorités") :
      -> Réponds de façon claire, bienveillante et structurée en Markdown.
-     -> Présente les tâches au format Obsidian Tasks : \`- [ ] Titre 📅 YYYY-MM-DD #tm/qN [[Lien]]\`
+     -> Présente les tâches en respectant scrupuleusement le format configuré :
+${taskSyntaxDocs}
      -> NE PROPOSE PAS de modifications/créations d'actions (\`propose_create_task\`, \`propose_update_task\`) SAUF si l'utilisateur a explicitement demandé de modifier, replanifier ou créer.
    - Ne génère des propositions d'actions d'écriture (\`propose_create_note\`, \`propose_create_task\`, \`propose_update_task\`, \`propose_decompose_task\`, \`propose_link_notes\`) QUE si :
      a) L'utilisateur le demande expressément (ex: "Reporte ces tâches", "Crée la tâche X", "Décompose la tâche Y").
@@ -97,7 +102,7 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
    - Si tu rédiges une liste de tâches dans ton texte Markdown de réponse, chaque tâche doit commencer par un seul et unique "- [ ] " (ex: "- [ ] Titre", et JAMAIS "- [ ] - [ ] Titre" ni "- [ ] [ ] Titre").
 
 5. CONSIGNE DE STYLE STRICTE :
-   - N'utilise AUCUN émoji dans tes réponses textuelles. Reste sobre, clair, direct et professionnel.
+   - N'utilise AUCUN émoji dans tes réponses textuelles (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
 
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :
 \`\`\`json

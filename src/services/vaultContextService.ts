@@ -429,15 +429,29 @@ export class VaultContextService {
 				const yesterday = new Date(dateObj);
 				yesterday.setDate(yesterday.getDate() - 1);
 				const yesterdayFr = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
+				const yesterdayIso = yesterday.toISOString().split('T')[0];
+
 				const tomorrow = new Date(dateObj);
 				tomorrow.setDate(tomorrow.getDate() + 1);
 				const tomorrowFr = `${String(tomorrow.getDate()).padStart(2, '0')}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${tomorrow.getFullYear()}`;
+				const tomorrowIso = tomorrow.toISOString().split('T')[0];
 
-				const parsedContent = rawTemplate
+				let parsedContent = rawTemplate
 					.replace(/\{\{date\}\}/gi, chosenName)
 					.replace(/\{\{title\}\}/gi, chosenName)
 					.replace(/\{\{yesterday\}\}/gi, yesterdayFr)
-					.replace(/\{\{tomorrow\}\}/gi, tomorrowFr);
+					.replace(/\{\{tomorrow\}\}/gi, tomorrowFr)
+					// Remplacement de secours si Templater n'est pas actif
+					.replace(/<%\s*tp\.date\.now\([^)]*-[0-9]+[^)]*\)\s*%>/gi, yesterdayFr)
+					.replace(/<%\s*tp\.date\.now\([^)]*\+[0-9]+[^)]*\)\s*%>/gi, tomorrowFr)
+					.replace(/<%\s*tp\.date\.now\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, targetIso)
+					.replace(/<%\s*tp\.date\.now\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, frDate)
+					.replace(/<%\s*tp\.date\.now\(\)\s*%>/gi, chosenName)
+					.replace(/<%\s*tp\.date\.tomorrow\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, tomorrowIso)
+					.replace(/<%\s*tp\.date\.tomorrow\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, tomorrowFr)
+					.replace(/<%\s*tp\.date\.yesterday\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, yesterdayIso)
+					.replace(/<%\s*tp\.date\.yesterday\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, yesterdayFr)
+					.replace(/<%\s*tp\.file\.title\s*%>/gi, chosenName);
 
 				if (parsedContent !== rawTemplate) {
 					await this.app.vault.modify(createdFile, parsedContent);
@@ -462,6 +476,43 @@ export class VaultContextService {
 			}
 		}
 		return { file: createdFile, path: targetPath, created: true, content: finalContent };
+	}
+
+	/**
+	 * Ouvre proprement la note quotidienne dans la zone éditeur principale d'Obsidian (rootSplit),
+	 * sans écraser ni fermer le briefing du matin ou d'autres vues du panneau latéral.
+	 */
+	public async openDailyNoteInWorkspace(dailyFile: TFile): Promise<void> {
+		if (!dailyFile) return;
+
+		try {
+			// 1. Vérifie si la note est déjà ouverte dans un onglet markdown existant
+			const markdownLeaves = this.app.workspace.getLeavesOfType('markdown');
+			for (const leaf of markdownLeaves) {
+				const view = leaf.view;
+				if (view && (view as any).file && (view as any).file.path === dailyFile.path) {
+					this.app.workspace.setActiveLeaf(leaf, { focus: true });
+					return;
+				}
+			}
+
+			// 2. Recherche un onglet dans la zone centrale principale (rootSplit)
+			let targetLeaf: any = null;
+			const rootMarkdownLeaves = markdownLeaves.filter(l => (l as any).getRoot?.() === this.app.workspace.rootSplit);
+			if (rootMarkdownLeaves.length > 0) {
+				targetLeaf = rootMarkdownLeaves[0];
+			} else {
+				targetLeaf = this.app.workspace.getLeaf(false);
+			}
+
+			if (targetLeaf && typeof targetLeaf.openFile === 'function') {
+				await targetLeaf.openFile(dailyFile, { active: true });
+			} else if (typeof this.app.workspace.openLinkText === 'function') {
+				await this.app.workspace.openLinkText(dailyFile.path, '', false);
+			}
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur lors de l\'ouverture de la note quotidienne:', err);
+		}
 	}
 
 	/**

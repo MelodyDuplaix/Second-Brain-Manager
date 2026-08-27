@@ -34,18 +34,20 @@ export class NoteActionsService {
 		const todayStr = new Date().toISOString().split('T')[0];
 		const config = await this.getLLMConfig(plugin);
 
+		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(plugin.settings);
+
 		const systemPrompt = `Tu es l'assistant de productivité "Second Brain Manager".
 TON OBJECTIF : Analyser le texte fourni (compte-rendu de réunion, notes brutes, email, document) et en extraire toutes les actions concrètes et réalisables.
 
 CONSIGNES STRICTES DE FORMATAGE :
 1. Chaque action doit commencer par un verbe d'action à l'infinitif.
-2. Chaque action doit être au format Obsidian Tasks strict :
-   - [ ] Action concrète 📅 YYYY-MM-DD #tm/qN #energie/X [[${noteBasename}]]
+2. Chaque action doit impérativement respecter la syntaxe configurée :
+${taskSyntaxDesc}
 3. Estimation des métadonnées :
-   - 📅 Date due : date mentionnée dans le texte ou date d'aujourd'hui (${todayStr}) si urgent.
-   - #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4.
-   - #energie/1 à 10 : estimation de l'effort cognitif (1 = très rapide, 10 = tâche complexe).
-   - Toujours terminer la ligne par le lien vers la note source [[${noteBasename}]].
+   - Date due : date mentionnée dans le texte ou date d'aujourd'hui (${todayStr}) si urgent.
+   - Matrice : #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4 (ou équivalent dataview/tag selon configuration).
+   - Énergie : 1 à 10 (1 = très rapide, 10 = tâche complexe).
+   - Toujours inclure le lien vers la note source [[${noteBasename}]].
 4. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches.
 5. Si aucune action n'est identifiable, renvoie exactement: "Aucune action concrète identifiée."`;
 
@@ -63,7 +65,7 @@ CONSIGNES STRICTES DE FORMATAGE :
 			return 'Aucune action concrète identifiée.';
 		}
 
-		// Nettoyage et normalisation de chaque ligne de tâche extraite
+		// Nettoyage, parsing multi-format et reformatage strict selon les settings
 		const lines = rawContent.split('\n').map(l => l.trim()).filter(Boolean);
 		const formattedLines: string[] = [];
 
@@ -71,8 +73,27 @@ CONSIGNES STRICTES DE FORMATAGE :
 			if (!line || line.startsWith('#') || line.startsWith('>') || line.startsWith('|')) continue;
 			const cleanLine = TaskMutator.cleanTaskPrefix(line);
 			if (cleanLine.length > 0) {
-				const normalized = cleanLine.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
-				formattedLines.push(`- [ ] ${normalized}`);
+				const candidateLine = `- [ ] ${cleanLine}`;
+				const parsed = TaskParser.parseLine(candidateLine, noteBasename, 1, plugin.settings);
+				if (parsed) {
+					const strictlyFormatted = TaskMutator.formatTaskLine({
+						title: parsed.title,
+						dueDate: parsed.dueDate,
+						scheduledDate: parsed.scheduledDate,
+						startDate: parsed.startDate,
+						priority: parsed.priority,
+						energy: parsed.energy,
+						difficulty: parsed.difficulty,
+						pieces: parsed.pieces,
+						matrixTag: parsed.matrixTag,
+						domainTags: parsed.domainTags,
+						linkedNotes: [noteBasename]
+					}, plugin.settings);
+					formattedLines.push(strictlyFormatted);
+				} else {
+					const normalized = cleanLine.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
+					formattedLines.push(`- [ ] ${normalized} [[${noteBasename}]]`);
+				}
 			}
 		}
 

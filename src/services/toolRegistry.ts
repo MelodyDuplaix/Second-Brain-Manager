@@ -1,6 +1,7 @@
 import { VaultContextService } from './vaultContextService';
 import { ToolDefinition, ActionProposal } from '../models/actions';
 import { TaskMutator } from '../mutators/taskMutator';
+import { GoogleCalendarService } from './googleCalendarService';
 import { normalizePath } from 'obsidian';
 
 export interface ToolCallRequest {
@@ -86,6 +87,50 @@ export class ToolRegistry {
 			parameters: {
 				type: 'object',
 				properties: {},
+				required: []
+			}
+		},
+		{
+			name: 'list_calendars',
+			description: 'Liste tous les agendas Google disponibles sur le compte (personnel, professionnel, agendas secondaires et partagés).',
+			parameters: {
+				type: 'object',
+				properties: {},
+				required: []
+			}
+		},
+		{
+			name: 'get_calendar_events',
+			description: 'Recherche et récupère les événements de l\'agenda Google Calendar selon de multiples paramètres et critères (période, mot-clé, lieu, participant, agenda spécifique, événements passés ou futurs).',
+			parameters: {
+				type: 'object',
+				properties: {
+					startDate: { type: 'string', description: 'Date de début au format YYYY-MM-DD (optionnel, défaut aujourd\'hui).' },
+					endDate: { type: 'string', description: 'Date de fin au format YYYY-MM-DD (optionnel, ex: +7 jours ou fin du mois).' },
+					query: { type: 'string', description: 'Terme de recherche plein texte (titre, sujet ou notes).' },
+					location: { type: 'string', description: 'Filtre sur le lieu ou lien de réunion (ex: "Paris", "Visio", "Zoom").' },
+					attendee: { type: 'string', description: 'Filtre sur le nom ou l\'email d\'un participant.' },
+					calendarId: { type: 'string', description: 'ID d\'un agenda spécifique, ou "all" pour chercher dans tous les agendas du compte.' },
+					includePast: { type: 'boolean', description: 'Inclure les événements passés (défaut: true si startDate est dans le passé ou si recherche par mot-clé).' },
+					maxResults: { type: 'number', description: 'Nombre maximum d\'événements à retourner (défaut: 50).' }
+				},
+				required: []
+			}
+		},
+		{
+			name: 'search_calendar_events',
+			description: 'Recherche globale dans l\'agenda Google par mot-clé, période, participant ou lieu.',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: { type: 'string', description: 'Terme de recherche (sujet, personne, lieu).' },
+					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },
+					endDate: { type: 'string', description: 'Date de fin (YYYY-MM-DD).' },
+					location: { type: 'string', description: 'Filtre lieu.' },
+					attendee: { type: 'string', description: 'Filtre participant.' },
+					calendarId: { type: 'string', description: 'ID d\'un agenda ou "all".' },
+					includePast: { type: 'boolean', description: 'Inclure le passé.' }
+				},
 				required: []
 			}
 		},
@@ -196,11 +241,51 @@ export class ToolRegistry {
 				},
 				required: ['sourceFilePath', 'destinationFolder']
 			}
+		},
+		{
+			name: 'propose_create_calendar_event',
+			description: 'Propose la création d\'un événement / rendez-vous dans l\'agenda Google Calendar.',
+			parameters: {
+				type: 'object',
+				properties: {
+					title: { type: 'string', description: 'Titre de l\'événement / rendez-vous (ex: "RDV Comptable", "Point hebdo").' },
+					startDate: { type: 'string', description: 'Date de début au format YYYY-MM-DD (ex: "2026-08-28").' },
+					startTime: { type: 'string', description: 'Heure de début au format HH:mm (ex: "14:00"). Omettre pour un événement sur toute la journée.' },
+					endDate: { type: 'string', description: 'Date de fin au format YYYY-MM-DD (optionnel, défaut même jour).' },
+					endTime: { type: 'string', description: 'Heure de fin au format HH:mm (ex: "15:00", optionnel).' },
+					description: { type: 'string', description: 'Description détaillée ou ordre du jour de l\'événement (optionnel).' },
+					location: { type: 'string', description: 'Lieu de l\'événement ou lien de visioconférence (optionnel).' },
+					calendarId: { type: 'string', description: 'Identifiant du calendrier Google cible (défaut "primary").' }
+				},
+				required: ['title', 'startDate']
+			}
+		},
+		{
+			name: 'propose_update_calendar_event',
+			description: 'Propose la modification d\'un événement existant dans Google Calendar.',
+			parameters: {
+				type: 'object',
+				properties: {
+					eventId: { type: 'string', description: 'Identifiant unique de l\'événement Google Calendar.' },
+					title: { type: 'string', description: 'Nouveau titre de l\'événement.' },
+					startDate: { type: 'string', description: 'Nouvelle date de début (YYYY-MM-DD).' },
+					startTime: { type: 'string', description: 'Nouvelle heure de début (HH:mm).' },
+					endDate: { type: 'string', description: 'Nouvelle date de fin (YYYY-MM-DD).' },
+					endTime: { type: 'string', description: 'Nouvelle heure de fin (HH:mm).' },
+					description: { type: 'string', description: 'Nouvelle description.' },
+					location: { type: 'string', description: 'Nouveau lieu.' },
+					calendarId: { type: 'string', description: 'Identifiant du calendrier Google.' }
+				},
+				required: ['eventId']
+			}
 		}
 	];
 
-	constructor(vaultContext: VaultContextService) {
+	private settings?: any;
+
+	constructor(vaultContext: VaultContextService, settings?: any) {
 		this.vaultContext = vaultContext;
+		this.settings = settings;
 	}
 
 	public static getToolDefinitions(): ToolDefinition[] {
@@ -299,6 +384,86 @@ export class ToolRegistry {
 			case 'get_vault_structure': {
 				const res = this.vaultContext.getVaultStructure();
 				return { output: JSON.stringify(res, null, 2) };
+			}
+
+			case 'list_calendars': {
+				if (!this.settings || !this.settings.googleRefreshToken) {
+					return {
+						output: 'Google Calendar n\'est pas connecté. Veuillez renseigner votre Client ID et Client Secret puis lancer l\'approbation dans les réglages.'
+					};
+				}
+				try {
+					const cals = await GoogleCalendarService.listCalendars(this.settings);
+					const lines = cals.map(c => `- **${c.summary}** (ID: \`${c.id}\`)${c.primary ? ' [Principal]' : ''}${c.description ? ` : ${c.description}` : ''}`);
+					return {
+						output: `Agendas Google disponibles (${cals.length}) :\n${lines.join('\n')}`
+					};
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return { output: `Erreur récupération agendas Google : ${errorMsg}` };
+				}
+			}
+
+			case 'search_calendar_events':
+			case 'get_calendar_events': {
+				if (!this.settings || !this.settings.googleRefreshToken) {
+					return {
+						output: 'Google Calendar n\'est pas encore connecté. Vous pouvez renseigner vos identifiants dans les paramètres du plugin Second Brain.'
+					};
+				}
+				try {
+					const startDate = args.startDate ? String(args.startDate) : undefined;
+					const endDate = args.endDate ? String(args.endDate) : undefined;
+					const query = args.query ? String(args.query) : undefined;
+					const location = args.location ? String(args.location) : undefined;
+					const attendee = args.attendee ? String(args.attendee) : undefined;
+					const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+					const includePast = typeof args.includePast === 'boolean' ? args.includePast : undefined;
+					const maxResults = typeof args.maxResults === 'number' ? args.maxResults : undefined;
+
+					const timeMin = startDate ? new Date(`${startDate}T00:00:00`).toISOString() : undefined;
+					const timeMax = endDate ? new Date(`${endDate}T23:59:59.999`).toISOString() : undefined;
+
+					const events = await GoogleCalendarService.getEvents(this.settings, {
+						timeMin,
+						timeMax,
+						query,
+						location,
+						attendee,
+						calendarIds: calendarId ? [calendarId] : undefined,
+						includePast,
+						maxResults
+					});
+
+					if (events.length === 0) {
+						return {
+							output: 'Aucun événement Google Calendar trouvé correspondant aux critères spécifiés.'
+						};
+					}
+
+					const formatted = events.map(ev => {
+						const start = ev.start.dateTime || ev.start.date;
+						const end = ev.end.dateTime || ev.end.date;
+						let timeInfo = ev.allDay ? 'Toute la journée' : `${start?.split('T')[1]?.slice(0, 5) || ''} - ${end?.split('T')[1]?.slice(0, 5) || ''}`;
+						let line = `- [Agenda: ${ev.calendarName || 'Principal'}] ${ev.start.date || start?.split('T')[0]} (${timeInfo}) : **${ev.summary}** (ID: \`${ev.id}\`)`;
+						if (ev.location) line += ` | 📍 Lieu : ${ev.location}`;
+						if (ev.description) line += ` | 📝 Notes : ${ev.description.replace(/\n+/g, ' ').slice(0, 150)}`;
+						if (ev.attendees && ev.attendees.length > 0) {
+							const attNames = ev.attendees.map(a => a.displayName || a.email).join(', ');
+							line += ` | 👥 Participants : ${attNames}`;
+						}
+						return line;
+					}).join('\n');
+
+					return {
+						output: `Événements Google Calendar trouvés (${events.length}) :\n${formatted}`
+					};
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return {
+						output: `Erreur lors de la récupération des événements Google Calendar : ${errorMsg}`
+					};
+				}
 			}
 
 			// --- Outils d'Écriture (Propositions) ---
@@ -470,6 +635,73 @@ export class ToolRegistry {
 
 				return {
 					output: `Proposition de déplacement vers "${destinationFolder}" enregistrée.`,
+					actionProposals: [proposal]
+				};
+			}
+
+			case 'propose_create_calendar_event': {
+				const title = String(args.title || 'Nouvel événement');
+				const startDate = String(args.startDate || new Date().toISOString().split('T')[0]);
+				const startTime = args.startTime ? String(args.startTime) : undefined;
+				const endDate = args.endDate ? String(args.endDate) : undefined;
+				const endTime = args.endTime ? String(args.endTime) : undefined;
+				const description = args.description ? String(args.description) : undefined;
+				const location = args.location ? String(args.location) : undefined;
+				const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+
+				const timeLabel = startTime ? ` à ${startTime}${endTime ? `-${endTime}` : ''}` : ' (toute la journée)';
+				const proposal: ActionProposal = {
+					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+					type: 'create_calendar_event',
+					description: `📅 Agenda Google : Créer "${title}" le ${startDate}${timeLabel}`,
+					selected: true,
+					targetPath: 'Google Calendar',
+					title,
+					startDate,
+					startTime,
+					endDate,
+					endTime,
+					eventDescription: description,
+					location,
+					calendarId
+				};
+
+				return {
+					output: `Proposition de création d'événement dans l'agenda Google enregistrée : "${title}" le ${startDate}${timeLabel}.`,
+					actionProposals: [proposal]
+				};
+			}
+
+			case 'propose_update_calendar_event': {
+				const eventId = String(args.eventId || '');
+				const title = args.title ? String(args.title) : undefined;
+				const startDate = args.startDate ? String(args.startDate) : undefined;
+				const startTime = args.startTime ? String(args.startTime) : undefined;
+				const endDate = args.endDate ? String(args.endDate) : undefined;
+				const endTime = args.endTime ? String(args.endTime) : undefined;
+				const description = args.description ? String(args.description) : undefined;
+				const location = args.location ? String(args.location) : undefined;
+				const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+
+				const proposal: ActionProposal = {
+					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+					type: 'update_calendar_event',
+					description: `📅 Agenda Google : Mettre à jour l'événement "${title || eventId}"`,
+					selected: true,
+					targetPath: 'Google Calendar',
+					eventId,
+					title,
+					startDate,
+					startTime,
+					endDate,
+					endTime,
+					eventDescription: description,
+					location,
+					calendarId
+				};
+
+				return {
+					output: `Proposition de mise à jour de l'événement "${title || eventId}" enregistrée.`,
 					actionProposals: [proposal]
 				};
 			}

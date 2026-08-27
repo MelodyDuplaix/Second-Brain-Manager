@@ -80,4 +80,38 @@ describe('ToolRegistry', () => {
 		const prop = res.actionProposals?.[0];
 		expect(prop?.type).toBe('decompose_task');
 	});
+
+	it('should generate valid propose_create_calendar_event action proposal', async () => {
+		const res = await registry.executeTool({
+			name: 'propose_create_calendar_event',
+			arguments: {
+				title: 'Point d\'équipe',
+				startDate: '2026-08-28',
+				startTime: '10:00',
+				endTime: '11:00',
+				location: 'Visioconférence'
+			}
+		});
+
+		expect(res.actionProposals).toBeDefined();
+		const prop = res.actionProposals?.[0];
+		expect(prop?.type).toBe('create_calendar_event');
+		expect((prop as any)?.title).toBe('Point d\'équipe');
+		expect((prop as any)?.startDate).toBe('2026-08-28');
+		expect((prop as any)?.startTime).toBe('10:00');
+	});
+
+	it('should handle list_calendars and search_calendar_events gracefully when disconnected', async () => {
+		const listRes = await registry.executeTool({
+			name: 'list_calendars',
+			arguments: {}
+		});
+		expect(listRes.output).toContain('Google Calendar n\'est pas connecté');
+
+		const searchRes = await registry.executeTool({
+			name: 'search_calendar_events',
+			arguments: { query: 'Dentiste' }
+		});
+		expect(searchRes.output).toContain('Google Calendar n\'est pas encore connecté');
+	});
 });

@@ -5,11 +5,13 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
-import { ActionProposal } from '../models/actions';
 import { TaskSafetyGuard } from './taskSafetyGuard';
 import { VaultContextService } from './vaultContextService';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { GamificationService } from './gamificationService';
+import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
+import { GoogleCalendarEvent } from '../models/googleCalendar';
+import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
 
 export interface BriefingVaultData {
@@ -36,6 +38,8 @@ export interface BriefingVaultData {
 	projects: string[];
 	contacts: string[];
 	dailyNoteContent?: string;
+	calendarEvents?: GoogleCalendarEvent[];
+	calendarEventsText?: string;
 }
 
 export class MorningBriefingService {
@@ -235,6 +239,26 @@ export class MorningBriefingService {
 			dailyNoteContent = dailyRes.content;
 		}
 
+		// Lecture des événements Google Calendar du jour si configuré
+		let calendarEventsText = '';
+		let calendarEvents: GoogleCalendarEvent[] = [];
+		if (plugin.settings.googleRefreshToken) {
+			try {
+				const startOfToday = new Date(today);
+				startOfToday.setHours(0, 0, 0, 0);
+				const endOfToday = new Date(today);
+				endOfToday.setHours(23, 59, 59, 999);
+
+				calendarEvents = await GoogleCalendarService.getEvents(plugin.settings, {
+					timeMin: startOfToday.toISOString(),
+					timeMax: endOfToday.toISOString()
+				});
+				calendarEventsText = GoogleCalendarService.formatEventsForPrompt(calendarEvents, dateStr);
+			} catch (calErr) {
+				console.warn('[Second Brain Manager] Erreur récupération événements Google Calendar pour le briefing:', calErr);
+			}
+		}
+
 		return {
 			dateStr,
 			formattedDate: capitalizedDate,
@@ -258,28 +282,21 @@ export class MorningBriefingService {
 			isCluttered,
 			projects: structure.projects,
 			contacts: structure.contacts,
-			dailyNoteContent
+			dailyNoteContent,
+			calendarEvents,
+			calendarEventsText
 		};
 	}
 
 	/**
 	 * Construit le prompt système et utilisateur optimisé pour un briefing percutant ou une reprise décongestionnée.
 	 */
-	public static buildBriefingMessages(data: BriefingVaultData): ChatMessage[] {
+	public static buildBriefingMessages(data: BriefingVaultData, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ChatMessage[] {
 		const formatTaskLine = (t: ObsidianTask): string => {
-			let line = `- [ ] ${t.title}`;
-			if (t.dueDate) line += ` 📅 ${t.dueDate}`;
-			if (t.scheduledDate) line += ` ⏳ ${t.scheduledDate}`;
-			if (t.startDate) line += ` 🛫 ${t.startDate}`;
-			if (t.matrixTag) line += ` ${t.matrixTag}`;
-			if (t.priority) line += ` (Priorité: ${t.priority})`;
-			if (t.energy) line += ` #energie/${t.energy}`;
-			if (t.pieces) line += ` #pieces/${t.pieces}`;
-			const noteBasename = t.filePath.replace(/\.md$/, '').split('/').pop();
-			if (noteBasename) line += ` [[${noteBasename}]]`;
-			line += ` (Fichier: "${t.filePath}", Ligne: ${t.lineNumber})`;
-			return line;
+			return TaskMutator.formatTaskForPrompt(t, config);
 		};
+
+		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(config);
 
 		const oneThingText = data.oneThingTask
 			? formatTaskLine(data.oneThingTask)
@@ -336,6 +353,11 @@ export class MorningBriefingService {
 			focusDirectives = `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
 		}
 
+		let calendarSectionText = '';
+		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
+			calendarSectionText = `\nAGENDA & EVENEMENTS DU JOUR (Google Calendar) :\n${data.calendarEventsText}\nPrends en compte ces contraintes horaires / rendez-vous fixes pour articuler mon plan de journée.\n`;
+		}
+
 		let systemPrompt = '';
 		let userMessage = '';
 
@@ -349,14 +371,14 @@ TON OBJECTIF :
 Fournir un Briefing du Matin en **Mode Reprise & Décongestion Large**. Accueille chaleureusement l'utilisateur, déculpabilise-le totalement sur le retard accumulé, et propose un plan de journée recentré accompagné d'un **TRI LARGE et EXHAUSTIF** de toutes les tâches en retard et notes en vrac.
 
 CONSIGNE DE STYLE STRICTE :
-- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et bienveillant.
+- N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et bienveillant.
 
 CONSIGNES DE REDACTION EN MODE REPRISE :
 1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}
 2. **Structure du Briefing de Reprise** :
    - **Accueil & Bilan Déculpabilisant** (2 phrases bienveillantes pour poser un cadre serein)
-   - **Le Quick Win du Jour** (1 micro-tâche simple de 5 min pour amorcer le mouvement sans effort au format \`- [ ] ... [[Note]]\`)
-   - **The One Thing** (La seule tâche prioritaire et stratégique incontournable du jour selon l'énergie ${data.energy}/10 au format \`- [ ] ... [[Note]]\`)
+   - **Le Quick Win du Jour** (1 micro-tâche simple de 5 min pour amorcer le mouvement sans effort)
+   - **The One Thing** (La seule tâche prioritaire et stratégique incontournable du jour selon l'énergie ${data.energy}/10)
    - **Plan de Tri & Décongestion Large** :
      - Annule systématiquement sans culpabilité les réunions passées et tâches obsolètes depuis longtemps sans conséquences actuelles (\`newStatus: "cancelled"\`).
      - Replanifie à aujourd'hui (${data.dateStr}) ou à une date réaliste les tâches prioritaires.
@@ -364,7 +386,7 @@ CONSIGNES DE REDACTION EN MODE REPRISE :
      - Propose le rangement et le renommage explicite de chaque note en vrac vers son projet ou domaine pertinent (\`type: "move_note"\`, \`type: "rename_note"\`).
    - **Conseil de Sérénité & Rythme** (Un conseil motivant pour garder l'esprit léger)
 3. **Format des Tâches Recommandées** :
-   - Format standard : \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
+${taskSyntaxDesc}
 4. **Bloc d'Actions Structurées (OBLIGATOIRE - Bloc \`\`\`json:actions)** :
 Termine TOUJOURS ta réponse par un bloc de code JSON \`\`\`json:actions exhaustif contenant TOUTES les propositions d'actions (reports, annulations, rangements et renommages) afin que l'utilisateur puisse appliquer l'ensemble du tri large en 1 clic :
 \`\`\`json:actions
@@ -408,6 +430,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${calendarSectionText}
 TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
 
@@ -427,7 +450,7 @@ ${looseNotesText}
 Tâches en vrac :
 ${inboxText}
 ${dailyNoteSnippet}
-Propose-moi mon briefing en mode reprise avec un tri large et déculpabilisant des tâches et notes, accompagné du bloc json:actions pour que je puisse tout appliquer en 1 clic. N'utilise aucun émoji dans ta réponse textuelle.`;
+Propose-moi mon briefing en mode reprise avec un tri large et déculpabilisant des tâches et notes, accompagné du bloc json:actions pour que je puisse tout appliquer en 1 clic. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
 
 		} else {
 			// Mode Briefing Quotidien standard
@@ -437,7 +460,7 @@ TON OBJECTIF :
 Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie (${data.energy}/10 - ${data.modeText}).
 
 CONSIGNE DE STYLE STRICTE :
-- N'utilise AUCUN émoji dans ta réponse textuelle. Reste sobre, clair, direct et professionnel.
+- N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
 
 CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}
@@ -447,7 +470,7 @@ CONSIGNES DE REDACTION :
    - **Alertes & Points d'Attention** (Urgences réelles ou points de vigilance)
    - **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)
 3. **Format des Tâches Recommandées** :
-   - \`- [ ] Titre de la tâche 📅 YYYY-MM-DD #tm/qN [[LienNote]]\`
+${taskSyntaxDesc}
 4. **Actions Exécutables (Bloc JSON \`\`\`json:actions)** :
 Si des actions concrètes sont proposées, inclus le bloc JSON \`\`\`json:actions afin que l'utilisateur puisse les approuver en 1 clic.`;
 
@@ -458,6 +481,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${calendarSectionText}
 TACHES PLANIFIEES POUR AUJOURD'HUI :
 ${todayText}
 
@@ -473,7 +497,7 @@ ${inboxText}
 NOTES EN VRAC :
 ${looseNotesText}
 ${dailyNoteSnippet}
-Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le bloc json:actions pour les actions proposées. N'utilise aucun émoji dans ta réponse textuelle.`;
+Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le bloc json:actions pour les actions proposées. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
 		}
 
 		return [
@@ -555,7 +579,7 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 		focusProject?: string
 	): Promise<{ text: string; data: BriefingVaultData; allTasks: ObsidianTask[] }> {
 		const data = await this.collectBriefingData(app, plugin, focusProject);
-		const messages = this.buildBriefingMessages(data);
+		const messages = this.buildBriefingMessages(data, plugin.settings);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
 		const config: LLMConfig = {

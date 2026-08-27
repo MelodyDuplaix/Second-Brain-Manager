@@ -30,6 +30,19 @@ export class TaskParser {
 		const createdDateRegex = DynamicRegexBuilder.buildDateSignifierRegex('➕');
 		const recurrenceRegex = DynamicRegexBuilder.buildRecurrenceRegex(config.recurrenceSignifier);
 
+		const stdDueRegex = DynamicRegexBuilder.buildDateSignifierRegex('📅');
+		const stdScheduledRegex = DynamicRegexBuilder.buildDateSignifierRegex('⏳');
+		const stdStartRegex = DynamicRegexBuilder.buildDateSignifierRegex('🛫');
+		const stdCompletedRegex = DynamicRegexBuilder.buildDateSignifierRegex('✅');
+		const stdCancelledRegex = DynamicRegexBuilder.buildDateSignifierRegex('❌');
+
+		// Tag date regexes
+		const tagDueRegex = DynamicRegexBuilder.buildTagDateRegex(['due']);
+		const tagScheduledRegex = DynamicRegexBuilder.buildTagDateRegex(['scheduled']);
+		const tagStartRegex = DynamicRegexBuilder.buildTagDateRegex(['start']);
+		const tagCompletedRegex = DynamicRegexBuilder.buildTagDateRegex(['done', 'completion', 'completed']);
+		const tagCancelledRegex = DynamicRegexBuilder.buildTagDateRegex(['cancelled', 'canceled']);
+
 		// Dataview field regexes
 		const dvDueRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['due']);
 		const dvScheduledRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['scheduled']);
@@ -44,29 +57,60 @@ export class TaskParser {
 		const dvMatrixRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['matrix', 'quadrant', 'eisenhower']);
 
 		const energyRegex = DynamicRegexBuilder.buildTagRegex(config.energyTagPrefix, true);
-		const difficultyRegex = DynamicRegexBuilder.buildTagRegex(config.difficultyTagPrefix, false);
-		const piecesRegex = DynamicRegexBuilder.buildTagRegex(config.piecesTagPrefix, true);
-		const priorityRegex = DynamicRegexBuilder.buildTagRegex(config.priorityTagPrefix, false);
-		const matrixRegex = DynamicRegexBuilder.buildTagRegex(config.matrixTagPrefix, false);
+		const stdEnergyRegex = DynamicRegexBuilder.buildTagRegex('energy', true);
+		const stdEnergieRegex = DynamicRegexBuilder.buildTagRegex('energie', true);
 
-		const rawDueDate = this.extractRegexMatch(body, dvDueRegex) || this.extractRegexMatch(body, dueDateRegex);
+		const difficultyRegex = DynamicRegexBuilder.buildTagRegex(config.difficultyTagPrefix, false);
+		const stdDifficultyRegex = DynamicRegexBuilder.buildTagRegex('difficulty', false);
+		const stdDifficulteRegex = DynamicRegexBuilder.buildTagRegex('difficulte', false);
+
+		const piecesRegex = DynamicRegexBuilder.buildTagRegex(config.piecesTagPrefix, true);
+		const stdPiecesRegex = DynamicRegexBuilder.buildTagRegex('pieces', true);
+		const stdCoinsRegex = DynamicRegexBuilder.buildTagRegex('coins', true);
+
+		const priorityRegex = DynamicRegexBuilder.buildTagRegex(config.priorityTagPrefix, false);
+		const stdPrioriteRegex = DynamicRegexBuilder.buildTagRegex('priorite', false);
+		const stdPriorityRegex = DynamicRegexBuilder.buildTagRegex('priority', false);
+		const stdPrioRegex = DynamicRegexBuilder.buildTagRegex('prio', false);
+
+		const matrixRegex = DynamicRegexBuilder.buildTagRegex(config.matrixTagPrefix, false);
+		const stdMatrixTmRegex = /#tm\/q([1-4])/i;
+		const stdMatrixQRegex = /#q([1-4])/i;
+		const stdMatrixFocusRegex = /#focus/i;
+
+		const rawDueDate = this.extractRegexMatch(body, dvDueRegex) 
+			|| this.extractRegexMatch(body, tagDueRegex) 
+			|| this.extractRegexMatch(body, dueDateRegex) 
+			|| this.extractRegexMatch(body, stdDueRegex);
 		let dueDate = DynamicRegexBuilder.normalizeDate(rawDueDate);
 
-		const rawScheduledDate = this.extractRegexMatch(body, dvScheduledRegex) || this.extractRegexMatch(body, scheduledDateRegex);
+		const rawScheduledDate = this.extractRegexMatch(body, dvScheduledRegex) 
+			|| this.extractRegexMatch(body, tagScheduledRegex) 
+			|| this.extractRegexMatch(body, scheduledDateRegex) 
+			|| this.extractRegexMatch(body, stdScheduledRegex);
 		let scheduledDate = DynamicRegexBuilder.normalizeDate(rawScheduledDate);
 
-		const rawStartDate = this.extractRegexMatch(body, dvStartRegex) || this.extractRegexMatch(body, startDateRegex);
+		const rawStartDate = this.extractRegexMatch(body, dvStartRegex) 
+			|| this.extractRegexMatch(body, tagStartRegex) 
+			|| this.extractRegexMatch(body, startDateRegex) 
+			|| this.extractRegexMatch(body, stdStartRegex);
 		const startDate = DynamicRegexBuilder.normalizeDate(rawStartDate);
 
-		const rawCompletedDate = this.extractRegexMatch(body, dvCompletedRegex) || this.extractRegexMatch(body, completedDateRegex);
+		const rawCompletedDate = this.extractRegexMatch(body, dvCompletedRegex) 
+			|| this.extractRegexMatch(body, tagCompletedRegex) 
+			|| this.extractRegexMatch(body, completedDateRegex) 
+			|| this.extractRegexMatch(body, stdCompletedRegex);
 		const completedDate = DynamicRegexBuilder.normalizeDate(rawCompletedDate);
 
-		const rawCancelledDate = this.extractRegexMatch(body, dvCancelledRegex) || this.extractRegexMatch(body, cancelledDateRegex);
+		const rawCancelledDate = this.extractRegexMatch(body, dvCancelledRegex) 
+			|| this.extractRegexMatch(body, tagCancelledRegex) 
+			|| this.extractRegexMatch(body, cancelledDateRegex) 
+			|| this.extractRegexMatch(body, stdCancelledRegex);
 		const cancelledDate = DynamicRegexBuilder.normalizeDate(rawCancelledDate);
 
 		const rawWikiDateRegex = /\[\[(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/g;
 
-		// Si aucune date explicite n'a été détectée avec un préfixe 📅 ou ⏳ ou Dataview,
+		// Si aucune date explicite n'a été détectée avec un préfixe 📅 ou ⏳ ou Dataview ou Tag,
 		// on recherche la présence d'un wikilink date brut (ex: [[17-08-2026 lu]] ou [[2026-08-17]])
 		if (!dueDate && !scheduledDate) {
 			const wikiDateMatch = /\[\[(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/.exec(body);
@@ -86,18 +130,18 @@ export class TaskParser {
 
 		const recurrence = this.extractRegexMatch(body, dvRecurrenceRegex) || this.extractRegexMatch(body, recurrenceRegex);
 
-		const energyMatch = energyRegex.exec(body) || dvEnergyRegex.exec(body);
+		const energyMatch = energyRegex.exec(body) || stdEnergyRegex.exec(body) || stdEnergieRegex.exec(body) || dvEnergyRegex.exec(body);
 		const energy = energyMatch ? parseInt(energyMatch[1], 10) : undefined;
 
-		const difficultyMatch = difficultyRegex.exec(body) || dvDifficultyRegex.exec(body);
+		const difficultyMatch = difficultyRegex.exec(body) || stdDifficultyRegex.exec(body) || stdDifficulteRegex.exec(body) || dvDifficultyRegex.exec(body);
 		const difficulty = difficultyMatch ? difficultyMatch[1].toLowerCase() : undefined;
 
-		const piecesMatch = piecesRegex.exec(body) || dvPiecesRegex.exec(body);
+		const piecesMatch = piecesRegex.exec(body) || stdPiecesRegex.exec(body) || stdCoinsRegex.exec(body) || dvPiecesRegex.exec(body);
 		const pieces = piecesMatch ? parseInt(piecesMatch[1], 10) : undefined;
 
 		// Parsing des priorités Emoji Tasks, Tags et Dataview
 		const emojiPriorityMatch = this.PRIORITY_EMOJIS_REGEX.exec(body);
-		const priorityTagMatch = priorityRegex.exec(body);
+		const priorityTagMatch = priorityRegex.exec(body) || stdPrioriteRegex.exec(body) || stdPriorityRegex.exec(body) || stdPrioRegex.exec(body);
 		const dvPriorityMatch = dvPriorityRegex.exec(body);
 
 		let priority: TaskPriority | undefined;
@@ -117,7 +161,7 @@ export class TaskParser {
 			priorityTag = priorityTagMatch[0];
 		}
 
-		const matrixMatch = matrixRegex.exec(body) || dvMatrixRegex.exec(body);
+		const matrixMatch = matrixRegex.exec(body) || stdMatrixTmRegex.exec(body) || stdMatrixQRegex.exec(body) || stdMatrixFocusRegex.exec(body) || dvMatrixRegex.exec(body);
 		const matrixTag = matrixMatch ? matrixMatch[0] : undefined;
 
 		const domainTags = this.extractDomainTags(body, config);
@@ -127,9 +171,17 @@ export class TaskParser {
 
 		const title = this.cleanTitle(body, [
 			dueDateRegex, scheduledDateRegex, startDateRegex, completedDateRegex,
-			cancelledDateRegex, createdDateRegex, recurrenceRegex, energyRegex, difficultyRegex,
-			piecesRegex, priorityRegex, matrixRegex, this.PRIORITY_EMOJIS_REGEX,
-			DynamicRegexBuilder.DATAVIEW_ANY_FIELD_REGEX, rawWikiDateRegex, this.BLOCK_ID_REGEX
+			cancelledDateRegex, createdDateRegex, recurrenceRegex,
+			stdDueRegex, stdScheduledRegex, stdStartRegex, stdCompletedRegex, stdCancelledRegex,
+			tagDueRegex, tagScheduledRegex, tagStartRegex, tagCompletedRegex, tagCancelledRegex,
+			energyRegex, stdEnergyRegex, stdEnergieRegex,
+			difficultyRegex, stdDifficultyRegex, stdDifficulteRegex,
+			piecesRegex, stdPiecesRegex, stdCoinsRegex,
+			priorityRegex, stdPrioriteRegex, stdPriorityRegex, stdPrioRegex,
+			matrixRegex, stdMatrixTmRegex, stdMatrixQRegex, stdMatrixFocusRegex,
+			this.PRIORITY_EMOJIS_REGEX,
+			DynamicRegexBuilder.DATAVIEW_ANY_FIELD_REGEX, DynamicRegexBuilder.ANY_TAG_DATE_REGEX,
+			rawWikiDateRegex, this.BLOCK_ID_REGEX
 		]);
 
 		return {
@@ -272,12 +324,37 @@ export class TaskParser {
 			`#${config.difficultyTagPrefix.toLowerCase()}/`,
 			`#${config.piecesTagPrefix.toLowerCase()}/`,
 			`#${config.priorityTagPrefix.toLowerCase()}/`,
-			`#${config.matrixTagPrefix.toLowerCase()}`
+			`#${config.matrixTagPrefix.toLowerCase()}`,
+			'#energie/',
+			'#energy/',
+			'#difficulte/',
+			'#difficulty/',
+			'#pieces/',
+			'#piece/',
+			'#coins/',
+			'#coin/',
+			'#priorite/',
+			'#priority/',
+			'#prio/',
+			'#due/',
+			'#scheduled/',
+			'#start/',
+			'#done/',
+			'#completion/',
+			'#completed/',
+			'#cancelled/',
+			'#canceled/',
+			'#tm/',
+			'#q1',
+			'#q2',
+			'#q3',
+			'#q4',
+			'#focus'
 		];
 
 		while ((match = this.ALL_TAGS_REGEX.exec(text)) !== null) {
 			const tag = match[0].toLowerCase();
-			if (!controlledPrefixes.some(p => tag.startsWith(p))) {
+			if (!controlledPrefixes.some(p => tag === p || tag.startsWith(p))) {
 				tags.push(tag);
 			}
 		}

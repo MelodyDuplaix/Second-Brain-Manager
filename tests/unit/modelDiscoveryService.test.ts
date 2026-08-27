@@ -93,38 +93,47 @@ describe('ModelDiscoveryService', () => {
 	});
 
 	it('should filter models based on configured API keys', async () => {
-		// Scénario 1: Seule la clé Gemini est configurée
-		const mockGetApiKeyGeminiOnly = async (provider: string) => {
-			if (provider === 'gemini') return 'test-gemini-key';
-			return undefined;
-		};
+		const originalFetch = window.fetch;
+		try {
+			window.fetch = async () => {
+				throw new Error('Network disabled in test');
+			};
 
-		const geminiOnlyModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
-			mockGetApiKeyGeminiOnly,
-			'gemini'
-		);
+			// Scénario 1: Seule la clé Gemini est configurée
+			const mockGetApiKeyGeminiOnly = async (provider: string) => {
+				if (provider === 'gemini') return 'test-gemini-key';
+				return undefined;
+			};
 
-		expect(geminiOnlyModels.length).toBeGreaterThan(0);
-		expect(geminiOnlyModels.every(m => m.provider === 'gemini')).toBe(true);
-		expect(geminiOnlyModels.some(m => m.provider === 'openai')).toBe(false);
-		expect(geminiOnlyModels.some(m => m.provider === 'openrouter')).toBe(false);
-		expect(geminiOnlyModels.some(m => m.provider === 'infomaniak')).toBe(false);
+			const geminiOnlyModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
+				mockGetApiKeyGeminiOnly,
+				'gemini'
+			);
 
-		// Scénario 2: Aucune clé configurée et fournisseur cloud
-		const mockGetNoApiKey = async () => undefined;
-		const noKeyModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
-			mockGetNoApiKey,
-			'gemini'
-		);
-		expect(noKeyModels).toHaveLength(0);
+			expect(geminiOnlyModels.length).toBeGreaterThan(0);
+			expect(geminiOnlyModels.every(m => m.provider === 'gemini')).toBe(true);
+			expect(geminiOnlyModels.some(m => m.provider === 'openai')).toBe(false);
+			expect(geminiOnlyModels.some(m => m.provider === 'openrouter')).toBe(false);
+			expect(geminiOnlyModels.some(m => m.provider === 'infomaniak')).toBe(false);
 
-		// Scénario 3: Aucune clé cloud mais fournisseur local Ollama
-		const ollamaModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
-			mockGetNoApiKey,
-			'ollama'
-		);
-		expect(ollamaModels.length).toBeGreaterThan(0);
-		expect(ollamaModels.every(m => m.provider === 'ollama')).toBe(true);
+			// Scénario 2: Aucune clé configurée et fournisseur cloud
+			const mockGetNoApiKey = async () => undefined;
+			const noKeyModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
+				mockGetNoApiKey,
+				'gemini'
+			);
+			expect(noKeyModels).toHaveLength(0);
+
+			// Scénario 3: Aucune clé cloud mais fournisseur local Ollama
+			const ollamaModels = await ModelDiscoveryService.getAvailableModelsForConfiguredProviders(
+				mockGetNoApiKey,
+				'ollama'
+			);
+			expect(ollamaModels.length).toBeGreaterThan(0);
+			expect(ollamaModels.every(m => m.provider === 'ollama')).toBe(true);
+		} finally {
+			window.fetch = originalFetch;
+		}
 	});
 });
 

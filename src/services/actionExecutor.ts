@@ -1,7 +1,16 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
-import { ActionProposal, ActionResult, CreateTaskActionProposal, UpdateTaskActionProposal, DecomposeTaskActionProposal } from '../models/actions';
+import {
+	ActionProposal,
+	ActionResult,
+	CreateTaskActionProposal,
+	UpdateTaskActionProposal,
+	DecomposeTaskActionProposal,
+	CreateCalendarEventActionProposal,
+	UpdateCalendarEventActionProposal
+} from '../models/actions';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { GoogleCalendarService } from './googleCalendarService';
 import { SecondBrainSettings } from '../main';
 
 export class ActionExecutor {
@@ -297,6 +306,62 @@ export class ActionExecutor {
 					createdOrModifiedPath: newPath
 				};
 			}
+
+			case 'create_calendar_event': {
+				const calProp = proposal as CreateCalendarEventActionProposal;
+				try {
+					await GoogleCalendarService.createEvent(this.settings, {
+						summary: calProp.title,
+						startDate: calProp.startDate,
+						startTime: calProp.startTime,
+						endDate: calProp.endDate,
+						endTime: calProp.endTime,
+						description: calProp.eventDescription,
+						location: calProp.location,
+						calendarId: calProp.calendarId
+					});
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Événement Google Calendar "${calProp.title}" créé avec succès (${calProp.startDate}${calProp.startTime ? ` à ${calProp.startTime}` : ''}).`
+					};
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return {
+						proposalId: proposal.id,
+						success: false,
+						message: `Erreur création Google Calendar : ${errorMsg}`
+					};
+				}
+			}
+
+			case 'update_calendar_event': {
+				const calProp = proposal as UpdateCalendarEventActionProposal;
+				try {
+					await GoogleCalendarService.updateEvent(this.settings, calProp.eventId, {
+						summary: calProp.title,
+						startDate: calProp.startDate,
+						startTime: calProp.startTime,
+						endDate: calProp.endDate,
+						endTime: calProp.endTime,
+						description: calProp.eventDescription,
+						location: calProp.location,
+						calendarId: calProp.calendarId
+					});
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Événement Google Calendar "${calProp.title || calProp.eventId}" mis à jour avec succès.`
+					};
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return {
+						proposalId: proposal.id,
+						success: false,
+						message: `Erreur modification Google Calendar : ${errorMsg}`
+					};
+				}
+			}
 		}
 	}
 
@@ -325,6 +390,9 @@ export class ActionExecutor {
 		if (proposal.dueDate) {
 			taskLine = TaskMutator.setDueDate(taskLine, proposal.dueDate, this.settings);
 		}
+		if (proposal.scheduledDate) {
+			taskLine = TaskMutator.setScheduledDate(taskLine, proposal.scheduledDate, this.settings);
+		}
 		if (proposal.startDate) {
 			taskLine = TaskMutator.setStartDate(taskLine, proposal.startDate, this.settings);
 		}
@@ -338,19 +406,23 @@ export class ActionExecutor {
 			taskLine = TaskMutator.setControlledTag(taskLine, 'pieces', proposal.pieces, this.settings);
 		}
 		if (proposal.matrixQuadrant) {
-			const matrixAdapter = MatrixAdapterFactory.createAdapter(this.settings.matrixProvider, this.settings.customMatrixMapping);
-			taskLine = matrixAdapter.setQuadrant(taskLine, proposal.matrixQuadrant);
+			if (this.settings.taskFormat === 'dataview') {
+				taskLine = TaskMutator.setControlledTag(taskLine, 'matrix', proposal.matrixQuadrant, this.settings);
+			} else {
+				const matrixAdapter = MatrixAdapterFactory.createAdapter(this.settings.matrixProvider, this.settings.customMatrixMapping);
+				taskLine = matrixAdapter.setQuadrant(taskLine, proposal.matrixQuadrant);
+			}
 		}
 		if (proposal.domainTags && proposal.domainTags.length > 0) {
 			const tagsStr = proposal.domainTags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
 			taskLine = `${taskLine} ${tagsStr}`;
 		}
 		if (proposal.linkedNotes && proposal.linkedNotes.length > 0) {
-			const linksStr = proposal.linkedNotes.map(n => `[[${n}]]`).join(' ');
+			const linksStr = proposal.linkedNotes.map(n => n.startsWith('[[') ? n : `[[${n}]]`).join(' ');
 			taskLine = `${taskLine} ${linksStr}`;
 		}
 		if (proposal.blockId) {
-			taskLine = `${taskLine} ^${proposal.blockId}`;
+			taskLine = `${taskLine} ^${proposal.blockId.replace(/^\^/, '')}`;
 		}
 
 		await this.app.vault.process(file, (content) => {
@@ -387,13 +459,17 @@ export class ActionExecutor {
 
 				if (proposal.newStatus !== undefined) {
 					if (proposal.newStatus === 'done' || proposal.newStatus === 'completed') {
-						line = TaskMutator.setCompleted(line, true, undefined, this.settings);
+						const todayStr = new Date().toISOString().split('T')[0];
+						line = TaskMutator.setCompleted(line, true, todayStr, this.settings);
 					} else {
 						line = TaskMutator.setStatus(line, proposal.newStatus, this.settings);
 					}
 				}
 				if (proposal.newDueDate !== undefined) {
 					line = TaskMutator.setDueDate(line, proposal.newDueDate, this.settings);
+				}
+				if ((proposal as any).newScheduledDate !== undefined) {
+					line = TaskMutator.setScheduledDate(line, (proposal as any).newScheduledDate, this.settings);
 				}
 				if (proposal.newStartDate !== undefined) {
 					line = TaskMutator.setStartDate(line, proposal.newStartDate, this.settings);
@@ -404,9 +480,16 @@ export class ActionExecutor {
 				if (proposal.newEnergy !== undefined) {
 					line = TaskMutator.setControlledTag(line, 'energie', proposal.newEnergy, this.settings);
 				}
+				if (proposal.newPieces !== undefined) {
+					line = TaskMutator.setControlledTag(line, 'pieces', proposal.newPieces, this.settings);
+				}
 				if (proposal.newMatrixQuadrant !== undefined) {
-					const matrixAdapter = MatrixAdapterFactory.createAdapter(this.settings.matrixProvider, this.settings.customMatrixMapping);
-					line = matrixAdapter.setQuadrant(line, proposal.newMatrixQuadrant);
+					if (this.settings.taskFormat === 'dataview') {
+						line = TaskMutator.setControlledTag(line, 'matrix', proposal.newMatrixQuadrant, this.settings);
+					} else {
+						const matrixAdapter = MatrixAdapterFactory.createAdapter(this.settings.matrixProvider, this.settings.customMatrixMapping);
+						line = matrixAdapter.setQuadrant(line, proposal.newMatrixQuadrant);
+					}
 				}
 
 				lines[lineIdx] = line;
