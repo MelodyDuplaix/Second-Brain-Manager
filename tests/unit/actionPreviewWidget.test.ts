@@ -133,4 +133,33 @@ describe('ActionPreviewWidget & Interactive Proposals Customization', () => {
 		await ActionPreviewWidget.openNote(mockApp, '03 - Contacts/Claire.md');
 		expect(openedFilePath).toBe('03 - Contacts/Claire.md');
 	});
+
+	it('should maintain create_task proposal type during customization and metadata mutation', () => {
+		const createProp = {
+			id: 'prop-create-task',
+			type: 'create_task' as const,
+			description: '⏰ Créer la tâche « Faire relance adhésion expiré » dans "Note rangés/MFRB/Tâche à faire MFRB.md"',
+			selected: true,
+			targetPath: 'Note rangés/MFRB/Tâche à faire MFRB.md',
+			taskTitle: 'Faire relance adhésion expiré',
+			dueDate: '2026-09-03',
+			priority: 'high' as const,
+			energy: 4,
+			matrixQuadrant: 'q1' as const
+		};
+
+		// Mutate create_task properties as done by quick buttons and drawer
+		createProp.dueDate = '2026-08-28';
+		createProp.matrixQuadrant = 'q2';
+		createProp.energy = 5;
+		createProp.priority = 'highest';
+
+		expect(createProp.type).toBe('create_task');
+		expect(createProp.taskTitle).toBe('Faire relance adhésion expiré');
+		expect(createProp.targetPath).toBe('Note rangés/MFRB/Tâche à faire MFRB.md');
+		expect(createProp.dueDate).toBe('2026-08-28');
+		expect(createProp.matrixQuadrant).toBe('q2');
+		expect(createProp.energy).toBe(5);
+		expect(createProp.priority).toBe('highest');
+	});
 });

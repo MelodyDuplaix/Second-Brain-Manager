@@ -527,10 +527,13 @@ export class ActionPreviewWidget {
 			deferBtn.title = `Reporter l'échéance à demain (${tomorrowStr})`;
 			deferBtn.addEventListener('click', (e) => {
 				e.preventDefault();
-				this.convertProposalToUpdateTask(prop);
-				const up = prop as UpdateTaskActionProposal;
-				up.newDueDate = tomorrowStr;
-				if (up.newStatus === 'cancelled') up.newStatus = undefined;
+				if (prop.type === 'create_task') {
+					(prop as CreateTaskActionProposal).dueDate = tomorrowStr;
+				} else if (prop.type === 'update_task') {
+					const up = prop as UpdateTaskActionProposal;
+					up.newDueDate = tomorrowStr;
+					if (up.newStatus === 'cancelled') up.newStatus = undefined;
+				}
 				updateUI();
 			});
 
@@ -542,10 +545,13 @@ export class ActionPreviewWidget {
 			todayBtn.title = `Replanifier à aujourd'hui (${todayStr})`;
 			todayBtn.addEventListener('click', (e) => {
 				e.preventDefault();
-				this.convertProposalToUpdateTask(prop);
-				const up = prop as UpdateTaskActionProposal;
-				up.newDueDate = todayStr;
-				if (up.newStatus === 'cancelled') up.newStatus = undefined;
+				if (prop.type === 'create_task') {
+					(prop as CreateTaskActionProposal).dueDate = todayStr;
+				} else if (prop.type === 'update_task') {
+					const up = prop as UpdateTaskActionProposal;
+					up.newDueDate = todayStr;
+					if (up.newStatus === 'cancelled') up.newStatus = undefined;
+				}
 				updateUI();
 			});
 
@@ -557,25 +563,29 @@ export class ActionPreviewWidget {
 			removeDueBtn.title = 'Supprimer l\'échéance pour alléger la pression mentale';
 			removeDueBtn.addEventListener('click', (e) => {
 				e.preventDefault();
-				this.convertProposalToUpdateTask(prop);
-				const up = prop as UpdateTaskActionProposal;
-				up.newDueDate = null;
+				if (prop.type === 'create_task') {
+					(prop as CreateTaskActionProposal).dueDate = undefined;
+				} else if (prop.type === 'update_task') {
+					const up = prop as UpdateTaskActionProposal;
+					up.newDueDate = null;
+				}
 				updateUI();
 			});
 
-			// Bouton Annuler / Obsolète
-			const cancelTaskBtn = quickBar.createEl('button', {
-				cls: 'sbm-preview-quick-btn btn-danger',
-				text: '❌ Annuler'
-			});
-			cancelTaskBtn.title = 'Marquer la tâche comme annulée / obsolète (- [-])';
-			cancelTaskBtn.addEventListener('click', (e) => {
-				e.preventDefault();
-				this.convertProposalToUpdateTask(prop);
-				const up = prop as UpdateTaskActionProposal;
-				up.newStatus = up.newStatus === 'cancelled' ? undefined : 'cancelled';
-				updateUI();
-			});
+			// Bouton Annuler / Obsolète (uniquement pertinent pour tâche existante)
+			if (prop.type === 'update_task') {
+				const cancelTaskBtn = quickBar.createEl('button', {
+					cls: 'sbm-preview-quick-btn btn-danger',
+					text: '❌ Annuler'
+				});
+				cancelTaskBtn.title = 'Marquer la tâche comme annulée / obsolète (- [-])';
+				cancelTaskBtn.addEventListener('click', (e) => {
+					e.preventDefault();
+					const up = prop as UpdateTaskActionProposal;
+					up.newStatus = up.newStatus === 'cancelled' ? undefined : 'cancelled';
+					updateUI();
+				});
+			}
 
 			// Bouton Prioriser (Q1) - peut se combiner avec la date et l'énergie
 			const q1Btn = quickBar.createEl('button', {
@@ -585,9 +595,13 @@ export class ActionPreviewWidget {
 			q1Btn.title = 'Classer en Q1 (Urgent & Important)';
 			q1Btn.addEventListener('click', (e) => {
 				e.preventDefault();
-				this.convertProposalToUpdateTask(prop);
-				const up = prop as UpdateTaskActionProposal;
-				up.newMatrixQuadrant = up.newMatrixQuadrant === 'q1' ? undefined : 'q1';
+				if (prop.type === 'create_task') {
+					const cr = prop as CreateTaskActionProposal;
+					cr.matrixQuadrant = cr.matrixQuadrant === 'q1' ? undefined : 'q1';
+				} else if (prop.type === 'update_task') {
+					const up = prop as UpdateTaskActionProposal;
+					up.newMatrixQuadrant = up.newMatrixQuadrant === 'q1' ? undefined : 'q1';
+				}
 				updateUI();
 			});
 		}
@@ -635,10 +649,157 @@ export class ActionPreviewWidget {
 		});
 
 		const drawerBody = drawerEl.createDiv({ cls: 'sbm-edit-drawer-body' });
-		const isTask = prop.type === 'update_task' || prop.type === 'create_task' || prop.type === 'decompose_task';
 
-		if (isTask) {
-			this.convertProposalToUpdateTask(prop);
+		if (prop.type === 'create_task') {
+			const crProp = prop as CreateTaskActionProposal;
+			const grid = drawerBody.createDiv({ cls: 'sbm-multi-action-grid' });
+
+			// 1. Action Échéance
+			const dateCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
+			const dateHeader = dateCard.createDiv({ cls: 'sbm-facet-header' });
+			dateHeader.createSpan({ cls: 'sbm-facet-title', text: '📅 Échéance' });
+
+			const dateInput = dateCard.createEl('input', {
+				type: 'date',
+				cls: 'sbm-edit-input'
+			});
+			dateInput.value = crProp.dueDate || '';
+			dateInput.addEventListener('change', () => {
+				crProp.dueDate = dateInput.value.trim() || undefined;
+				updateUI();
+			});
+
+			const dateChips = dateCard.createDiv({ cls: 'sbm-edit-chips-row' });
+			const todayStr = new Date().toISOString().split('T')[0];
+			const tomorrow = new Date();
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			const tomorrowStr = tomorrow.toISOString().split('T')[0];
+			const nextWeek = new Date();
+			nextWeek.setDate(nextWeek.getDate() + 7);
+			const nextWeekStr = nextWeek.toISOString().split('T')[0];
+
+			const addChip = (label: string, val: string | undefined) => {
+				const chip = dateChips.createEl('button', { cls: 'sbm-edit-chip-btn', text: label });
+				chip.addEventListener('click', (e) => {
+					e.preventDefault();
+					crProp.dueDate = val;
+					dateInput.value = val || '';
+					updateUI();
+				});
+			};
+
+			addChip('Aujourd\'hui', todayStr);
+			addChip('Demain', tomorrowStr);
+			addChip('+7 jours', nextWeekStr);
+			addChip('🧹 Sans date', undefined);
+
+			// 2. Action Quadrant Matrice Eisenhower
+			const quadCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
+			const quadHeader = quadCard.createDiv({ cls: 'sbm-facet-header' });
+			quadHeader.createSpan({ cls: 'sbm-facet-title', text: '🎯 Quadrant Eisenhower' });
+
+			const quadChips = quadCard.createDiv({ cls: 'sbm-edit-chips-row' });
+			const quadrants: Array<{ val: MatrixQuadrant | undefined; label: string }> = [
+				{ val: 'q1', label: '🔺 Q1 (Urgent & Important)' },
+				{ val: 'q2', label: '🎯 Q2 (Fond / Stratégique)' },
+				{ val: 'q3', label: '⏩ Q3 (Délégué / Urgent)' },
+				{ val: 'q4', label: '⚪ Q4 (Secondaire)' },
+				{ val: undefined, label: 'Effacer' }
+			];
+
+			quadrants.forEach(q => {
+				const chip = quadChips.createEl('button', {
+					cls: `sbm-edit-chip-btn ${crProp.matrixQuadrant === q.val ? 'is-active' : ''}`,
+					text: q.label
+				});
+				chip.addEventListener('click', (e) => {
+					e.preventDefault();
+					crProp.matrixQuadrant = q.val;
+					quadChips.querySelectorAll('.sbm-edit-chip-btn').forEach(c => c.removeClass('is-active'));
+					if (q.val) chip.addClass('is-active');
+					updateUI();
+				});
+			});
+
+			// 3. Actions Énergie & Priorité
+			const metaRow = grid.createDiv({ cls: 'sbm-action-facet-card sbm-two-col-facet' });
+
+			const energyCol = metaRow.createDiv({ cls: 'sbm-facet-col' });
+			energyCol.createEl('label', { cls: 'sbm-edit-label', text: '⚡ Niveau d\'Énergie' });
+			const energySelect = energyCol.createEl('select', { cls: 'dropdown sbm-edit-select' });
+			const defaultEnergyOpt = energySelect.createEl('option', { value: '', text: 'Non définie' });
+			if (crProp.energy === undefined) defaultEnergyOpt.selected = true;
+
+			for (let i = 1; i <= 10; i++) {
+				const opt = energySelect.createEl('option', { value: i.toString(), text: `⚡ ${i}/10` });
+				if (crProp.energy === i) opt.selected = true;
+			}
+
+			energySelect.addEventListener('change', () => {
+				const val = energySelect.value ? parseInt(energySelect.value, 10) : undefined;
+				crProp.energy = val;
+				updateUI();
+			});
+
+			const prioCol = metaRow.createDiv({ cls: 'sbm-facet-col' });
+			prioCol.createEl('label', { cls: 'sbm-edit-label', text: '🔺 Priorité' });
+			const prioSelect = prioCol.createEl('select', { cls: 'dropdown sbm-edit-select' });
+
+			const priorities: Array<{ val: TaskPriority | ''; label: string }> = [
+				{ val: '', label: 'Normal / Non définie' },
+				{ val: 'highest', label: '🔺 Highest' },
+				{ val: 'high', label: '⏫ High' },
+				{ val: 'medium', label: '🔼 Medium' },
+				{ val: 'low', label: '🔽 Low' },
+				{ val: 'lowest', label: '⏬ Lowest' }
+			];
+
+			priorities.forEach(p => {
+				const opt = prioSelect.createEl('option', { value: p.val, text: p.label });
+				if (crProp.priority === p.val) opt.selected = true;
+			});
+
+			prioSelect.addEventListener('change', () => {
+				crProp.priority = (prioSelect.value || undefined) as any;
+				updateUI();
+			});
+
+			// 4. Intitulé de la tâche
+			const titleCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
+			const titleHeader = titleCard.createDiv({ cls: 'sbm-facet-header' });
+			titleHeader.createSpan({ cls: 'sbm-facet-title', text: '✏️ Intitulé de la tâche' });
+
+			const titleInput = titleCard.createEl('input', {
+				type: 'text',
+				cls: 'sbm-edit-input',
+				placeholder: 'Titre de la tâche...'
+			});
+			titleInput.value = crProp.taskTitle || '';
+			titleInput.addEventListener('input', () => {
+				crProp.taskTitle = titleInput.value.trim();
+				crProp.description = `⏰ Créer la tâche « ${crProp.taskTitle} » dans "${crProp.targetPath}"`;
+				updateUI();
+			});
+
+			// 5. Note cible
+			const targetCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
+			const targetHeader = targetCard.createDiv({ cls: 'sbm-facet-header' });
+			targetHeader.createSpan({ cls: 'sbm-facet-title', text: '📁 Note cible' });
+
+			const targetInput = targetCard.createEl('input', {
+				type: 'text',
+				cls: 'sbm-edit-input',
+				placeholder: 'Chemin de la note (ex: 04 - Journal/2026-08-27.md, Projet X.md)...'
+			});
+			targetInput.value = crProp.targetPath || '';
+			if (app) new FileSuggest(app, targetInput);
+			targetInput.addEventListener('input', () => {
+				crProp.targetPath = targetInput.value.trim();
+				crProp.description = `⏰ Créer la tâche « ${crProp.taskTitle} » dans "${crProp.targetPath}"`;
+				updateUI();
+			});
+
+		} else if (prop.type === 'update_task') {
 			const upProp = prop as UpdateTaskActionProposal;
 
 			// Grille des actions simultanées pour tâche
@@ -850,9 +1011,8 @@ export class ActionPreviewWidget {
 				createProp.content = contentTextarea.value;
 				updateUI();
 			});
-		} else {
+		} else if (prop.type === 'move_note' || prop.type === 'rename_note' || prop.type === 'link_notes' || prop.type === 'append_to_note') {
 			// Pour les Notes existantes : Configuration multi-actions (Dossier + Renommage + Liaison + Ajout texte)
-			this.convertProposalToMoveNote(prop);
 			const moveProp = prop as MoveNoteActionProposal;
 
 			const grid = drawerBody.createDiv({ cls: 'sbm-multi-action-grid' });
@@ -1017,23 +1177,9 @@ export class ActionPreviewWidget {
 		});
 	}
 
-	/**
-	 * Conversion dynamique du type d'action
-	 */
-	private static convertProposalToUpdateTask(prop: ActionProposal): void {
-		prop.type = 'update_task';
-		const up = prop as UpdateTaskActionProposal;
-		if (up.lineNumber === undefined) up.lineNumber = 1;
-	}
 
-	private static convertProposalToMoveNote(prop: ActionProposal): void {
-		prop.type = 'move_note';
-		const move = prop as MoveNoteActionProposal;
-		if (!move.destinationFolder && !move.newFileName) {
-			const fn = prop.targetPath.split('/').pop() || 'Note.md';
-			move.newFileName = fn;
-		}
-	}
+
+
 
 	private static getVaultTopFolders(app?: App): string[] {
 		if (!app) return ['01 - Projets', '02 - Domaines', '03 - Contacts', '04 - Journal', '00 - Boîte de réception'];
