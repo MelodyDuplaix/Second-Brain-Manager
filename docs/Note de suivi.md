@@ -31,16 +31,15 @@ Ce document sert de journal de bord et de référence architecturale pour le dé
   - Support en lecture de toutes les syntaxes et respect absolu du format choisi en écriture.
   - Filtrage des complétions survenues lors de synchronisations mobiles/distantes.
 
-### 📅 27 Août 2026 — Vue Agenda Spéciale Barre Latérale (Mini-Calendrier à points + Événements)
-- **Ergonomie optimisée pour barre latérale étroite ([`calendarView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/calendarView.ts))** :
-  - **Mini-calendrier mensuel compact en haut** : Grille 7 colonnes fluide, avec points indicateurs sous les jours comportant des événements Google Calendar.
-  - **Interaction fluide** : Cliquer sur un jour du mini-calendrier met à jour instantanément la sélection et affiche la liste détaillée des événements de cette journée juste en dessous.
-  - **Modes de vue** : `Jour`, `Semaine` et `Planning` conservés pour adapter la liste affichée sous le calendrier.
-  - **Création rapide** : Bouton `+ Événement` pré-rempli sur la date sélectionnée.
-- **Refonte Graphique & Suppression des fonds gris ([`styles.css`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/styles.css))** :
-  - Suppression totale des fonds sombres/gris artificiels hors hover.
-  - Cases transparentes et épurées respectant le thème actif, avec survol doux (`--background-modifier-hover`).
-  - Bordure accentuée sur le jour d'aujourd'hui et fond plein accentué sur le jour sélectionné.
+### 📅 27 Août 2026 — Différenciation des Vues Semaine & Planning dans l'Agenda
+- **Vue Semaine (`week`) ([`calendarView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/calendarView.ts))** :
+  - Structure hebdomadaire complète affichant **chacun des 7 jours de la semaine (Lundi à Dimanche)**.
+  - Permet de visualiser en un coup d'œil les jours libres (`Libre`) et les jours chargés (`X rdv`), avec bouton d'ajout rapide `+` et zoom sur n'importe quel jour par simple clic.
+- **Vue Planning (`schedule`) ([`calendarView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/calendarView.ts))** :
+  - Flux d'agenda chronologique continu sur **30 jours** (uniquement les jours avec événements).
+  - Badges temporels relatifs explicites : `Aujourd'hui`, `Demain`, `Dans 3 j`, `Semaine prochaine`, `Dans 2 sem.`.
+- **Vue Jour (`day`)** :
+  - Focus détaillé et ergonomique sur la seule journée sélectionnée.
 
 ### 📅 27 Août 2026 — Outils IA Événements Multi-Critères
 - **Outils ReAct Événements Multi-Paramètres ([`toolRegistry.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/toolRegistry.ts), [`googleCalendarService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/googleCalendarService.ts))** :

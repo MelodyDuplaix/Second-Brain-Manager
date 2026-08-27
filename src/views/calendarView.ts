@@ -47,9 +47,9 @@ export class CalendarView extends ItemView {
 				const startOfMonth = new Date(year, month, 1);
 				const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
-				// Période couvrant tout le mois visible avec marges
+				// Période couvrant le mois visible + 30 jours supplémentaires pour la vue Planning
 				const timeMin = new Date(startOfMonth.getTime() - 7 * 86400000).toISOString();
-				const timeMax = new Date(endOfMonth.getTime() + 14 * 86400000).toISOString();
+				const timeMax = new Date(endOfMonth.getTime() + 35 * 86400000).toISOString();
 
 				this.allMonthEvents = await GoogleCalendarService.getEvents(this.plugin.settings, {
 					timeMin,
@@ -80,8 +80,8 @@ export class CalendarView extends ItemView {
 
 	private getEventsForCurrentView(): GoogleCalendarEvent[] {
 		const { timeMin, timeMax } = this.calculateDateRange();
-		const minStr = timeMin.toISOString().split('T')[0];
-		const maxStr = timeMax.toISOString().split('T')[0];
+		const minStr = this.formatDateKey(timeMin);
+		const maxStr = this.formatDateKey(timeMax);
 
 		return this.allMonthEvents.filter(ev => {
 			const evDate = ev.start.date || (ev.start.dateTime ? ev.start.dateTime.split('T')[0] : '');
@@ -107,10 +107,10 @@ export class CalendarView extends ItemView {
 			timeMax.setHours(23, 59, 59, 999);
 			return { timeMin, timeMax };
 		} else {
-			// Planning : 14 prochains jours
+			// Planning : flux chronologique continu des 30 prochains jours
 			const timeMin = new Date(base);
 			const timeMax = new Date(base);
-			timeMax.setDate(timeMax.getDate() + 14);
+			timeMax.setDate(timeMax.getDate() + 30);
 			timeMax.setHours(23, 59, 59, 999);
 			return { timeMin, timeMax };
 		}
@@ -211,7 +211,7 @@ export class CalendarView extends ItemView {
 			return;
 		}
 
-		// 3. Section des événements affichés en dessous du calendrier
+		// 3. Section des événements affichés en dessous selon le mode
 		const eventsSection = bodyEl.createDiv({ cls: 'sbm-cal-events-container' });
 
 		const periodHeader = eventsSection.createDiv({ cls: 'sbm-calendar-date-label-row' });
@@ -219,22 +219,36 @@ export class CalendarView extends ItemView {
 
 		const visibleEvents = this.getEventsForCurrentView();
 
-		if (visibleEvents.length === 0) {
-			const emptyEl = eventsSection.createDiv({ cls: 'sbm-cal-empty-state' });
-			setIcon(emptyEl.createDiv({ cls: 'sbm-cal-empty-icon' }), 'calendar-x');
-			emptyEl.createEl('h4', { text: 'Aucun événement pour cette date' });
-			emptyEl.createEl('p', { text: 'Votre agenda est totalement libre.' });
-			const createBtn = emptyEl.createEl('button', { cls: 'mod-cta', text: '➕ Créer un événement' });
-			createBtn.addEventListener('click', () => {
-				const selectedDateStr = this.formatDateKey(this.currentDate);
-				new CalendarEventModal(this.app, this.plugin, undefined, selectedDateStr, async () => {
-					await this.refreshEvents();
-				}).open();
-			});
-			return;
+		if (this.currentViewMode === 'week') {
+			this.renderWeekView(eventsSection);
+		} else if (this.currentViewMode === 'schedule') {
+			if (visibleEvents.length === 0) {
+				this.renderEmptyState(eventsSection);
+			} else {
+				this.renderScheduleView(eventsSection, visibleEvents);
+			}
+		} else {
+			// Mode Jour
+			if (visibleEvents.length === 0) {
+				this.renderEmptyState(eventsSection);
+			} else {
+				this.renderDayView(eventsSection, visibleEvents);
+			}
 		}
+	}
 
-		this.renderEventsList(eventsSection, visibleEvents);
+	private renderEmptyState(parentEl: HTMLElement): void {
+		const emptyEl = parentEl.createDiv({ cls: 'sbm-cal-empty-state' });
+		setIcon(emptyEl.createDiv({ cls: 'sbm-cal-empty-icon' }), 'calendar-x');
+		emptyEl.createEl('h4', { text: 'Aucun événement pour cette période' });
+		emptyEl.createEl('p', { text: 'Votre agenda est totalement libre.' });
+		const createBtn = emptyEl.createEl('button', { cls: 'mod-cta', text: '➕ Créer un événement' });
+		createBtn.addEventListener('click', () => {
+			const selectedDateStr = this.formatDateKey(this.currentDate);
+			new CalendarEventModal(this.app, this.plugin, undefined, selectedDateStr, async () => {
+				await this.refreshEvents();
+			}).open();
+		});
 	}
 
 	/**
@@ -353,6 +367,137 @@ export class CalendarView extends ItemView {
 		});
 	}
 
+	/**
+	 * VUE JOUR : Affiche les événements de la journée sélectionnée
+	 */
+	private renderDayView(parentEl: HTMLElement, eventsToRender: GoogleCalendarEvent[]): void {
+		const dayContainer = parentEl.createDiv({ cls: 'sbm-cal-day-view' });
+		eventsToRender.forEach(ev => {
+			this.renderEventCard(dayContainer, ev);
+		});
+	}
+
+	/**
+	 * VUE SEMAINE : Présentation des 7 jours de la semaine (Lundi à Dimanche)
+	 * Permet de visualiser les jours chargés et les jours libres en un coup d'œil.
+	 */
+	private renderWeekView(parentEl: HTMLElement): void {
+		const { timeMin } = this.calculateDateRange();
+		const monday = new Date(timeMin);
+
+		const weekContainer = parentEl.createDiv({ cls: 'sbm-cal-week-view' });
+
+		const todayStr = this.formatDateKey(new Date());
+		const selectedStr = this.formatDateKey(this.currentDate);
+
+		for (let i = 0; i < 7; i++) {
+			const dayDate = new Date(monday);
+			dayDate.setDate(dayDate.getDate() + i);
+			const dateKey = this.formatDateKey(dayDate);
+			const dayEvents = this.monthlyEventsMap.get(dateKey) || [];
+
+			const isToday = dateKey === todayStr;
+			const isSelected = dateKey === selectedStr;
+			const hasEvents = dayEvents.length > 0;
+
+			const dayCard = weekContainer.createDiv({
+				cls: `sbm-week-day-card ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${hasEvents ? 'has-events' : 'is-free'}`
+			});
+
+			const dayHeader = dayCard.createDiv({ cls: 'sbm-week-day-header' });
+			const dayLabel = dayDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' });
+			dayHeader.createSpan({
+				cls: `sbm-week-day-title ${isToday ? 'is-today' : ''}`,
+				text: isToday ? `📍 Aujourd'hui (${dayLabel})` : dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1)
+			});
+
+			const headerRight = dayHeader.createDiv({ cls: 'sbm-week-day-header-right' });
+			if (hasEvents) {
+				headerRight.createSpan({ cls: 'sbm-week-events-badge', text: `${dayEvents.length} rdv` });
+			} else {
+				headerRight.createSpan({ cls: 'sbm-week-free-badge', text: 'Libre' });
+			}
+
+			const addBtn = headerRight.createEl('button', { cls: 'sbm-week-quick-add', title: 'Ajouter un événement ce jour' });
+			setIcon(addBtn, 'plus');
+			addBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				new CalendarEventModal(this.app, this.plugin, undefined, dateKey, async () => {
+					await this.refreshEvents();
+				}).open();
+			});
+
+			if (hasEvents) {
+				const eventsList = dayCard.createDiv({ cls: 'sbm-week-day-events-list' });
+				dayEvents.forEach(ev => {
+					this.renderEventCard(eventsList, ev);
+				});
+			}
+
+			// Clic sur l'en-tête pour zoomer sur la vue Jour
+			dayHeader.addEventListener('click', async () => {
+				this.currentDate = new Date(dayDate);
+				this.currentViewMode = 'day';
+				await this.refreshEvents();
+			});
+		}
+	}
+
+	/**
+	 * VUE PLANNING : Flux continu d'agenda des prochains rendez-vous sur 30 jours
+	 * avec badges de temps relatif (Aujourd'hui, Demain, Dans X jours...).
+	 */
+	private renderScheduleView(parentEl: HTMLElement, eventsToRender: GoogleCalendarEvent[]): void {
+		const scheduleContainer = parentEl.createDiv({ cls: 'sbm-cal-schedule-view' });
+
+		// Groupement par date
+		const grouped = new Map<string, GoogleCalendarEvent[]>();
+		eventsToRender.forEach(ev => {
+			const dateKey = ev.start.date || (ev.start.dateTime ? ev.start.dateTime.split('T')[0] : 'Sans date');
+			if (!grouped.has(dateKey)) {
+				grouped.set(dateKey, []);
+			}
+			grouped.get(dateKey)!.push(ev);
+		});
+
+		const sortedDates = Array.from(grouped.keys()).sort();
+		const todayStr = this.formatDateKey(new Date());
+
+		sortedDates.forEach(dateKey => {
+			const dayEvents = grouped.get(dateKey)!;
+			const section = scheduleContainer.createDiv({ cls: 'sbm-schedule-section' });
+
+			// Calcul de proximité temporelle relative
+			let relativeLabel = '';
+			const d = new Date(`${dateKey}T00:00:00`);
+			const diffDays = Math.round((d.getTime() - new Date(`${todayStr}T00:00:00`).getTime()) / 86400000);
+
+			if (diffDays === 0) relativeLabel = 'Aujourd\'hui';
+			else if (diffDays === 1) relativeLabel = 'Demain';
+			else if (diffDays === -1) relativeLabel = 'Hier';
+			else if (diffDays > 1 && diffDays <= 6) relativeLabel = `Dans ${diffDays} j`;
+			else if (diffDays >= 7 && diffDays <= 13) relativeLabel = 'Semaine prochaine';
+			else if (diffDays >= 14) relativeLabel = `Dans ${Math.round(diffDays / 7)} sem.`;
+
+			const sectionHeader = section.createDiv({ cls: 'sbm-schedule-header' });
+			const formattedDate = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+			const titleText = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
+
+			const leftGroup = sectionHeader.createDiv({ cls: 'sbm-schedule-header-left' });
+			leftGroup.createSpan({ cls: `sbm-schedule-date-title ${diffDays === 0 ? 'is-today' : ''}`, text: titleText });
+			if (relativeLabel) {
+				leftGroup.createSpan({ cls: `sbm-schedule-rel-badge ${diffDays === 0 ? 'is-today' : ''}`, text: relativeLabel });
+			}
+
+			sectionHeader.createSpan({ cls: 'sbm-schedule-count', text: `${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}` });
+
+			const eventsGrid = section.createDiv({ cls: 'sbm-schedule-events-grid' });
+			dayEvents.forEach(ev => {
+				this.renderEventCard(eventsGrid, ev);
+			});
+		});
+	}
+
 	private formatDateKey(d: Date): string {
 		const y = d.getFullYear();
 		const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -366,7 +511,7 @@ export class CalendarView extends ItemView {
 		} else if (this.currentViewMode === 'week') {
 			this.currentDate.setDate(this.currentDate.getDate() + direction * 7);
 		} else {
-			this.currentDate.setDate(this.currentDate.getDate() + direction * 14);
+			this.currentDate.setDate(this.currentDate.getDate() + direction * 30);
 		}
 		this.miniCalMonth = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
 	}
@@ -384,10 +529,7 @@ export class CalendarView extends ItemView {
 			const endStr = timeMax.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 			return `Semaine du ${startStr} au ${endStr}`;
 		} else {
-			const { timeMin, timeMax } = this.calculateDateRange();
-			const startStr = timeMin.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-			const endStr = timeMax.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-			return `Planning du ${startStr} au ${endStr}`;
+			return 'Planning des 30 prochains jours';
 		}
 	}
 
@@ -430,50 +572,6 @@ export class CalendarView extends ItemView {
 		settingsBtn.addEventListener('click', () => {
 			(this.app as any).setting?.open?.();
 			(this.app as any).setting?.openTabById?.(this.plugin.manifest.id);
-		});
-	}
-
-	private renderEventsList(parentEl: HTMLElement, eventsToRender: GoogleCalendarEvent[]): void {
-		// Groupement des événements par date (YYYY-MM-DD)
-		const grouped = new Map<string, GoogleCalendarEvent[]>();
-
-		eventsToRender.forEach(ev => {
-			const dateKey = ev.start.date || (ev.start.dateTime ? ev.start.dateTime.split('T')[0] : 'Sans date');
-			if (!grouped.has(dateKey)) {
-				grouped.set(dateKey, []);
-			}
-			grouped.get(dateKey)!.push(ev);
-		});
-
-		const sortedDates = Array.from(grouped.keys()).sort();
-
-		sortedDates.forEach(dateKey => {
-			const dayEvents = grouped.get(dateKey)!;
-			const daySection = parentEl.createDiv({ cls: 'sbm-cal-day-section' });
-
-			// En-tête du jour (si plusieurs jours affichés comme en mode semaine)
-			if (this.currentViewMode !== 'day') {
-				const dayHeader = daySection.createDiv({ cls: 'sbm-cal-day-header' });
-				let headerLabel = dateKey;
-				try {
-					const d = new Date(`${dateKey}T00:00:00`);
-					const formatted = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
-					headerLabel = formatted.charAt(0).toUpperCase() + formatted.slice(1);
-				} catch {
-					// fallback
-				}
-
-				const isToday = dateKey === this.formatDateKey(new Date());
-				dayHeader.createSpan({ cls: `sbm-cal-day-title ${isToday ? 'is-today' : ''}`, text: isToday ? `📍 Aujourd'hui (${headerLabel})` : headerLabel });
-				dayHeader.createSpan({ cls: 'sbm-cal-day-count', text: `${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}` });
-			}
-
-			// Cartes d'événements du jour
-			const eventsGrid = daySection.createDiv({ cls: 'sbm-cal-events-grid' });
-
-			dayEvents.forEach(ev => {
-				this.renderEventCard(eventsGrid, ev);
-			});
 		});
 	}
 
