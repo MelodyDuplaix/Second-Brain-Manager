@@ -11,10 +11,19 @@ Ce document sert de journal de bord et de référence architecturale pour le dé
 - **L'IA propose avant d'agir** : Chaque modification (tâches, fichiers, agenda) génère un aperçu visuel interactif (`ActionPreviewWidget`) validable en un clic.
 - **Matrice d'Eisenhower modulaire** : Prise en charge configurable via `MatrixAdapter` (TaskMatrix `#tm/qN`, Focus First, etc.).
 - **Gamification équitable** : Récompense en pièces lors de la complétion de tâches dans Obsidian, tout en filtrant les fausses détections issues des synchronisations distantes.
+- **Règle absolue de Release (CI/CD GitHub Actions)** : **Ne JAMAIS réutiliser ou écraser un numéro de tag/release déjà existant sur GitHub** (sinon le workflow GitHub Release échoue avec l'erreur `a release with the same tag name already exists`). Tout correctif, modification ou nouvelle livraison post-release DOIT impérativement incrémenter le numéro de version (ex: `0.5.0` ➔ `0.5.1`).
 
 ---
 
 ## 2. Historique des Réalisations & Journal des Modifications
+
+### 🚀 Version 0.5.1 (27 Août 2026) — Différenciation Semaine / Planning & Correctifs CI
+- **Différenciation claire des Vues Semaine & Planning ([`calendarView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/calendarView.ts), [`styles.css`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/styles.css))** :
+  - **Vue Semaine** : Grille complète des 7 jours de la semaine (Lundi à Dimanche) affichant les cartes des jours avec rendez-vous et un statut `Libre` pour les jours disponibles.
+  - **Vue Planning** : Flux d'agenda chronologique continu sur 30 jours (uniquement les jours occupés) avec badges de distance temporelle (`Aujourd'hui`, `Demain`, `Dans 3 j`, `Semaine prochaine`...).
+- **Conformité Linter & Stabilité CI** :
+  - Correction des variables non réassignées (`prefer-const`) dans `toolRegistry.ts`, `vaultContextService.ts` et `calendarView.ts`.
+  - Intégration de la règle de non-réutilisation de tag dans la documentation de suivi.
 
 ### 🚀 Version 0.5.0 (27 Août 2026) — Release Majeure
 - **Archivage & Remise à Zéro du Score (Repartir à 0) ([`gamificationHistoryView.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/views/gamificationHistoryView.ts), [`gamificationService.ts`](file:///C:/Users/melos/Documents/Second%20Brain%20Manager/test/.obsidian/plugins/second-brain-manager/src/services/gamificationService.ts))** :
