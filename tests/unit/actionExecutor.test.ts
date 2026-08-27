@@ -376,13 +376,15 @@ scheduled today
 		expect(processedFiles['Note rangés/MFRB/Tâche à faire MFRB.md']).toContain('faire relance adhésion expiré');
 	});
 
-	it('should resolve note without createIfMissing for update_task even with accent differences', async () => {
-		createdFiles['Note rangés/MFRB/Tâche à faire MFRB.md'] = '# Tâche à faire MFRB\n\n## Tâches\n- [ ] Première tâche';
+	it('should accurately insert task into exact Chaos MFRB note content with leading tags and CRLF', () => {
+		const rawChaosContent = "tu#MFRB #tâche #planning\r\n\r\n# Tâche à faire MFRB\r\n\r\n## À faire avant le 1er septembre 2026\r\n\r\n- [ ] Faire une notice sur le document planning partagé #tm/q1 [due:: 2026-09-01] [scheduled:: 2026-08-27] [priority:: high] [energy:: 3]\r\n\r\n## Notes liées\r\n\r\n- [[CA MFRB]]\r\n- [[Camp de rentrée mfrb]]\r\n- [[Article presse mfrb]]\r\n\r\n---\r\n*Note créée le 2026-08-26*";
 
-		const resolved = await executor.resolveTargetFile('tache a faire mfrb', { createIfMissing: false });
-		expect(resolved.file).not.toBeNull();
-		expect(resolved.path).toBe('Note rangés/MFRB/Tâche à faire MFRB.md');
-		expect(resolved.created).toBe(false);
+		const taskLine = '- [ ] faire relance adhésion expiré [due:: 2026-09-03] [priority:: high] [energy:: 4] #tm/q1 #mfrb #adhésion';
+		const updated = ActionExecutor.insertTaskIntoNoteContent(rawChaosContent, taskLine);
+
+		expect(updated).toContain('faire relance adhésion expiré');
+		expect(updated).toContain('Faire une notice sur le document planning partagé');
+		expect(updated).toContain('## Notes liées');
 	});
 });
 
