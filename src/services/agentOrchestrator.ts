@@ -1,4 +1,4 @@
-import { App, normalizePath } from 'obsidian';
+import { App, normalizePath, TFile } from 'obsidian';
 import { ChatMessage, LLMConfig } from '../models/llm';
 import { LLMService } from './llmService';
 import { VaultContextService } from './vaultContextService';
