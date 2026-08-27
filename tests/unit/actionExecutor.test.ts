@@ -39,6 +39,13 @@ describe('ActionExecutor', () => {
 				const updated = cb(current);
 				processedFiles[file.path] = updated;
 				return Promise.resolve(updated);
+			},
+			read: async (file: { path: string }) => {
+				return Promise.resolve(processedFiles[file.path] !== undefined ? processedFiles[file.path] : (createdFiles[file.path] || ''));
+			},
+			modify: async (file: { path: string }, data: string) => {
+				processedFiles[file.path] = data;
+				return Promise.resolve();
 			}
 		},
 		metadataCache: {

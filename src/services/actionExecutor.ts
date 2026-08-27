@@ -11,7 +11,7 @@ import {
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { GoogleCalendarService } from './googleCalendarService';
-import { VaultContextService } from './vaultContextService';
+import { VaultContextService, normalizeCanonicalKey } from './vaultContextService';
 import { SecondBrainSettings } from '../main';
 
 export class ActionExecutor {
@@ -26,55 +26,57 @@ export class ActionExecutor {
 	}
 
 	/**
-	 * Synchronise le contenu modifié à la fois dans le coffre (app.vault.process / modify)
-	 * et dans les onglets d'éditeurs actuellement ouverts dans l'espace de travail (MarkdownView.editor).
+	 * Synchronise le contenu modifié à la fois dans les onglets d'éditeurs actuellement ouverts (MarkdownView.editor)
+	 * et dans le coffre sur disque (app.vault.process / modify) pour éviter tout conflit d'écrasement par auto-save.
 	 */
 	public async updateFileAndOpenEditors(file: TFile, updater: (content: string) => string): Promise<boolean> {
 		let modified = false;
+		const targetCanonicalKey = normalizeCanonicalKey(file.path);
 
-		// 1. Mise à jour dans le coffre (persistance disque)
-		try {
-			if (typeof (this.app.vault as any).process === 'function') {
-				await this.app.vault.process(file, (content) => {
-					const updated = updater(content);
-					if (updated !== content) {
-						modified = true;
-					}
-					return updated;
-				});
-			}
-		} catch (procErr) {
-			console.warn('[Second Brain Manager] vault.process a échoué, fallback sur vault.modify:', procErr);
-		}
-
-		if (!modified) {
-			const oldContent = (typeof (this.app.vault as any).cachedRead === 'function')
-				? await (this.app.vault as any).cachedRead(file)
-				: await this.app.vault.read(file);
-			const newContent = updater(oldContent);
-			if (newContent !== oldContent) {
-				await this.app.vault.modify(file, newContent);
-				modified = true;
-			}
-		}
-
-		// 2. Synchronisation instantanée dans les éditeurs ouverts (Live Preview / Source)
+		// 1. Synchronisation instantanée dans les éditeurs ouverts (Live Preview / Mode Source)
 		try {
 			if (this.app.workspace && typeof this.app.workspace.getLeavesOfType === 'function') {
 				const leaves = this.app.workspace.getLeavesOfType('markdown');
 				for (const leaf of leaves) {
 					const view = leaf.view as MarkdownView;
-					if (view && (view as any).file && (view as any).file.path === file.path && view.editor) {
-						const currentText = view.editor.getValue();
-						const updatedText = updater(currentText);
-						if (updatedText !== currentText) {
-							view.editor.setValue(updatedText);
+					if (view && (view as any).file && view.editor) {
+						const leafPath = (view as any).file.path;
+						const leafCanonicalKey = normalizeCanonicalKey(leafPath);
+						if (leafCanonicalKey === targetCanonicalKey) {
+							const currentText = view.editor.getValue();
+							const updatedText = updater(currentText);
+							if (updatedText !== currentText) {
+								view.editor.setValue(updatedText);
+								modified = true;
+							}
 						}
 					}
 				}
 			}
 		} catch (editorErr) {
 			console.warn('[Second Brain Manager] Erreur lors de la synchronisation de l\'éditeur ouvert:', editorErr);
+		}
+
+		// 2. Persistance dans le coffre (disque)
+		try {
+			if (typeof (this.app.vault as any).process === 'function') {
+				await (this.app.vault as any).process(file, (content: string) => {
+					const updated = updater(content);
+					if (updated !== content) {
+						modified = true;
+					}
+					return updated;
+				});
+			} else if (typeof (this.app.vault as any).read === 'function' && typeof (this.app.vault as any).modify === 'function') {
+				const oldContent = await this.app.vault.read(file);
+				const newContent = updater(oldContent);
+				if (newContent !== oldContent) {
+					await this.app.vault.modify(file, newContent);
+					modified = true;
+				}
+			}
+		} catch (procErr) {
+			console.warn('[Second Brain Manager] Erreur lors de la persistance vault:', procErr);
 		}
 
 		return modified;
@@ -236,7 +238,8 @@ export class ActionExecutor {
 	 * 4. Sinon, insère avant un éventuel callout de pied de page (navigation/footer) ou à la fin de la note.
 	 */
 	public static insertTaskIntoNoteContent(content: string, taskLine: string): string {
-		const lines = content.split('\n');
+		const isCRLF = content.includes('\r\n');
+		const lines = content.replace(/\r\n/g, '\n').split('\n');
 
 		const cleanHeadingForComparison = (str: string): string => {
 			return str.trim()
@@ -295,6 +298,8 @@ export class ActionExecutor {
 			}
 		}
 
+		const joinLines = (arr: string[]) => isCRLF ? arr.join('\r\n') : arr.join('\n');
+
 		// Si un en-tête de section a été trouvé
 		if (targetHeaderIdx !== -1) {
 			let insertIdx = targetHeaderIdx + 1;
@@ -326,7 +331,7 @@ export class ActionExecutor {
 			}
 
 			lines.splice(insertIdx, 0, taskLine);
-			return lines.join('\n');
+			return joinLines(lines);
 		}
 
 		// 2. Si pas de section dédiée trouvée, chercher la dernière tâche markdown du document (hors code block)
@@ -345,7 +350,7 @@ export class ActionExecutor {
 
 		if (lastDocTaskIdx !== -1) {
 			lines.splice(lastDocTaskIdx + 1, 0, taskLine);
-			return lines.join('\n');
+			return joinLines(lines);
 		}
 
 		// 3. Chercher si la note se termine par un footer / navigation callout (ex: >[!column, >[!day, ---)
@@ -363,11 +368,11 @@ export class ActionExecutor {
 
 		if (footerStartIdx > 0) {
 			lines.splice(footerStartIdx, 0, taskLine, '');
-			return lines.join('\n');
+			return joinLines(lines);
 		}
 
 		// 4. Par défaut, ajouter à la fin
-		return `${content.trim()}\n\n${taskLine}\n`;
+		return isCRLF ? `${content.trim()}\r\n\r\n${taskLine}\r\n` : `${content.trim()}\n\n${taskLine}\n`;
 	}
 
 	private async executeSingleProposal(proposal: ActionProposal): Promise<ActionResult> {
