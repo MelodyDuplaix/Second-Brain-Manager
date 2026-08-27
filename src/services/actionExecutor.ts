@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, normalizePath } from 'obsidian';
+import { App, TFile, TFolder, normalizePath, MarkdownView } from 'obsidian';
 import {
 	ActionProposal,
 	ActionResult,
@@ -23,6 +23,61 @@ export class ActionExecutor {
 		this.app = app;
 		this.settings = settings;
 		this.vaultContext = vaultContext || new VaultContextService(app, settings);
+	}
+
+	/**
+	 * Synchronise le contenu modifié à la fois dans le coffre (app.vault.process / modify)
+	 * et dans les onglets d'éditeurs actuellement ouverts dans l'espace de travail (MarkdownView.editor).
+	 */
+	public async updateFileAndOpenEditors(file: TFile, updater: (content: string) => string): Promise<boolean> {
+		let modified = false;
+
+		// 1. Mise à jour dans le coffre (persistance disque)
+		try {
+			if (typeof (this.app.vault as any).process === 'function') {
+				await this.app.vault.process(file, (content) => {
+					const updated = updater(content);
+					if (updated !== content) {
+						modified = true;
+					}
+					return updated;
+				});
+			}
+		} catch (procErr) {
+			console.warn('[Second Brain Manager] vault.process a échoué, fallback sur vault.modify:', procErr);
+		}
+
+		if (!modified) {
+			const oldContent = (typeof (this.app.vault as any).cachedRead === 'function')
+				? await (this.app.vault as any).cachedRead(file)
+				: await this.app.vault.read(file);
+			const newContent = updater(oldContent);
+			if (newContent !== oldContent) {
+				await this.app.vault.modify(file, newContent);
+				modified = true;
+			}
+		}
+
+		// 2. Synchronisation instantanée dans les éditeurs ouverts (Live Preview / Source)
+		try {
+			if (this.app.workspace && typeof this.app.workspace.getLeavesOfType === 'function') {
+				const leaves = this.app.workspace.getLeavesOfType('markdown');
+				for (const leaf of leaves) {
+					const view = leaf.view as MarkdownView;
+					if (view && (view as any).file && (view as any).file.path === file.path && view.editor) {
+						const currentText = view.editor.getValue();
+						const updatedText = updater(currentText);
+						if (updatedText !== currentText) {
+							view.editor.setValue(updatedText);
+						}
+					}
+				}
+			}
+		} catch (editorErr) {
+			console.warn('[Second Brain Manager] Erreur lors de la synchronisation de l\'éditeur ouvert:', editorErr);
+		}
+
+		return modified;
 	}
 
 	/**
@@ -398,7 +453,7 @@ export class ActionExecutor {
 					};
 				}
 
-				await this.app.vault.process(file, (content) => {
+				await this.updateFileAndOpenEditors(file, (content) => {
 					if (proposal.section) {
 						const sectionHeader = `## ${proposal.section}`;
 						if (content.includes(sectionHeader)) {
@@ -671,26 +726,9 @@ export class ActionExecutor {
 			taskLine = `${taskLine} ^${proposal.blockId.replace(/^\^/, '')}`;
 		}
 
-		let insertedSuccessfully = false;
-		try {
-			if (typeof (this.app.vault as any).process === 'function') {
-				await this.app.vault.process(file, (content) => {
-					const updated = ActionExecutor.insertTaskIntoNoteContent(content, taskLine);
-					if (updated !== content) {
-						insertedSuccessfully = true;
-					}
-					return updated;
-				});
-			}
-		} catch (procErr) {
-			console.warn('[Second Brain Manager] vault.process a échoué, passage à vault.modify:', procErr);
-		}
-
-		if (!insertedSuccessfully) {
-			const oldContent = await this.app.vault.read(file);
-			const newContent = ActionExecutor.insertTaskIntoNoteContent(oldContent, taskLine);
-			await this.app.vault.modify(file, newContent);
-		}
+		await this.updateFileAndOpenEditors(file, (content) => {
+			return ActionExecutor.insertTaskIntoNoteContent(content, taskLine);
+		});
 
 		const noteBase = file.basename || resolved.path.split('/').pop()?.replace('.md', '') || resolved.path;
 
@@ -715,7 +753,7 @@ export class ActionExecutor {
 			};
 		}
 
-		await this.app.vault.process(file, (content) => {
+		await this.updateFileAndOpenEditors(file, (content) => {
 			const lines = content.split('\n');
 			let lineIdx = proposal.lineNumber - 1;
 
@@ -794,7 +832,7 @@ export class ActionExecutor {
 			};
 		}
 
-		await this.app.vault.process(file, (content) => {
+		await this.updateFileAndOpenEditors(file, (content) => {
 			const lines = content.split('\n');
 			let lineIdx = proposal.parentLineNumber - 1;
 
@@ -887,7 +925,7 @@ export class ActionExecutor {
 		// 1. Sens Forward ou Both : insérer [[targetNoteName]] dans sourceFile
 		if (direction === 'forward' || direction === 'both') {
 			const linkText = `- [[${cleanTargetName}]]${explanation ? ` — ${explanation}` : ''}`;
-			await this.app.vault.process(sourceFile, (content) => {
+			await this.updateFileAndOpenEditors(sourceFile, (content) => {
 				if (content.includes(`[[${cleanTargetName}]]`)) {
 					return content;
 				}
@@ -900,7 +938,7 @@ export class ActionExecutor {
 		if (direction === 'backward' || direction === 'both') {
 			if (targetFile instanceof TFile) {
 				const reverseLinkText = `- [[${sourceBasename}]]${explanation ? ` — ${explanation}` : ''}`;
-				await this.app.vault.process(targetFile, (content) => {
+				await this.updateFileAndOpenEditors(targetFile, (content) => {
 					if (content.includes(`[[${sourceBasename}]]`)) {
 						return content;
 					}
