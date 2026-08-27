@@ -767,13 +767,20 @@ export class ActionExecutor {
 		}
 
 		await this.updateFileAndOpenEditors(file, (content) => {
-			const lines = content.split('\n');
+			const isCRLF = content.includes('\r\n');
+			const lines = content.replace(/\r\n/g, '\n').split('\n');
 			let lineIdx = proposal.lineNumber - 1;
 
 			if (lines[lineIdx] === undefined || !lines[lineIdx].includes('- [')) {
 				if (proposal.taskTitle) {
-					const cleanSearch = TaskMutator.cleanTaskPrefix(proposal.taskTitle).toLowerCase();
-					const foundIdx = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+					const cleanSearch = TaskMutator.cleanTaskPrefix(proposal.taskTitle).toLowerCase().trim();
+					let foundIdx = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+					if (foundIdx === -1) {
+						const searchTokens = cleanSearch.split(/\s+/).filter(w => w.length >= 3);
+						if (searchTokens.length > 0) {
+							foundIdx = lines.findIndex(l => l.includes('- [') && searchTokens.every(token => l.toLowerCase().includes(token)));
+						}
+					}
 					if (foundIdx !== -1) {
 						lineIdx = foundIdx;
 					}
@@ -821,7 +828,7 @@ export class ActionExecutor {
 				lines[lineIdx] = line;
 			}
 
-			return lines.join('\n');
+			return isCRLF ? lines.join('\r\n') : lines.join('\n');
 		});
 
 		return {
@@ -846,7 +853,8 @@ export class ActionExecutor {
 		}
 
 		await this.updateFileAndOpenEditors(file, (content) => {
-			const lines = content.split('\n');
+			const isCRLF = content.includes('\r\n');
+			const lines = content.replace(/\r\n/g, '\n').split('\n');
 			let lineIdx = proposal.parentLineNumber - 1;
 
 			if (lines[lineIdx] === undefined || !lines[lineIdx].includes('- [')) {
@@ -877,7 +885,7 @@ export class ActionExecutor {
 				lines.splice(lineIdx + 1, 0, ...subtaskLines);
 			}
 
-			return lines.join('\n');
+			return isCRLF ? lines.join('\r\n') : lines.join('\n');
 		});
 
 		return {

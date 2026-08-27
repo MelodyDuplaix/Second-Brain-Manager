@@ -1,6 +1,6 @@
 {
   "name": "second-brain-manager",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Second Brain Manager Obsidian Plugin",
   "main": "main.js",
   "scripts": {
