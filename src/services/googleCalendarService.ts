@@ -1,5 +1,5 @@
 import { Notice, Platform } from 'obsidian';
-import { GoogleCalendarEvent, GoogleCalendarListEntry, GoogleCalendarSettings } from '../models/googleCalendar';
+import { GoogleCalendarEvent, GoogleCalendarListEntry, GoogleCalendarSettings, CalendarRole, CalendarConfig } from '../models/googleCalendar';
 import SecondBrainPlugin from '../main';
 
 const PORT = 42813;
@@ -331,9 +331,34 @@ export class GoogleCalendarService {
 				targetCalendars = ['primary'];
 			}
 		} else if (targetCalendars.length === 0) {
-			targetCalendars = (settings.selectedCalendarIds && settings.selectedCalendarIds.length > 0)
-				? settings.selectedCalendarIds
-				: ['primary'];
+			const configuredCalIds = Object.keys(settings.calendarsConfig || {});
+			if (configuredCalIds.length > 0) {
+				targetCalendars = configuredCalIds;
+			} else if (settings.selectedCalendarIds && settings.selectedCalendarIds.length > 0) {
+				if (settings.selectedCalendarIds.includes('all')) {
+					try {
+						const allCals = await this.listCalendars(settings);
+						targetCalendars = allCals.map(c => c.id);
+					} catch {
+						targetCalendars = [settings.defaultCalendarId || 'primary'];
+					}
+				} else {
+					targetCalendars = settings.selectedCalendarIds;
+				}
+			} else {
+				targetCalendars = [settings.defaultCalendarId || 'primary'];
+			}
+		}
+
+		// Filtrer les calendriers configurés comme 'ignore' (ne pas requêter)
+		if (settings.calendarsConfig) {
+			targetCalendars = targetCalendars.filter(calId => {
+				const conf = settings.calendarsConfig?.[calId];
+				return conf ? conf.role !== 'ignore' : true;
+			});
+		}
+		if (targetCalendars.length === 0) {
+			targetCalendars = [settings.defaultCalendarId || 'primary'];
 		}
 
 		const allEvents: GoogleCalendarEvent[] = [];
@@ -582,40 +607,194 @@ export class GoogleCalendarService {
 	}
 
 	/**
-	 * Formate la liste des événements pour les injecter dans les prompts du LLM (Briefing, Chat, etc.).
+	 * Formate la liste des événements pour les injecter dans les prompts du LLM (Briefing, Chat, etc.)
+	 * en séparant DISTINCTEMENT selon les rôles définis pour chaque calendrier :
+	 * - 1. Calendrier Principal (Mon agenda de référence - Contraintes directes)
+	 * - 2. Calendriers Secondaires (Mes événements personnels flexibles)
+	 * - 3. Calendriers d'autres personnes (Consultatifs avec nom de la personne)
 	 */
-	public static formatEventsForPrompt(events: GoogleCalendarEvent[], targetDateStr?: string): string {
+	public static formatEventsForPrompt(
+		events: GoogleCalendarEvent[],
+		targetDateStr?: string,
+		settings?: GoogleCalendarSettings | string
+	): string {
 		if (!events || events.length === 0) {
 			return 'Aucun événement prévu à l\'agenda.';
 		}
 
-		const lines: string[] = [];
-		for (const ev of events) {
-			const startDateTime = ev.start.dateTime;
-			const startDate = ev.start.date || (startDateTime ? startDateTime.split('T')[0] : '');
-
-			// Filtre optionnel sur une date spécifique
-			if (targetDateStr && startDate !== targetDateStr) {
-				continue;
-			}
-
-			let timeStr = 'Toute la journée';
-			if (startDateTime && ev.end.dateTime) {
-				const startTime = new Date(startDateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-				const endTime = new Date(ev.end.dateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-				timeStr = `${startTime} - ${endTime}`;
-			}
-
-			let entry = `- [Agenda] ${timeStr} : ${ev.summary}`;
-			if (ev.location) entry += ` (Lieu : ${ev.location})`;
-			if (ev.description) {
-				const shortDesc = ev.description.replace(/\n+/g, ' ').slice(0, 100);
-				entry += ` [Détails : "${shortDesc}"]`;
-			}
-			lines.push(entry);
+		let defaultCalId = 'primary';
+		let calendarsConfig: Record<string, CalendarConfig> = {};
+		if (typeof settings === 'string') {
+			defaultCalId = settings;
+		} else if (settings) {
+			defaultCalId = settings.defaultCalendarId || 'primary';
+			calendarsConfig = settings.calendarsConfig || {};
 		}
 
-		return lines.length > 0 ? lines.join('\n') : 'Aucun événement prévu pour cette date.';
+		// Filtre sur la date cible (gère les événements simples, multi-jours et toute la journée)
+		const relevantEvents = events.filter(ev => {
+			if (!targetDateStr) return true;
+			return GoogleCalendarService.isEventOnDate(ev, targetDateStr);
+		});
+
+		if (relevantEvents.length === 0) {
+			return 'Aucun événement prévu pour cette date.';
+		}
+
+		const getEventRole = (ev: GoogleCalendarEvent): { role: CalendarRole; ownerName?: string } => {
+			const calId = ev.calendarId;
+			if (calId && calendarsConfig[calId]) {
+				const conf = calendarsConfig[calId];
+				return { role: conf.role, ownerName: conf.ownerName };
+			}
+			// Fallback automatique
+			if (calId === defaultCalId || (!calId && defaultCalId === 'primary') || (defaultCalId === 'primary' && ev.calendarName?.toLowerCase().includes('principal'))) {
+				return { role: 'primary' };
+			}
+			return { role: 'other_person' };
+		};
+
+		const primaryEvents: GoogleCalendarEvent[] = [];
+		const secondaryEvents: GoogleCalendarEvent[] = [];
+		const otherPersonEvents: Array<{ event: GoogleCalendarEvent; ownerName?: string }> = [];
+
+		for (const ev of relevantEvents) {
+			const { role, ownerName } = getEventRole(ev);
+			if (role === 'ignore') {
+				continue;
+			} else if (role === 'primary') {
+				primaryEvents.push(ev);
+			} else if (role === 'secondary') {
+				secondaryEvents.push(ev);
+			} else {
+				otherPersonEvents.push({ event: ev, ownerName });
+			}
+		}
+
+		const formatEventLine = (ev: GoogleCalendarEvent, prefix: string): string => {
+			const startDateTime = ev.start?.dateTime;
+			const endDateTime = ev.end?.dateTime;
+			const startDate = ev.start?.date || (startDateTime ? startDateTime.split('T')[0] : '');
+			const endDate = ev.end?.date || (endDateTime ? endDateTime.split('T')[0] : '');
+
+			let timeStr = 'Toute la journée';
+			const isMultiDay = (startDate && endDate && startDate !== endDate && (!ev.start?.date || !ev.end?.date || ev.end.date > ev.start.date));
+
+			if (startDateTime && endDateTime) {
+				const startTime = new Date(startDateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+				const endTime = new Date(endDateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+				if (startDate === endDate) {
+					timeStr = `${startTime} - ${endTime}`;
+				} else {
+					timeStr = `${startDate} ${startTime} au ${endDate} ${endTime}`;
+				}
+			} else if (isMultiDay && startDate && endDate) {
+				timeStr = `Multi-jours (du ${startDate} au ${endDate})`;
+			}
+
+			let entry = `- ${prefix} ${timeStr} : **${ev.summary}**`;
+			if (ev.location) entry += ` (Lieu : ${ev.location})`;
+			if (ev.description) {
+				const shortDesc = ev.description.replace(/\n+/g, ' ').slice(0, 120);
+				entry += ` [Détails : "${shortDesc}"]`;
+			}
+			if (ev.attendees && ev.attendees.length > 0) {
+				const attNames = ev.attendees.map(a => a.displayName || a.email).join(', ');
+				entry += ` [Participants : ${attNames}]`;
+			}
+			return entry;
+		};
+
+		const sections: string[] = [];
+
+		// Section 1: Mon Agenda Principal de Référence
+		const primaryRefName = primaryEvents[0]?.calendarName || 'Mon Agenda Principal';
+		if (primaryEvents.length > 0) {
+			sections.push(
+				`### 👤 1. Mon Agenda Principal (${primaryRefName}) :\n` +
+				`*(Rendez-vous personnels prioritaires & contraintes de temps fermes)*\n` +
+				primaryEvents.map(ev => formatEventLine(ev, '⭐ [RDV PRINCIPAL]')).join('\n')
+			);
+		} else {
+			sections.push(
+				`### 👤 1. Mon Agenda Principal (${primaryRefName}) :\n` +
+				`Aucun événement prévu pour cette date.`
+			);
+		}
+
+		// Section 2: Mes Agendas Secondaires (si présents)
+		if (secondaryEvents.length > 0) {
+			const byCal = new Map<string, GoogleCalendarEvent[]>();
+			secondaryEvents.forEach(ev => {
+				const name = ev.calendarName || ev.calendarId || 'Agenda secondaire';
+				if (!byCal.has(name)) byCal.set(name, []);
+				byCal.get(name)!.push(ev);
+			});
+
+			const calBlocks: string[] = [];
+			byCal.forEach((evList, calName) => {
+				calBlocks.push(`👉 **Agenda : "${calName}"**\n` + evList.map(ev => formatEventLine(ev, '🎯 [ÉVÉNEMENT SECONDAIRE]')).join('\n'));
+			});
+
+			sections.push(
+				`### 🎯 2. Mes Agendas Secondaires :\n` +
+				calBlocks.join('\n\n')
+			);
+		}
+
+		// Section 3: Agendas d'Autres Personnes (si présents)
+		if (otherPersonEvents.length > 0) {
+			const byPerson = new Map<string, GoogleCalendarEvent[]>();
+			otherPersonEvents.forEach(({ event, ownerName }) => {
+				const calName = event.calendarName || event.calendarId || 'Autre agenda';
+				const key = ownerName ? `${ownerName} (Agenda: "${calName}")` : `"${calName}"`;
+				if (!byPerson.has(key)) byPerson.set(key, []);
+				byPerson.get(key)!.push(event);
+			});
+
+			const personBlocks: string[] = [];
+			byPerson.forEach((evList, personKey) => {
+				personBlocks.push(`👉 **Agenda de ${personKey}** :\n` + evList.map(ev => formatEventLine(ev, `👥 [AGENDA TIERS : ${ev.calendarName || 'Autre'}]`)).join('\n'));
+			});
+
+			sections.push(
+				`### 👥 3. Agendas Partagés / Proches :\n` +
+				`*(Ces événements appartiennent à des proches ou collègues. Mentionne-les sobrement à titre informatif sans lourdeur, et ne les compte pas dans le temps de travail de l'utilisateur)*\n` +
+				personBlocks.join('\n\n')
+			);
+		}
+
+		return sections.join('\n\n');
+	}
+
+	/**
+	 * Vérifie si un événement Google Calendar est actif / a lieu sur une date cible (YYYY-MM-DD),
+	 * gérant les événements sur un seul jour, multi-jours (date ou dateTime) et toute la journée.
+	 */
+	public static isEventOnDate(ev: GoogleCalendarEvent, targetDateStr: string): boolean {
+		const startDateTime = ev.start?.dateTime;
+		const startDate = ev.start?.date || (startDateTime ? startDateTime.split('T')[0] : '');
+		const endDateTime = ev.end?.dateTime;
+		let endDate = ev.end?.date || (endDateTime ? endDateTime.split('T')[0] : '');
+
+		if (!startDate) return false;
+		if (!endDate) endDate = startDate;
+
+		// Si l'événement démarre après la date cible, il n'est pas encore actif
+		if (startDate > targetDateStr) return false;
+
+		// Pour les événements avec heures précises (dateTime) :
+		if (endDateTime) {
+			const endD = endDateTime.split('T')[0];
+			const endT = endDateTime.split('T')[1]?.slice(0, 5) || '23:59';
+			if (endD === targetDateStr && (endT === '00:00' || endT === '00:00:00')) {
+				return startDate === targetDateStr;
+			}
+			return targetDateStr <= endD;
+		}
+
+		// Pour les événements toute la journée / multi-jours
+		return targetDateStr <= endDate;
 	}
 
 	private static addOneHour(timeStr: string): string {

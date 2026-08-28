@@ -6,8 +6,11 @@ import { FileSuggest } from '../../suggesters/fileSuggest';
 import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
 import { GoogleCalendarService } from '../../services/googleCalendarService';
+import { GoogleCalendarListEntry, CalendarRole } from '../../models/googleCalendar';
 
 export class MainPage extends BaseSettingsPage {
+	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
+
 	render(): void {
 		this.containerEl.empty();
 		this.containerEl.addClass('sbm-main-settings-page');
@@ -130,7 +133,73 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		// 4. Syntaxes des Tâches & Priorités
+		// 4. Filtres de Confidentialité & Exclusion IA
+		const filtersGroup = new SettingGroup(this.containerEl).setHeading('Filtres de confidentialité et exclusion IA');
+		filtersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Dossiers exclus de l\'IA')
+				.setDesc('Dossiers dont les fichiers et tâches ne seront jamais indexés, analysés ni envoyés à l\'IA (séparés par des virgules ou retours à la ligne).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: Chaos/Archives, 99 - Privé, Templates, .trash')
+						.setValue(this.plugin.settings.excludedFolders || '')
+						.onChange(async (value) => {
+							this.plugin.settings.excludedFolders = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		filtersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Fichiers exclus de l\'IA')
+				.setDesc('Fichiers ou motifs avec jokers (*) à exclure totalement des requêtes IA (séparés par des virgules ou retours à la ligne).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: MotsDePasse.md, Journal Intime.md, *.secret.md, *Confidentiel*')
+						.setValue(this.plugin.settings.excludedFiles || '')
+						.onChange(async (value) => {
+							this.plugin.settings.excludedFiles = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		filtersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Tags exclus de l\'IA')
+				.setDesc('Tags empêchant l\'envoi d\'une note ou d\'une tâche à l\'IA si elle le contient (séparés par des virgules ou retours à la ligne, ex: #secret, #prive).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: #secret, #prive, #confidentiel, #perso, #no-ai')
+						.setValue(this.plugin.settings.excludedTags || '')
+						.onChange(async (value) => {
+							this.plugin.settings.excludedTags = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		filtersGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Propriétés frontmatter exclues de l\'IA')
+				.setDesc('Propriétés YAML de note excluant la note de l\'IA (ex: private, secret: true, publish: false, no-ai).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: private, secret: true, publish: false, confidential: true, no-ai')
+						.setValue(this.plugin.settings.excludedProperties || '')
+						.onChange(async (value) => {
+							this.plugin.settings.excludedProperties = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		// 5. Syntaxes des Tâches & Priorités
 		const syntaxGroup = new SettingGroup(this.containerEl).setHeading('Syntaxes des tâches et priorités');
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting
@@ -437,6 +506,26 @@ export class MainPage extends BaseSettingsPage {
 			});
 		}
 
+		aiGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Instructions personnalisées pour le prompt (Custom System Instructions)')
+				.setDesc('Règles, préférences ou consignes additionnelles injectées dans tous les prompts de l\'IA (Briefing du matin, Décongestion/Reprise, Revue du soir, Chat Copilot).')
+				.addTextArea((textArea) => {
+					textArea
+						.setPlaceholder('Exemple :\n- Sois concis et direct dans tes synthèses.\n- Mon fuseau horaire est Europe/Paris.\n- Ne me propose jamais de réunions le vendredi après-midi.\n- Tiens compte de mes objectifs du trimestre...')
+						.setValue(this.plugin.settings.customPromptInstructions || '')
+						.onChange(async (val) => {
+							this.plugin.settings.customPromptInstructions = val;
+							await this.plugin.saveSettings();
+						});
+					textArea.inputEl.rows = 6;
+					textArea.inputEl.style.width = '100%';
+					textArea.inputEl.style.minHeight = '120px';
+					textArea.inputEl.style.fontFamily = 'monospace';
+					textArea.inputEl.style.fontSize = '12px';
+				});
+		});
+
 		// 6. Google Calendar & Agenda
 		const calGroup = new SettingGroup(this.containerEl).setHeading('Google Calendar et agenda');
 
@@ -477,7 +566,28 @@ export class MainPage extends BaseSettingsPage {
 			calGroup.addSetting((setting: Setting) => {
 				setting
 					.setName('Statut : 🟢 Connecté à Google Calendar')
-					.setDesc('Votre compte est authentifié. L\'IA a accès à votre agenda pour le briefing et la planification.')
+					.setDesc('Votre compte est authentifié. Personnalisez ci-dessous le rôle et le propriétaire de chaque calendrier pour guider précisément l\'IA.')
+					.addButton((btn) => {
+						btn
+							.setButtonText('🔄 Actualiser la liste')
+							.setTooltip('Interroger l\'API Google pour lister tous vos calendriers')
+							.onClick(async () => {
+								btn.setDisabled(true);
+								btn.setButtonText('⏳ Chargement...');
+								try {
+									this.discoveredCalendars = await GoogleCalendarService.listCalendars(this.plugin.settings);
+									btn.setDisabled(false);
+									btn.setButtonText('🔄 Actualiser la liste');
+									new Notice(`📅 ${this.discoveredCalendars.length} calendrier(s) synchronisé(s).`);
+									this.render();
+								} catch (err: unknown) {
+									btn.setDisabled(false);
+									btn.setButtonText('🔄 Actualiser la liste');
+									const msg = err instanceof Error ? err.message : String(err);
+									new Notice(`❌ Erreur récupération calendriers : ${msg}`);
+								}
+							});
+					})
 					.addButton((btn) => {
 						btn
 							.setButtonText('🔄 Tester la connexion')
@@ -503,10 +613,81 @@ export class MainPage extends BaseSettingsPage {
 							.setWarning()
 							.onClick(async () => {
 								await GoogleCalendarService.logoutGoogle(this.plugin);
+								this.discoveredCalendars = null;
 								this.render();
 							});
 					});
 			});
+
+			if (!this.plugin.settings.calendarsConfig) {
+				this.plugin.settings.calendarsConfig = {};
+			}
+
+			// Charger la liste des calendriers en arrière-plan si pas encore faits
+			if (this.discoveredCalendars === null) {
+				GoogleCalendarService.listCalendars(this.plugin.settings).then((cals) => {
+					this.discoveredCalendars = cals;
+					this.render();
+				}).catch(() => {
+					this.discoveredCalendars = [];
+				});
+			}
+
+			if (this.discoveredCalendars && this.discoveredCalendars.length > 0) {
+				const calendarListGroup = new SettingGroup(this.containerEl).setHeading('Gestion & Rôles de chaque calendrier');
+
+				this.discoveredCalendars.forEach((c) => {
+					const defaultCalId = this.plugin.settings.defaultCalendarId || 'primary';
+					const isPrimaryByDefault = c.id === defaultCalId || (defaultCalId === 'primary' && !!c.primary);
+
+					if (!this.plugin.settings.calendarsConfig![c.id]) {
+						this.plugin.settings.calendarsConfig![c.id] = {
+							id: c.id,
+							summary: c.summary,
+							role: isPrimaryByDefault ? 'primary' : 'other_person'
+						};
+					}
+
+					const conf = this.plugin.settings.calendarsConfig![c.id];
+
+					calendarListGroup.addSetting((setting: Setting) => {
+						const primaryBadge = c.primary ? ' (Compte principal)' : '';
+						setting
+							.setName(`📅 ${c.summary}${primaryBadge}`)
+							.setDesc(`ID : ${c.id}${c.description ? ` — ${c.description.slice(0, 50)}` : ''}`)
+							.addDropdown((dropdown) => {
+								dropdown.addOption('primary', '🌟 Calendrier principal (Mon agenda de référence)');
+								dropdown.addOption('secondary', '🎯 Calendrier secondaire (Mes événements perso/flexibles)');
+								dropdown.addOption('other_person', '👥 Calendrier d\'une autre personne (Consultatif)');
+								dropdown.addOption('ignore', '🚫 Ne pas requêter (Ignoré)');
+
+								dropdown.setValue(conf.role);
+
+								dropdown.onChange(async (val) => {
+									conf.role = val as CalendarRole;
+									if (val === 'primary') {
+										this.plugin.settings.defaultCalendarId = c.id;
+									}
+									await this.plugin.saveSettings();
+									this.render();
+								});
+							});
+
+						if (conf.role === 'other_person') {
+							setting.addText((text) => {
+								text
+									.setPlaceholder('Qui ? (ex: Sophie (conjointe), Équipe Tech...)')
+									.setValue(conf.ownerName || '')
+									.onChange(async (name) => {
+										conf.ownerName = name.trim();
+										await this.plugin.saveSettings();
+									});
+								text.inputEl.style.width = '200px';
+							});
+						}
+					});
+				});
+			}
 		} else {
 			calGroup.addSetting((setting: Setting) => {
 				setting

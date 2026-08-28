@@ -4,6 +4,7 @@ import { DynamicRegexBuilder } from '../parsers/regexBuilder';
 import { ObsidianTask } from '../models/task';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { SecondBrainSettings } from '../main';
+import { VaultFilterService } from './vaultFilterService';
 
 export interface NoteSearchResult {
 	path: string;
@@ -69,10 +70,16 @@ export function isTFile(file: unknown): file is TFile {
 export class VaultContextService {
 	private app: App;
 	private settings: SecondBrainSettings;
+	private filterService: VaultFilterService;
 
 	constructor(app: App, settings: SecondBrainSettings) {
 		this.app = app;
 		this.settings = settings;
+		this.filterService = new VaultFilterService(app, settings);
+	}
+
+	public getFilterService(): VaultFilterService {
+		return this.filterService;
 	}
 
 	/**
@@ -198,11 +205,22 @@ export class VaultContextService {
 			const normalizedPath = normalizePath(file.path);
 			const lowerPath = normalizedPath.toLowerCase();
 
+			// 1. Filtre de confidentialité rapide (dossier / nom)
+			if (this.filterService.isFolderExcluded(normalizedPath) || this.filterService.isFileNameExcluded(normalizedPath)) {
+				continue;
+			}
+
 			if (normalizedFolderFilter && !lowerPath.startsWith(normalizedFolderFilter)) {
 				continue;
 			}
 
 			const content = await this.app.vault.read(file);
+
+			// 2. Filtre de confidentialité approfondi (tags / propriétés YAML)
+			if (this.filterService.isFileExcluded(file, content)) {
+				continue;
+			}
+
 			const lowerContent = content.toLowerCase();
 
 			if (normalizedTagFilter && !lowerContent.includes(normalizedTagFilter)) {
@@ -295,6 +313,12 @@ export class VaultContextService {
 
 		for (const file of files) {
 			const normPath = normalizePath(file.path);
+
+			// 1. Filtre rapide de dossier / fichier exclu
+			if (this.filterService.isFolderExcluded(normPath) || this.filterService.isFileNameExcluded(normPath)) {
+				continue;
+			}
+
 			if (normFolder && !normPath.toLowerCase().startsWith(normFolder)) {
 				continue;
 			}
@@ -302,9 +326,20 @@ export class VaultContextService {
 			const content = (typeof (this.app.vault as any).cachedRead === 'function')
 				? await (this.app.vault as any).cachedRead(file)
 				: await this.app.vault.read(file);
+
+			// 2. Filtre de note complète par tags / frontmatter
+			if (this.filterService.isFileExcluded(file, content)) {
+				continue;
+			}
+
 			const tasks = TaskParser.parseAllTasks(content, normPath, this.settings);
 
 			for (const task of tasks) {
+				// 3. Filtre spécifique de la tâche
+				if (this.filterService.isTaskExcluded(task, content)) {
+					continue;
+				}
+
 				// Filtre statut
 				if (filter.status && filter.status !== 'all') {
 					if (filter.status === 'done' && !task.completed && task.status !== 'done') continue;
@@ -357,7 +392,18 @@ export class VaultContextService {
 			return null;
 		}
 
+		// Filtre rapide dossier / nom
+		if (this.filterService.isFolderExcluded(file.path) || this.filterService.isFileNameExcluded(file.path)) {
+			return null;
+		}
+
 		const fullContent = await this.app.vault.read(file);
+
+		// Filtre complet frontmatter / tags
+		if (this.filterService.isFileExcluded(file, fullContent)) {
+			return null;
+		}
+
 		const truncated = fullContent.length > maxCharacters;
 		const content = truncated ? fullContent.slice(0, maxCharacters) + '\n\n... [Contenu tronqué pour la taille du contexte]' : fullContent;
 
@@ -376,6 +422,10 @@ export class VaultContextService {
 		const file = this.resolveFileCanonically(filePath);
 
 		if (!(file instanceof TFile)) {
+			return null;
+		}
+
+		if (this.filterService.isFileExcluded(file)) {
 			return null;
 		}
 
@@ -400,6 +450,7 @@ export class VaultContextService {
 
 		for (const otherFile of allFiles) {
 			if (otherFile.path === file.path) continue;
+			if (this.filterService.isFileExcluded(otherFile)) continue;
 			const otherContent = await this.app.vault.read(otherFile);
 			if (linkRegex.test(otherContent)) {
 				backlinks.push(normalizePath(otherFile.path));
@@ -407,7 +458,7 @@ export class VaultContextService {
 		}
 
 		return {
-			path: normalized,
+			path: normalizePath(file.path),
 			title: baseName,
 			outgoingLinks,
 			backlinks,
@@ -726,10 +777,17 @@ export class VaultContextService {
 
 		for (const f of allFiles) {
 			if (f instanceof TFolder) {
-				folders.push(normalizePath(f.path));
+				const normFolder = normalizePath(f.path);
+				if (!this.filterService.isFolderExcluded(normFolder)) {
+					folders.push(normFolder);
+				}
 			} else if (f instanceof TFile && f.extension === 'md') {
-				totalMarkdownFiles++;
 				const normPath = normalizePath(f.path);
+				if (this.filterService.isFileExcluded(f)) {
+					continue;
+				}
+
+				totalMarkdownFiles++;
 				const lowerPath = normPath.toLowerCase();
 
 				if (lowerPath.includes('projet') || lowerPath.includes('01 - projets')) {

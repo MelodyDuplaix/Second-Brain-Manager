@@ -4621,3 +4621,43 @@ textarea.sbm-chat-textarea:focus {
 	gap: 6px;
 }
 
+/* ==========================================================================
+   Chat View - Text Selection & Mouse Usability
+   ========================================================================== */
+
+.sbm-chat-view,
+.sbm-chat-container,
+.sbm-messages-area,
+.sbm-chat-bubble,
+.sbm-msg-text-content,
+.sbm-msg-text-content *,
+.sbm-msg-text-content p,
+.sbm-msg-text-content span,
+.sbm-msg-text-content li,
+.sbm-msg-text-content ul,
+.sbm-msg-text-content ol,
+.sbm-msg-text-content h1,
+.sbm-msg-text-content h2,
+.sbm-msg-text-content h3,
+.sbm-msg-text-content h4,
+.sbm-msg-text-content blockquote,
+.sbm-msg-text-content pre,
+.sbm-msg-text-content code,
+.sbm-msg-time {
+	user-select: text !important;
+	-webkit-user-select: text !important;
+}
+
+.sbm-msg-text-content,
+.sbm-msg-text-content * {
+	cursor: auto;
+}
+
+.sbm-msg-action-icon-btn,
+.sbm-chat-clear-btn,
+.sbm-chat-send-btn,
+.sbm-direct-open-note-btn {
+	user-select: none !important;
+	-webkit-user-select: none !important;
+}
+

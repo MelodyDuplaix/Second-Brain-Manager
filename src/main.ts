@@ -26,6 +26,15 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	dailyNoteTemplatePath: string;
 	autoOpenDailyNoteOnBriefing: boolean;
 
+	// Filtres de confidentialité & exclusion IA
+	excludedFolders: string;
+	excludedFiles: string;
+	excludedTags: string;
+	excludedProperties: string;
+
+	// Instructions personnalisées pour les prompts du LLM
+	customPromptInstructions: string;
+
 	llmProvider: 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lm-studio' | 'lmstudio';
 	llmEndpoint: string;
 	llmModel: string;
@@ -53,6 +62,13 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	dailyNotesFolder: '04 - Journal',
 	dailyNoteTemplatePath: '',
 	autoOpenDailyNoteOnBriefing: true,
+
+	excludedFolders: '',
+	excludedFiles: '',
+	excludedTags: '',
+	excludedProperties: '',
+
+	customPromptInstructions: '',
 
 	llmProvider: 'gemini',
 	llmEndpoint: 'https://generativelanguage.googleapis.com',

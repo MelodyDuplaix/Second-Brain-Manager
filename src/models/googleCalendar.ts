@@ -40,6 +40,15 @@ export interface GoogleCalendarListEntry {
 	timeZone?: string;
 }
 
+export type CalendarRole = 'primary' | 'secondary' | 'other_person' | 'ignore';
+
+export interface CalendarConfig {
+	id: string;
+	summary?: string;
+	role: CalendarRole;
+	ownerName?: string;
+}
+
 export interface GoogleCalendarSettings {
 	googleCalendarEnabled: boolean;
 	googleClientId: string;
@@ -47,6 +56,7 @@ export interface GoogleCalendarSettings {
 	googleRefreshToken: string;
 	selectedCalendarIds: string[];
 	defaultCalendarId?: string;
+	calendarsConfig?: Record<string, CalendarConfig>;
 	autoSyncGoogleCalendar: boolean;
 	syncIntervalMinutes: number;
 }
@@ -58,6 +68,7 @@ export const DEFAULT_GOOGLE_CALENDAR_SETTINGS: GoogleCalendarSettings = {
 	googleRefreshToken: '',
 	selectedCalendarIds: ['primary'],
 	defaultCalendarId: 'primary',
+	calendarsConfig: {},
 	autoSyncGoogleCalendar: true,
 	syncIntervalMinutes: 15
 };

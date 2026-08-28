@@ -286,4 +286,48 @@ describe('MorningBriefingService', () => {
 		const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 		expect(MorningBriefingService.calculateInactivity(threeDaysAgo).inactivityDays).toBe(3);
 	});
+
+	it('should include Google Calendar events as top priority in briefing messages', () => {
+		const data: BriefingVaultData = {
+			dateStr: '2026-08-28',
+			formattedDate: 'Vendredi 28 Août 2026',
+			energy: 8,
+			modeText: 'Mode Plein Potentiel',
+			overdueTasks: [],
+			todayTasks: [mockTasks[0]],
+			priorityTasks: [mockTasks[0]],
+			inboxTasks: [],
+			projectTasks: [],
+			projects: ['Acme Project'],
+			contacts: [],
+			calendarEventsText: '- ⭐ [RENDEZ-VOUS FIXE PRIORITAIRE] 09:00 - 10:00 : **Réunion Lancement** (Lieu : Meet)'
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(data);
+		expect(messages[0].content).toContain('PRISE EN COMPTE DES AGENDAS');
+		expect(messages[0].content).toContain('Rendez-vous & Contraintes Fixes de l\'Agenda');
+		expect(messages[1].content).toContain('AGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE)');
+		expect(messages[1].content).toContain('Réunion Lancement');
+	});
+
+	it('should inject custom user prompt instructions when provided', () => {
+		const data: BriefingVaultData = {
+			dateStr: '2026-08-28',
+			formattedDate: 'Vendredi 28 Août 2026',
+			energy: 7,
+			modeText: 'Mode Équilibré',
+			overdueTasks: [],
+			todayTasks: [],
+			priorityTasks: [],
+			inboxTasks: [],
+			projectTasks: [],
+			projects: [],
+			contacts: [],
+			customPromptInstructions: 'Consigne personnalisée : toujours réserver 15 min de pause à 11h.'
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(data);
+		expect(messages[0].content).toContain('INSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L\'UTILISATEUR');
+		expect(messages[0].content).toContain('toujours réserver 15 min de pause à 11h.');
+	});
 });

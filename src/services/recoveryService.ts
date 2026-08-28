@@ -11,6 +11,8 @@ import { TaskSafetyGuard } from './taskSafetyGuard';
 import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { GamificationService } from './gamificationService';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
+import { GoogleCalendarEvent } from '../models/googleCalendar';
+import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
 
 export interface RecoveryVaultData {
@@ -30,6 +32,9 @@ export interface RecoveryVaultData {
 	contacts: string[];
 	energy: number;
 	dailyNoteContent?: string;
+	calendarEvents?: GoogleCalendarEvent[];
+	calendarEventsText?: string;
+	customPromptInstructions?: string;
 }
 
 export class RecoveryService {
@@ -105,16 +110,21 @@ export class RecoveryService {
 		);
 
 		const vaultContext = new VaultContextService(app, plugin.settings);
+		const filterService = vaultContext.getFilterService();
 		const structure = vaultContext.getVaultStructure();
 
 		// Lecture de toutes les tâches ouvertes du coffre en parallèle
-		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const allFiles = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const files = allFiles.filter(f => !filterService.isFolderExcluded(f.path) && !filterService.isFileNameExcluded(f.path));
 		const results = await Promise.all(
 			files.map(async (file) => {
 				try {
 					const content = (typeof (app.vault as any).cachedRead === 'function')
 						? await (app.vault as any).cachedRead(file)
 						: await app.vault.read(file);
+					if (filterService.isFileExcluded(file, content)) {
+						return [];
+					}
 					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
 				} catch {
 					return [];
@@ -122,7 +132,7 @@ export class RecoveryService {
 			})
 		);
 		const allTasks = results.flat();
-		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
+		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
 		// Seuil de 7 jours pour identifier les tâches en retard "obsolètes / en souffrance"
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -144,8 +154,8 @@ export class RecoveryService {
 			return norm.startsWith(inboxFolder) || norm.includes('notes en vrac') || norm.includes('vrac') || isRoot;
 		});
 
-		const inboxFilesToScan = structure.inboxFiles.slice(0, 30);
-		const inboxNotePreviews = await Promise.all(
+		const inboxFilesToScan = structure.inboxFiles.filter(p => !filterService.isFolderExcluded(p) && !filterService.isFileNameExcluded(p)).slice(0, 30);
+		const rawPreviews = await Promise.all(
 			inboxFilesToScan.map(async (normPath) => {
 				const file = app.vault.getFileByPath(normPath) || app.vault.getAbstractFileByPath(normPath);
 				let preview = '';
@@ -154,6 +164,9 @@ export class RecoveryService {
 						const raw = (typeof (app.vault as any).cachedRead === 'function')
 							? await (app.vault as any).cachedRead(file)
 							: await app.vault.read(file);
+						if (filterService.isFileExcluded(file, raw)) {
+							return null;
+						}
 						const nonHeadingLine = raw.split('\n')
 							.map(l => l.trim())
 							.filter(l => l.length > 0 && !l.startsWith('---') && !l.startsWith('```'))[0] || '';
@@ -166,6 +179,7 @@ export class RecoveryService {
 				return { path: normPath, name, preview };
 			})
 		);
+		const inboxNotePreviews = rawPreviews.filter((p): p is { path: string; name: string; preview: string } => p !== null);
 
 		const inboxNotes = inboxNotePreviews.map(n => n.name);
 
@@ -191,8 +205,32 @@ export class RecoveryService {
 		// Note quotidienne du jour
 		let dailyNoteContent: string | undefined;
 		const dailyRes = await vaultContext.getOrCreateDailyNote(dateStr, plugin.settings.dailyNoteTemplatePath);
-		if (dailyRes.content) {
+		if (dailyRes.content && dailyRes.file && !filterService.isFileExcluded(dailyRes.file, dailyRes.content)) {
 			dailyNoteContent = dailyRes.content;
+		}
+
+		// Lecture des événements Google Calendar du jour si configuré
+		let calendarEventsText = '';
+		let calendarEvents: GoogleCalendarEvent[] = [];
+		if (plugin.settings.googleRefreshToken) {
+			try {
+				const startOfToday = new Date(today);
+				startOfToday.setHours(0, 0, 0, 0);
+				const endOfToday = new Date(today);
+				endOfToday.setHours(23, 59, 59, 999);
+
+				calendarEvents = await GoogleCalendarService.getEvents(plugin.settings, {
+					timeMin: startOfToday.toISOString(),
+					timeMax: endOfToday.toISOString()
+				});
+				calendarEventsText = GoogleCalendarService.formatEventsForPrompt(
+					calendarEvents,
+					dateStr,
+					plugin.settings
+				);
+			} catch (calErr) {
+				console.warn('[Second Brain Manager] Erreur récupération événements Google Calendar pour la reprise:', calErr);
+			}
 		}
 
 		return {
@@ -211,7 +249,10 @@ export class RecoveryService {
 			projects: structure.projects,
 			contacts: structure.contacts,
 			energy,
-			dailyNoteContent
+			dailyNoteContent,
+			calendarEvents,
+			calendarEventsText,
+			customPromptInstructions: plugin.settings.customPromptInstructions
 		};
 	}
 
@@ -518,7 +559,21 @@ export class RecoveryService {
 			? data.folders.slice(0, 25).join(', ')
 			: 'Racine';
 
+		let calendarSectionText = '';
+		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
+			calendarSectionText = `\nAGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE) :\n${data.calendarEventsText}\nATTENTION : Ces rendez-vous sont des contraintes fermes prioritaires sur toutes les tâches. Tu dois impérativement articuler le plan de reprise et les tâches dans les temps libres restants entre ces créneaux.\n`;
+		}
+
+		let customInstructionsSection = '';
+		if (data.customPromptInstructions && data.customPromptInstructions.trim()) {
+			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
+		}
+
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en reprise sereine apres pause (Soft Landing) et allegement intelligent de charge mentale.
+
+PRISE EN COMPTE DES AGENDAS :
+1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement articuler le plan de reprise et les tâches autour des créneaux libres disponibles.
+2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
 
 TON OBJECTIF :
 Accueillir chaleureusement l'utilisateur (${data.inactivityText}), dresser un bilan deculpabilisant, et proposer un plan de tri et d'allegement structure et exhaustif de ses taches et notes en souffrance.
@@ -541,13 +596,14 @@ VARIETE D'ACTIONS A PROPOSER DANS LE PLAN :
 
 STRUCTURE DE TA REPONSE :
 1. Accueil & Philosophie de reprise (2 phrases deculpabilisantes).
-2. Etape 1 : Le Quick Win pour amorcer le mouvement (1 micro-tache simple de 5 min au format \`- [ ] ... [[Note]]\`).
-3. Etape 2 : The One Thing (La seule tache prioritaire et strategique du jour au format \`- [ ] ... [[Note]]\`).
-4. Etape 3 : Plan d'Allegement & Tri Detaille :
+2. Contraintes de l'Agenda (Rappel des rendez-vous et réunions prioritaires du jour).
+3. Etape 1 : Le Quick Win pour amorcer le mouvement (1 micro-tache simple de 5 min au format \`- [ ] ... [[Note]]\`).
+4. Etape 2 : The One Thing (La seule tache prioritaire et strategique du jour au format \`- [ ] ... [[Note]]\`, calée hors des rendez-vous).
+5. Etape 3 : Plan d'Allegement & Tri Detaille :
    - Traite et justifie les annulations, reports, rangements et renommages de notes en vrac.
-5. Format des tâches :
+6. Format des tâches :
 ${taskSyntaxDesc}
-6. Conseil de demarrage (1 phrase motivante).
+7. Conseil de demarrage (1 phrase motivante).
 
 BLOC D'ACTIONS STRUCTUREES (OBLIGATOIRE A LA FIN DU MESSAGE) :
 A la toute fin de ton message, inclus un bloc de code JSON strictement balise \`\`\`json:actions ... \`\`\` contenant le tableau exhaustif de TOUTES les propositions d'actions pour que l'utilisateur puisse les executer en 1 clic :
@@ -594,7 +650,7 @@ Utilise les chemins exacts et numeros de ligne fournis.`;
 Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
-
+${calendarSectionText}
 TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
 

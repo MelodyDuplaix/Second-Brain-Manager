@@ -8,6 +8,8 @@ import { DailyNoteFormatter } from './dailyNoteFormatter';
 import { VaultContextService } from './vaultContextService';
 import { GamificationService } from './gamificationService';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
+import { GoogleCalendarEvent } from '../models/googleCalendar';
+import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
 
 export interface EveningVaultData {
@@ -21,6 +23,9 @@ export interface EveningVaultData {
 	projects: string[];
 	contacts: string[];
 	dailyNoteContent?: string;
+	calendarEvents?: GoogleCalendarEvent[];
+	calendarEventsText?: string;
+	customPromptInstructions?: string;
 }
 
 export class EveningReviewService {
@@ -40,10 +45,12 @@ export class EveningReviewService {
 		const capitalizedDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
 
 		const vaultContext = new VaultContextService(app, plugin.settings);
+		const filterService = vaultContext.getFilterService();
 		const structure = vaultContext.getVaultStructure();
 
 		// Lecture de toutes les tâches du coffre
-		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const allFiles = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const files = allFiles.filter(f => !filterService.isFolderExcluded(f.path) && !filterService.isFileNameExcluded(f.path));
 		const completedTodayTasks: ObsidianTask[] = [];
 		const unfinishedTodayTasks: ObsidianTask[] = [];
 		const overdueTasks: ObsidianTask[] = [];
@@ -54,6 +61,9 @@ export class EveningReviewService {
 					const content = (typeof (app.vault as any).cachedRead === 'function')
 						? await (app.vault as any).cachedRead(file)
 						: await app.vault.read(file);
+					if (filterService.isFileExcluded(file, content)) {
+						return [];
+					}
 					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
 				} catch {
 					return [];
@@ -62,6 +72,9 @@ export class EveningReviewService {
 		);
 
 		for (const t of results.flat()) {
+			if (filterService.isTaskExcluded(t)) {
+				continue;
+			}
 			if (t.completed || t.status === 'done') {
 				if (t.completedDate === dateStr || !t.completedDate) {
 					completedTodayTasks.push(t);
@@ -89,18 +102,42 @@ export class EveningReviewService {
 			coinsEarnedToday = completedTodayTasks.reduce((acc, t) => acc + (t.pieces || plugin.settings.defaultCoinsPerTask || 1), 0);
 		}
 
-		// Fichiers présents dans la boîte de réception (Inbox)
+		// Fichiers présents dans la boîte de réception (Inbox) non exclus
 		const inboxFolder = normalizePath(plugin.settings.inboxFolder);
 		const inboxNotes = files
-			.filter(f => f.path.startsWith(inboxFolder) && f.basename)
+			.filter(f => f.path.startsWith(inboxFolder) && f.basename && !filterService.isFileExcluded(f))
 			.map(f => f.basename);
 
 		// Lecture de la note quotidienne du jour si elle existe
 		let dailyNoteContent: string | undefined;
 		const dailyPath = normalizePath(`${plugin.settings.dailyNotesFolder}/${dateStr}.md`);
 		const dailyFile = app.vault.getFileByPath(dailyPath) || app.vault.getAbstractFileByPath(dailyPath);
-		if (dailyFile instanceof TFile) {
+		if (dailyFile instanceof TFile && !filterService.isFileExcluded(dailyFile)) {
 			dailyNoteContent = await app.vault.read(dailyFile);
+		}
+
+		// Lecture des événements Google Calendar du jour si configuré
+		let calendarEventsText = '';
+		let calendarEvents: GoogleCalendarEvent[] = [];
+		if (plugin.settings.googleRefreshToken) {
+			try {
+				const startOfToday = new Date(today);
+				startOfToday.setHours(0, 0, 0, 0);
+				const endOfToday = new Date(today);
+				endOfToday.setHours(23, 59, 59, 999);
+
+				calendarEvents = await GoogleCalendarService.getEvents(plugin.settings, {
+					timeMin: startOfToday.toISOString(),
+					timeMax: endOfToday.toISOString()
+				});
+				calendarEventsText = GoogleCalendarService.formatEventsForPrompt(
+					calendarEvents,
+					dateStr,
+					plugin.settings
+				);
+			} catch (calErr) {
+				console.warn('[Second Brain Manager] Erreur récupération événements Google Calendar pour la revue du soir:', calErr);
+			}
 		}
 
 		return {
@@ -113,7 +150,10 @@ export class EveningReviewService {
 			inboxNotes,
 			projects: structure.projects,
 			contacts: structure.contacts,
-			dailyNoteContent
+			dailyNoteContent,
+			calendarEvents,
+			calendarEventsText,
+			customPromptInstructions: plugin.settings.customPromptInstructions
 		};
 	}
 
@@ -143,12 +183,26 @@ export class EveningReviewService {
 			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
 			: 'Boîte de réception vide.';
 
+		let calendarSectionText = '';
+		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
+			calendarSectionText = `\nAGENDA DU JOUR (Rendez-vous et réunions ayant pris du temps sur la journée) :\n${data.calendarEventsText}\n`;
+		}
+
+		let customInstructionsSection = '';
+		if (data.customPromptInstructions && data.customPromptInstructions.trim()) {
+			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
+		}
+
 		let dailyNoteSnippet = '';
 		if (data.dailyNoteContent) {
 			dailyNoteSnippet = `\nContenu actuel de la note quotidienne du jour (${data.dateStr}) :\n${data.dailyNoteContent.slice(0, 1500)}\n`;
 		}
 
 		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et revue sans culpabilité.
+
+PRISE EN COMPTE DU TEMPS AGENDA & SÉPARATION DES AGENDAS :
+- Les rendez-vous sous "MON AGENDA PERSONNEL DE RÉFÉRENCE" ont la priorité absolue et occupent du temps réel de concentration. Prends en compte la charge d'événements personnels pour valoriser les avancées de l'utilisateur avec bienveillance.
+- Les événements sous "AGENDAS D'AUTRES PERSONNES" appartiennent exclusivement à des tiers (proches, collègues, équipe). L'utilisateur n'y a pas participé personnellement et ils n'impactent pas son temps.${customInstructionsSection}
 
 TON OBJECTIF :
 Fournir une Revue du Soir chaleureuse, déculpabilisante, constructive et apaisante pour aider l'utilisateur à clôturer sa journée, célébrer ses victoires, trier les tâches ouvertes et libérer sa charge mentale avant la soirée.
@@ -158,20 +212,21 @@ CONSIGNE DE STYLE STRICTE :
 
 CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Bienveillant, positif et valorisant. Ne jamais faire de reproches sur les tâches non terminées. Clôturer la journée dans la sérénité.
-2. **Célébration des Victoires** : Valorise les tâches accomplies (${data.completedTodayTasks.length} tâche(s)) et les pièces gagnées (+${data.coinsEarnedToday} pièces).
+2. **Célébration des Victoires & Charge Réelle** : Valorise les tâches accomplies (${data.completedTodayTasks.length} tâche(s)) et les pièces gagnées (+${data.coinsEarnedToday} pièces), tout en reconnaissant les réunions et rendez-vous honorés.
 3. **Triage Clair des Tâches Restantes** :
    - Pour les tâches non terminées, propose des options claires selon la syntaxe configurée :
 ${taskSyntaxDesc}
 4. **Nettoyage Mental & Inbox** :
    - Si des notes sont dans l'Inbox, suggère brièvement où les classer (\`01 - Projets/\`, \`03 - Contacts/\`).
 5. **Structure de la Revue** :
-   - **Bilan & Célébration de la Journée** (Ce qui a avancé, récompenses)
+   - **Bilan & Célébration de la Journée** (Ce qui a avancé, temps d'agenda honoré, récompenses)
    - **Triage des Tâches Restantes** (Recommandations pour demain)
    - **Nettoyage Mental & Boîte de Réception** (Organisation fluide)
    - **Mot de Clôture & Déconnexion** (Conseil bienveillant pour la soirée)`;
 
 		const userMessage = `Voici le bilan de mon coffre pour ce ${data.formattedDate} :
 
+${calendarSectionText}
 TACHES TERMINEES AUJOURD'HUI (${data.completedTodayTasks.length}) :
 ${completedText}
 Pieces gagnees aujourd'hui : +${data.coinsEarnedToday} pieces

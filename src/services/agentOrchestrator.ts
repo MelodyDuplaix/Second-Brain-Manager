@@ -54,16 +54,27 @@ export class AgentOrchestrator {
 		const structure = this.vaultContext.getVaultStructure();
 		const toolDocs = ToolRegistry.getSystemPromptToolDocumentation();
 
+		const filterService = this.vaultContext.getFilterService();
+
 		let activeNoteInfo = '';
 		const effectiveActive = activeFile || this.app.workspace?.getActiveFile?.();
 		if (effectiveActive instanceof TFile) {
-			activeNoteInfo = `\n- NOTE ACTUELLEMENT OUVERTE DANS L'ÉDITEUR : "${normalizePath(effectiveActive.path)}" (Titre : "${effectiveActive.basename}")`;
+			if (!filterService.isFileExcluded(effectiveActive)) {
+				activeNoteInfo = `\n- NOTE ACTUELLEMENT OUVERTE DANS L'ÉDITEUR : "${normalizePath(effectiveActive.path)}" (Titre : "${effectiveActive.basename}")`;
+			} else {
+				activeNoteInfo = `\n- NOTE ACTUELLEMENT OUVERTE DANS L'ÉDITEUR : [Masquée par les filtres de confidentialité]`;
+			}
 		}
 
 		let attachedContextText = '';
-		if (attachedContextNotes && attachedContextNotes.length > 0) {
+		const allowedAttached = (attachedContextNotes || []).filter(note =>
+			!filterService.isFolderExcluded(note.path) &&
+			!filterService.isFileNameExcluded(note.path) &&
+			!filterService.isFileNameExcluded(note.title)
+		);
+		if (allowedAttached.length > 0) {
 			attachedContextText = '\n\nDOCUMENTS JOINTS EN CONTEXTE PAR L\'UTILISATEUR :\n';
-			attachedContextNotes.forEach(note => {
+			allowedAttached.forEach(note => {
 				const MAX_CHARS_PER_NOTE = 6000;
 				let noteContent = note.content;
 				if (noteContent.length > MAX_CHARS_PER_NOTE) {
@@ -96,6 +107,11 @@ export class AgentOrchestrator {
 
 		const dailyNoteTodayPath = `${dailyNotesFolder}/${chosenName}.md`;
 
+		let customInstructionsText = '';
+		if (this.settings.customPromptInstructions && this.settings.customPromptInstructions.trim()) {
+			customInstructionsText = `\n\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${this.settings.customPromptInstructions.trim()}\n`;
+		}
+
 		return `Tu es l'assistant personnel intelligent "Second Brain Manager" intégré au coffre Obsidian de l'utilisateur.
 
 CONTEXTE EN TEMPS RÉEL DU COFFRE :
@@ -108,11 +124,14 @@ CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Format de priorité matrice : ${this.settings.matrixProvider}
 - Projets existants : ${structure.projects.slice(0, 20).join(', ') || 'Aucun'}
 - Contacts existants : ${structure.contacts.slice(0, 20).join(', ') || 'Aucun'}
-- Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}
+- Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}${customInstructionsText}
 
 COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 1. RECHERCHE D'INFORMATIONS :
-   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact, emplacement d'un projet), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`).
+   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact, emplacement d'un projet), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`, \`search_calendar_events\`).
+   - Pour toute question relative à l'agenda, au planning, aux rendez-vous ou à la journée :
+     -> Appelle TOUJOURS \`search_calendar_events\` SANS spécifier de \`calendarId\` (pour interroger automatiquement TOUS les agendas configurés : principal, secondaires, partagés).
+     -> ATTENTION CRITIQUE SUR LES ÉVÉNEMENTS MULTI-JOURS : Tout événement étalé sur plusieurs jours dont la période couvre la date demandée (ex: débuté il y a quelques jours et se terminant aujourd'hui ou plus tard) est un événement TOTALEMENT EN COURS ET ACTIF aujourd'hui ! Il ne faut JAMAIS le considérer comme passé sous prétexte que sa date de début est antérieure à aujourd'hui.
 
 2. CONSULTATION VS MODIFICATION (RÈGLE IMPORTANTE) :
    - Pour les demandes d'information ou de planning (ex: "Quel est mon planning ?", "Qu'est-ce qui est en retard ?", "Résume mes priorités") :
@@ -148,6 +167,12 @@ ${taskSyntaxDocs}
 
 7. CONSIGNE DE STYLE STRICTE :
    - N'utilise AUCUN émoji dans tes réponses textuelles (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
+
+8. GESTION DU TEMPS ET DES AGENDAS (Google Calendar) :
+   - PRISE EN COMPTE DES AGENDAS :
+     1. "Mon Agenda Principal & Secondaires" ("${this.settings.defaultCalendarId || 'primary'}") : Rendez-vous personnels de l'utilisateur (incluant les formations ou événements multi-jours en cours). Le principal bloque son temps de travail en priorité n°1. Planifie et ordonne toujours les tâches dans les plages horaires libres disponibles.
+     2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre purement informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de faux conflit d'agenda.
+   - Pour toute création ou proposition d'événement Google Calendar (\`propose_create_calendar_event\`), utilise le calendrier de référence configuré ("${this.settings.defaultCalendarId || 'primary'}").
 
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :
 \`\`\`json

@@ -3,6 +3,7 @@ import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskParser } from '../parsers/taskParser';
+import { VaultFilterService } from './vaultFilterService';
 import SecondBrainPlugin from '../main';
 
 export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase';
@@ -186,6 +187,12 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			return;
 		}
 
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
+			return;
+		}
+
 		const selectedText = targetEditor.getSelection();
 		const textToAnalyze = selectedText.trim() ? selectedText : targetEditor.getValue();
 
@@ -239,6 +246,12 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			return;
 		}
 
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
+			return;
+		}
+
 		const cursor = targetEditor.getCursor();
 		const currentLine = targetEditor.getLine(cursor.line);
 
@@ -281,9 +294,16 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 	public static async handleSummarizeCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
+		const activeFile = targetView?.file;
 
 		if (!targetEditor) {
 			new Notice('Veuillez ouvrir une note Markdown.');
+			return;
+		}
+
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (activeFile && filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
 			return;
 		}
 
@@ -324,9 +344,16 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 	public static async handleRephraseCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
+		const activeFile = targetView?.file;
 
 		if (!targetEditor) {
 			new Notice('Veuillez ouvrir une note Markdown.');
+			return;
+		}
+
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (activeFile && filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
 			return;
 		}
 

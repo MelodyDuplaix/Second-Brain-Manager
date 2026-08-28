@@ -1,4 +1,6 @@
 import { App, FuzzySuggestModal, TFolder, MarkdownView, normalizePath } from 'obsidian';
+import { SecondBrainSettings } from '../main';
+import { VaultFilterService } from '../services/vaultFilterService';
 
 export interface ContextItem {
 	type: 'file' | 'folder' | 'active-note';
@@ -9,10 +11,14 @@ export interface ContextItem {
 
 export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 	private onChoose: (item: ContextItem) => void;
+	private filterService?: VaultFilterService;
 
-	constructor(app: App, onChoose: (item: ContextItem) => void) {
+	constructor(app: App, onChoose: (item: ContextItem) => void, settings?: SecondBrainSettings) {
 		super(app);
 		this.onChoose = onChoose;
+		if (settings) {
+			this.filterService = new VaultFilterService(app, settings);
+		}
 		this.setPlaceholder('Rechercher une note, un contact, un projet ou un dossier à joindre...');
 	}
 
@@ -22,17 +28,22 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 		// 1. Note active courante
 		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (activeView && activeView.file) {
-			items.push({
-				type: 'active-note',
-				path: normalizePath(activeView.file.path),
-				title: `⚡ Note active : ${activeView.file.basename}`,
-				desc: activeView.file.path
-			});
+			if (!this.filterService || !this.filterService.isFileExcluded(activeView.file)) {
+				items.push({
+					type: 'active-note',
+					path: normalizePath(activeView.file.path),
+					title: `⚡ Note active : ${activeView.file.basename}`,
+					desc: activeView.file.path
+				});
+			}
 		}
 
 		// 2. Fichiers Markdown du coffre
 		const files = this.app.vault.getMarkdownFiles();
 		files.forEach(file => {
+			if (this.filterService && this.filterService.isFileExcluded(file)) {
+				return;
+			}
 			items.push({
 				type: 'file',
 				path: normalizePath(file.path),
@@ -45,9 +56,13 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 		const allLoaded = this.app.vault.getAllLoadedFiles();
 		allLoaded.forEach(f => {
 			if (f instanceof TFolder && f.path && f.path !== '/') {
+				const normFolder = normalizePath(f.path);
+				if (this.filterService && this.filterService.isFolderExcluded(normFolder)) {
+					return;
+				}
 				items.push({
 					type: 'folder',
-					path: normalizePath(f.path),
+					path: normFolder,
 					title: `📁 Dossier : ${f.name}`,
 					desc: f.path
 				});

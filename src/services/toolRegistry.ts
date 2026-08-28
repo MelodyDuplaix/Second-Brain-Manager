@@ -119,16 +119,16 @@ export class ToolRegistry {
 		},
 		{
 			name: 'search_calendar_events',
-			description: 'Recherche globale dans l\'agenda Google par mot-clé, période, participant ou lieu.',
+			description: 'Recherche globale dans TOUS les agendas Google accessibles (principal, secondaires, partagés). Ne spécifiez pas calendarId pour rechercher dans tous les agendas à la fois.',
 			parameters: {
 				type: 'object',
 				properties: {
-					query: { type: 'string', description: 'Terme de recherche (sujet, personne, lieu).' },
+					query: { type: 'string', description: 'Terme de recherche plein texte (sujet, personne, lieu).' },
 					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },
 					endDate: { type: 'string', description: 'Date de fin (YYYY-MM-DD).' },
 					location: { type: 'string', description: 'Filtre lieu.' },
 					attendee: { type: 'string', description: 'Filtre participant.' },
-					calendarId: { type: 'string', description: 'ID d\'un agenda ou "all".' },
+					calendarId: { type: 'string', description: 'ID d\'un agenda spécifique uniquement si l\'utilisateur demande expressément un seul calendrier. Laissez vide ou "all" pour interroger tous les agendas configurés.' },
 					includePast: { type: 'boolean', description: 'Inclure le passé.' }
 				},
 				required: []
@@ -364,14 +364,14 @@ export class ToolRegistry {
 			case 'read_note': {
 				const filePath = String(args.filePath || '');
 				const res = await this.vaultContext.readNote(filePath);
-				if (!res) return { output: `Erreur: Note introuvable à l'emplacement "${filePath}".` };
+				if (!res) return { output: `Erreur: Note introuvable ou protégée par vos règles de confidentialité à l'emplacement "${filePath}".` };
 				return { output: JSON.stringify(res, null, 2) };
 			}
 
 			case 'get_note_connections': {
 				const filePath = String(args.filePath || '');
 				const res = await this.vaultContext.getNoteConnections(filePath);
-				if (!res) return { output: `Erreur: Note introuvable pour "${filePath}".` };
+				if (!res) return { output: `Erreur: Note introuvable ou protégée par vos règles de confidentialité pour "${filePath}".` };
 				return { output: JSON.stringify(res, null, 2) };
 			}
 
@@ -421,19 +421,38 @@ export class ToolRegistry {
 					const includePast = typeof args.includePast === 'boolean' ? args.includePast : undefined;
 					const maxResults = typeof args.maxResults === 'number' ? args.maxResults : undefined;
 
-					const timeMin = startDate ? new Date(`${startDate}T00:00:00`).toISOString() : undefined;
+					// Si startDate est spécifié (ex: "2026-08-28"), on élargit timeMin pour capturer les événements multi-jours démarrés plus tôt
+					let timeMin: string | undefined = undefined;
+					if (startDate) {
+						const d = new Date(`${startDate}T00:00:00`);
+						d.setDate(d.getDate() - 7);
+						timeMin = d.toISOString();
+					}
 					const timeMax = endDate ? new Date(`${endDate}T23:59:59.999`).toISOString() : undefined;
 
-					const events = await GoogleCalendarService.getEvents(this.settings, {
+					let events = await GoogleCalendarService.getEvents(this.settings, {
 						timeMin,
 						timeMax,
 						query,
 						location,
 						attendee,
-						calendarIds: calendarId ? [calendarId] : undefined,
+						calendarIds: (calendarId && calendarId !== 'all') ? [calendarId] : undefined,
 						includePast,
 						maxResults
 					});
+
+					// Filtrer précisément selon la date demandée (avec support multi-jours) si pas de recherche plein texte
+					if (startDate && !query) {
+						events = events.filter(ev => {
+							if (endDate && endDate !== startDate) {
+								const evStart = ev.start?.date || (ev.start?.dateTime ? ev.start.dateTime.split('T')[0] : '');
+								const evEnd = ev.end?.date || (ev.end?.dateTime ? ev.end.dateTime.split('T')[0] : '');
+								if (!evStart) return false;
+								return (evEnd ? evEnd >= startDate : evStart >= startDate) && evStart <= endDate;
+							}
+							return GoogleCalendarService.isEventOnDate(ev, startDate);
+						});
+					}
 
 					if (events.length === 0) {
 						return {
@@ -441,11 +460,59 @@ export class ToolRegistry {
 						};
 					}
 
-					const formatted = events.map(ev => {
-						const start = ev.start.dateTime || ev.start.date;
-						const end = ev.end.dateTime || ev.end.date;
-						const timeInfo = ev.allDay ? 'Toute la journée' : `${start?.split('T')[1]?.slice(0, 5) || ''} - ${end?.split('T')[1]?.slice(0, 5) || ''}`;
-						let line = `- [Agenda: ${ev.calendarName || 'Principal'}] ${ev.start.date || start?.split('T')[0]} (${timeInfo}) : **${ev.summary}** (ID: \`${ev.id}\`)`;
+					const calendarsConfig = this.settings?.calendarsConfig || {};
+					const refCalId = this.settings?.defaultCalendarId || 'primary';
+
+					const getRole = (ev: GoogleCalendarEvent): { role: string; ownerName?: string } => {
+						const calId = ev.calendarId;
+						if (calId && calendarsConfig[calId]) {
+							const conf = calendarsConfig[calId];
+							return { role: conf.role, ownerName: conf.ownerName };
+						}
+						if (calId === refCalId || (!calId && refCalId === 'primary') || (refCalId === 'primary' && (ev.calendarName?.toLowerCase().includes('principal') ?? false))) {
+							return { role: 'primary' };
+						}
+						return { role: 'other_person' };
+					};
+
+					const primaryEvents: GoogleCalendarEvent[] = [];
+					const secondaryEvents: GoogleCalendarEvent[] = [];
+					const otherEvents: Array<{ event: GoogleCalendarEvent; ownerName?: string }> = [];
+
+					for (const ev of events) {
+						const { role, ownerName } = getRole(ev);
+						if (role === 'ignore') continue;
+						if (role === 'primary') primaryEvents.push(ev);
+						else if (role === 'secondary') secondaryEvents.push(ev);
+						else otherEvents.push({ event: ev, ownerName });
+					}
+
+					const formatEvent = (ev: GoogleCalendarEvent): string => {
+						const startDateTime = ev.start?.dateTime;
+						const endDateTime = ev.end?.dateTime;
+						const startDateVal = ev.start?.date || (startDateTime ? startDateTime.split('T')[0] : '');
+						const endDateVal = ev.end?.date || (endDateTime ? endDateTime.split('T')[0] : '');
+
+						let timeInfo = 'Toute la journée';
+						const isMultiDay = startDateVal && endDateVal && startDateVal !== endDateVal && (!ev.start?.date || !ev.end?.date || ev.end.date > ev.start.date);
+
+						if (startDateTime && endDateTime) {
+							const startTime = new Date(startDateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+							const endTime = new Date(endDateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+							if (startDateVal === endDateVal) {
+								timeInfo = `${startTime} - ${endTime}`;
+							} else {
+								timeInfo = `Du ${startDateVal} ${startTime} au ${endDateVal} ${endTime} (En cours / actif aujourd'hui)`;
+							}
+						} else if (isMultiDay && startDateVal && endDateVal) {
+							timeInfo = `Multi-jours : du ${startDateVal} au ${endDateVal} (Événement en cours / actif aujourd'hui)`;
+						}
+
+						const dateDisplay = (startDateVal && endDateVal && startDateVal !== endDateVal)
+							? `Du ${startDateVal} au ${endDateVal}`
+							: (startDateVal || 'Date non spécifiée');
+
+						let line = `- [Agenda: ${ev.calendarName || 'Principal'}] ${dateDisplay} (${timeInfo}) : **${ev.summary}** (ID: \`${ev.id}\`)`;
 						if (ev.location) line += ` | 📍 Lieu : ${ev.location}`;
 						if (ev.description) line += ` | 📝 Notes : ${ev.description.replace(/\n+/g, ' ').slice(0, 150)}`;
 						if (ev.attendees && ev.attendees.length > 0) {
@@ -453,10 +520,24 @@ export class ToolRegistry {
 							line += ` | 👥 Participants : ${attNames}`;
 						}
 						return line;
-					}).join('\n');
+					};
+
+					const sections: string[] = [];
+					if (primaryEvents.length > 0) {
+						sections.push(`👤 1. MON AGENDA PRINCIPAL DE RÉFÉRENCE (Contraintes prioritaires de l'utilisateur) :\n` + primaryEvents.map(formatEvent).join('\n'));
+					}
+					if (secondaryEvents.length > 0) {
+						sections.push(`🎯 2. MES AGENDAS SECONDAIRES (Événements perso/flexibles de l'utilisateur) :\n` + secondaryEvents.map(formatEvent).join('\n'));
+					}
+					if (otherEvents.length > 0) {
+						sections.push(`👥 3. AGENDAS D'AUTRES PERSONNES / CALENDRIERS PARTAGÉS (Concernent d'autres personnes - Ne bloquent pas la disponibilité de l'utilisateur) :\n` + otherEvents.map(o => {
+							const ownerTag = o.ownerName ? `[Propriétaire: ${o.ownerName}] ` : '';
+							return `${ownerTag}${formatEvent(o.event)}`;
+						}).join('\n'));
+					}
 
 					return {
-						output: `Événements Google Calendar trouvés (${events.length}) :\n${formatted}`
+						output: `Événements Google Calendar trouvés (${primaryEvents.length + secondaryEvents.length + otherEvents.length}) :\n\n${sections.join('\n\n')}`
 					};
 				} catch (err: unknown) {
 					const errorMsg = err instanceof Error ? err.message : String(err);
@@ -647,7 +728,7 @@ export class ToolRegistry {
 				const endTime = args.endTime ? String(args.endTime) : undefined;
 				const description = args.description ? String(args.description) : undefined;
 				const location = args.location ? String(args.location) : undefined;
-				const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+				const calendarId = args.calendarId ? String(args.calendarId) : (this.settings?.defaultCalendarId || 'primary');
 
 				const timeLabel = startTime ? ` à ${startTime}${endTime ? `-${endTime}` : ''}` : ' (toute la journée)';
 				const proposal: ActionProposal = {
@@ -681,7 +762,7 @@ export class ToolRegistry {
 				const endTime = args.endTime ? String(args.endTime) : undefined;
 				const description = args.description ? String(args.description) : undefined;
 				const location = args.location ? String(args.location) : undefined;
-				const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+				const calendarId = args.calendarId ? String(args.calendarId) : (this.settings?.defaultCalendarId || 'primary');
 
 				const proposal: ActionProposal = {
 					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,

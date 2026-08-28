@@ -40,6 +40,7 @@ export interface BriefingVaultData {
 	dailyNoteContent?: string;
 	calendarEvents?: GoogleCalendarEvent[];
 	calendarEventsText?: string;
+	customPromptInstructions?: string;
 }
 
 export class MorningBriefingService {
@@ -125,16 +126,21 @@ export class MorningBriefingService {
 		);
 
 		const vaultContext = new VaultContextService(app, plugin.settings);
+		const filterService = vaultContext.getFilterService();
 		const structure = vaultContext.getVaultStructure();
 
 		// Lecture de toutes les tâches ouvertes du coffre en parallèle (racines + sous-tâches)
-		const files = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const allFiles = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
+		const files = allFiles.filter(f => !filterService.isFolderExcluded(f.path) && !filterService.isFileNameExcluded(f.path));
 		const results = await Promise.all(
 			files.map(async (file) => {
 				try {
 					const content = (typeof (app.vault as any).cachedRead === 'function')
 						? await (app.vault as any).cachedRead(file)
 						: await app.vault.read(file);
+					if (filterService.isFileExcluded(file, content)) {
+						return [];
+					}
 					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
 				} catch {
 					return [];
@@ -142,7 +148,7 @@ export class MorningBriefingService {
 			})
 		);
 		const allTasks = results.flat();
-		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
+		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
 		// Classification
 		const overdueTasks = allOpenTasks.filter(t =>
@@ -205,8 +211,8 @@ export class MorningBriefingService {
 		const looseNotes = structure.looseNotes || [];
 
 		// Récupération des dossiers et des aperçus des notes en boîte de réception / vrac pour donner du contexte à l'IA
-		const inboxFilesToScan = structure.inboxFiles.slice(0, 30);
-		const inboxNotePreviews = await Promise.all(
+		const inboxFilesToScan = structure.inboxFiles.filter(p => !filterService.isFolderExcluded(p) && !filterService.isFileNameExcluded(p)).slice(0, 30);
+		const rawPreviews = await Promise.all(
 			inboxFilesToScan.map(async (normPath) => {
 				const file = app.vault.getFileByPath(normPath) || app.vault.getAbstractFileByPath(normPath);
 				let preview = '';
@@ -215,6 +221,9 @@ export class MorningBriefingService {
 						const raw = (typeof (app.vault as any).cachedRead === 'function')
 							? await (app.vault as any).cachedRead(file)
 							: await app.vault.read(file);
+						if (filterService.isFileExcluded(file, raw)) {
+							return null;
+						}
 						const nonHeadingLine = raw.split('\n')
 							.map(l => l.trim())
 							.filter(l => l.length > 0 && !l.startsWith('---') && !l.startsWith('```'))[0] || '';
@@ -227,6 +236,7 @@ export class MorningBriefingService {
 				return { path: normPath, name, preview };
 			})
 		);
+		const inboxNotePreviews = rawPreviews.filter((p): p is { path: string; name: string; preview: string } => p !== null);
 
 		// Déclenchement automatique du mode Reprise & Décongestion si encombrement ou pause
 		const isCluttered = overdueTasks.length >= 4 || staleTasks.length >= 2 || inboxTasks.length >= 4 || inboxNotePreviews.length >= 3;
@@ -253,7 +263,11 @@ export class MorningBriefingService {
 					timeMin: startOfToday.toISOString(),
 					timeMax: endOfToday.toISOString()
 				});
-				calendarEventsText = GoogleCalendarService.formatEventsForPrompt(calendarEvents, dateStr);
+				calendarEventsText = GoogleCalendarService.formatEventsForPrompt(
+					calendarEvents,
+					dateStr,
+					plugin.settings
+				);
 			} catch (calErr) {
 				console.warn('[Second Brain Manager] Erreur récupération événements Google Calendar pour le briefing:', calErr);
 			}
@@ -284,7 +298,8 @@ export class MorningBriefingService {
 			contacts: structure.contacts,
 			dailyNoteContent,
 			calendarEvents,
-			calendarEventsText
+			calendarEventsText,
+			customPromptInstructions: plugin.settings.customPromptInstructions
 		};
 	}
 
@@ -353,9 +368,14 @@ export class MorningBriefingService {
 			focusDirectives = `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
 		}
 
+		let customInstructionsSection = '';
+		if (data.customPromptInstructions && data.customPromptInstructions.trim()) {
+			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
+		}
+
 		let calendarSectionText = '';
 		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
-			calendarSectionText = `\nAGENDA & EVENEMENTS DU JOUR (Google Calendar) :\n${data.calendarEventsText}\nPrends en compte ces contraintes horaires / rendez-vous fixes pour articuler mon plan de journée.\n`;
+			calendarSectionText = `\nAGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE) :\n${data.calendarEventsText}\nATTENTION : Ces rendez-vous sont des contraintes fermes prioritaires sur toutes les tâches. Tu dois impérativement articuler le plan d'action et les tâches dans les temps libres restants entre ces créneaux.\n`;
 		}
 
 		let systemPrompt = '';
@@ -367,6 +387,10 @@ export class MorningBriefingService {
 SITUATION DU COFFRE :
 Le coffre est en état d'encombrement / de reprise (${data.inactivityText}, ${data.overdueTasks.length} tâches en retard dont ${data.staleTasks.length} anciennes/obsolètes, ${data.inboxNotePreviews.length} notes non classées).
 
+PRISE EN COMPTE DES AGENDAS :
+1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement construire le plan de reprise et les tâches dans les créneaux libres disponibles.
+2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
+
 TON OBJECTIF :
 Fournir un Briefing du Matin en **Mode Reprise & Décongestion Large**. Accueille chaleureusement l'utilisateur, déculpabilise-le totalement sur le retard accumulé, et propose un plan de journée recentré accompagné d'un **TRI LARGE et EXHAUSTIF** de toutes les tâches en retard et notes en vrac.
 
@@ -377,8 +401,9 @@ CONSIGNES DE REDACTION EN MODE REPRISE :
 1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}
 2. **Structure du Briefing de Reprise** :
    - **Accueil & Bilan Déculpabilisant** (2 phrases bienveillantes pour poser un cadre serein)
+   - **Les Rendez-vous Fixes & Contraintes Agenda** (Rappel des créneaux incontournables du jour)
    - **Le Quick Win du Jour** (1 micro-tâche simple de 5 min pour amorcer le mouvement sans effort)
-   - **The One Thing** (La seule tâche prioritaire et stratégique incontournable du jour selon l'énergie ${data.energy}/10)
+   - **The One Thing** (La seule tâche prioritaire et stratégique incontournable du jour selon l'énergie ${data.energy}/10, calée hors des rendez-vous)
    - **Plan de Tri & Décongestion Large** :
      - Annule systématiquement sans culpabilité les réunions passées et tâches obsolètes depuis longtemps sans conséquences actuelles (\`newStatus: "cancelled"\`).
      - Replanifie à aujourd'hui (${data.dateStr}) ou à une date réaliste les tâches prioritaires.
@@ -456,8 +481,12 @@ Propose-moi mon briefing en mode reprise avec un tri large et déculpabilisant d
 			// Mode Briefing Quotidien standard
 			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité bienveillante, méthodologie GTD et matrice d'Eisenhower.
 
+PRISE EN COMPTE DES AGENDAS :
+1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement construire le plan de journée et ordonner les tâches dans les créneaux libres disponibles.
+2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
+
 TON OBJECTIF :
-Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie (${data.energy}/10 - ${data.modeText}).
+Fournir un Briefing du Matin clair, motivant, ultra-structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant scrupuleusement son niveau d'énergie (${data.energy}/10 - ${data.modeText}) et ses rendez-vous d'agenda.
 
 CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
@@ -466,7 +495,8 @@ CONSIGNES DE REDACTION :
 1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}
 2. **Structure du Briefing** :
    - **Cap du Jour** (Le focus ou projet n°1 incontournable)
-   - **Plan de Journée Recommandé** (Les tâches sélectionnées et ordonnées selon l'énergie)
+   - **Rendez-vous & Contraintes Fixes de l'Agenda** (Rappel clair des heures de réunions/rendez-vous à honorer en priorité)
+   - **Plan de Journée Recommandé** (Les tâches sélectionnées et positionnées dans les créneaux disponibles selon l'énergie)
    - **Alertes & Points d'Attention** (Urgences réelles ou points de vigilance)
    - **Conseil d'Énergie & Rythme** (Un conseil pratique pour optimiser la journée sans stress)
 3. **Format des Tâches Recommandées** :

@@ -67,6 +67,7 @@ export class Setting {
 	setDesc() { return this; }
 	setHeading() { return this; }
 	addText() { return this; }
+	addTextArea() { return this; }
 	addButton() { return this; }
 	addToggle() { return this; }
 	addDropdown() { return this; }

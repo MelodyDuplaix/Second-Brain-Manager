@@ -131,10 +131,16 @@ export class ChatView extends ItemView {
 		// Zone de messages scrollable
 		this.messagesContainerEl = container.createEl('div', { cls: 'sbm-messages-area' });
 
-		// Délégation globale de clics : résout TOUS les wikilinks même s'ils sont dans des balises code ou texte brut
+		// Délégation globale de clics : résout les wikilinks cliquables sans bloquer la sélection de texte
 		this.messagesContainerEl.addEventListener('click', async (e: MouseEvent) => {
+			// Si l'utilisateur est en train de sélectionner du texte avec la souris, ne rien faire
+			const selection = window.getSelection();
+			if (selection && selection.toString().trim().length > 0) {
+				return;
+			}
+
 			const target = e.target as HTMLElement;
-			const linkEl = target.closest('a.internal-link, .sbm-clickable-link, a, code') as HTMLElement | null;
+			const linkEl = target.closest('a.internal-link, .sbm-clickable-link, a') as HTMLElement | null;
 
 			if (linkEl) {
 				let href = linkEl.getAttribute('data-href') || linkEl.getAttribute('href') || linkEl.textContent || '';
@@ -143,7 +149,7 @@ export class ChatView extends ItemView {
 					href = wikiMatch[1];
 				}
 
-				if (href) {
+				if (href && !href.startsWith('http://') && !href.startsWith('https://')) {
 					e.preventDefault();
 					const cleanPath = href.replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0].split('#')[0].trim();
 					await this.app.workspace.openLinkText(cleanPath, '', false);
@@ -205,7 +211,7 @@ export class ChatView extends ItemView {
 							this.textareaEl.value = this.textareaEl.value.replace(/@\s*$/, '');
 							this.textareaEl.focus();
 						}
-					}).open();
+					}, this.plugin.settings).open();
 				}, 10);
 			}
 		});
@@ -220,6 +226,7 @@ export class ChatView extends ItemView {
 		this.cardTopContextEl.empty();
 
 		const leftPills = this.cardTopContextEl.createEl('div', { cls: 'sbm-card-context-left' });
+		const filterService = this.orchestrator.getVaultContext().getFilterService();
 
 		// Bouton "+ @ Add context"
 		const addContextBtn = leftPills.createEl('button', {
@@ -230,7 +237,7 @@ export class ChatView extends ItemView {
 		addContextBtn.addEventListener('click', () => {
 			new ContextPickerModal(this.app, (item) => {
 				this.addContextItem(item);
-			}).open();
+			}, this.plugin.settings).open();
 		});
 
 		// Recherche de la note active ou de la dernière note ouverte
@@ -252,7 +259,7 @@ export class ChatView extends ItemView {
 			}
 		}
 
-		if (activeFile) {
+		if (activeFile && !filterService.isFileExcluded(activeFile)) {
 			const isAlreadyAttached = this.attachedContexts.some(c => c.path === activeFile?.path);
 			if (!isAlreadyAttached) {
 				const activeNoteBtn = leftPills.createEl('button', {
