@@ -393,5 +393,31 @@ scheduled today
 		expect(updated).toContain('Faire une notice sur le document planning partagé');
 		expect(updated).toContain('## Notes liées');
 	});
+
+	it('should NEVER overwrite or append to Françoise Jabveneau when creating François Gafier', async () => {
+		createdFiles['Personnes/Françoise Jabveneau.md'] = '# Françoise Jabveneau\n\nContact amie';
+
+		const francoisProp: CreateNoteActionProposal = {
+			id: 'act-francois',
+			type: 'create_note',
+			description: 'Créer la fiche de François Gafier',
+			selected: true,
+			folder: 'Personnes',
+			fileName: 'François Gafier',
+			content: '# François Gafier\n\nNotes brutes de rencontre',
+			tags: ['#personne']
+		};
+
+		const results = await executor.executeProposals([francoisProp]);
+		expect(results.length).toBe(1);
+		expect(results[0].success).toBe(true);
+		// Doit créer le nouveau fichier et ne PAS toucher à Françoise
+		expect(results[0].createdOrModifiedPath).toBe('Personnes/François Gafier.md');
+		expect(createdFiles['Personnes/François Gafier.md']).toBeDefined();
+		expect(createdFiles['Personnes/François Gafier.md']).toContain('#personne');
+		expect(createdFiles['Personnes/François Gafier.md']).toContain('François Gafier');
+		expect(createdFiles['Personnes/Françoise Jabveneau.md']).toBe('# Françoise Jabveneau\n\nContact amie');
+	});
 });
+
 

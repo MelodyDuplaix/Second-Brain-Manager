@@ -175,6 +175,13 @@ ${taskSyntaxDocs}
      2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre purement informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de faux conflit d'agenda.
    - Pour toute création ou proposition d'événement Google Calendar (\`propose_create_calendar_event\`), utilise le calendrier de référence configuré ("${this.settings.defaultCalendarId || 'primary'}").
 
+9. GARDE-FOU CRITIQUE SUR LES CRÉATIONS DE NOTES ET DE TÂCHES :
+   - INTERDICTION ABSOLUE D'AFFIRMER QU'UNE NOTE OU UNE TÂCHE EST CRÉÉE dans ton texte (ex: "Fiche créée avec succès", "J'ai créé la note X...") si tu n'as pas émis le bloc JSON d'appel d'outil (\`propose_create_note\`, \`propose_create_task\`) dans ta réponse !
+   - Lorsque l'utilisateur demande de créer une fiche/note à partir d'une autre note (ex: "crée la fiche François avec les infos de la note sans titre 175") :
+     -> Tour 1 : Appelle d'abord \`read_note\` pour lire la note source demandée (ex: "Notes en vrac/Sans titre 175.md").
+     -> Tour 2 : Une fois le contenu de la note reçu, émets \`propose_create_note\` avec le nom exact demandé (ex: fileName: "François Gafier.md" ou "François Gueyffier.md") et le dossier cible (ex: folder: "personne" ou "03 - Contacts").
+     -> Ne cible JAMAIS une autre note (comme une note ouverte Françoise) si le nom demandé est différent !
+
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :
 \`\`\`json
 [

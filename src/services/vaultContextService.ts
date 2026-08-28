@@ -85,7 +85,11 @@ export class VaultContextService {
 	/**
 	 * Résolution canonique déterministe d'un fichier dans le coffre (sans devinette ni sensibilité aux accents/casse/chemins relatifs).
 	 */
-	public resolveFileCanonically(rawPath: string, activeFile?: TFile | null): TFile | null {
+	public resolveFileCanonically(
+		rawPath: string,
+		activeFile?: TFile | null,
+		options?: { allowFuzzy?: boolean }
+	): TFile | null {
 		if (!rawPath || typeof rawPath !== 'string') return null;
 
 		let clean = rawPath
@@ -154,35 +158,40 @@ export class VaultContextService {
 			const endPath = mdFiles.find(f => normalizeCanonicalKey(f.path).endsWith(queryKey));
 			if (endPath && isTFile(endPath)) return endPath;
 
-			// Match D : Intersection de mots-clés (Fuzzy word tokens)
-			const queryTokens = stripAccents(clean).split(/[^a-z0-9]+/).filter(w => w.length >= 2);
-			if (queryTokens.length > 0) {
-				let bestFile: TFile | null = null;
-				let bestScore = 0;
+			// Match D : Intersection stricte de mots-clés entiers (Fuzzy whole-word tokens)
+			// Uniquement si le mode fuzzy est autorisé (désactivé lors des créations de notes pour éviter d'écraser une note homonyme)
+			if (options?.allowFuzzy !== false) {
+				const queryTokens = stripAccents(clean).split(/[^a-z0-9]+/).filter(w => w.length >= 2);
+				if (queryTokens.length > 0) {
+					let bestFile: TFile | null = null;
+					let bestScore = 0;
 
-				for (const f of mdFiles) {
-					const baseNorm = stripAccents(f.basename);
-					const pathNorm = stripAccents(f.path);
-					let matchedTokens = 0;
+					for (const f of mdFiles) {
+						// Utilisation de Sets de mots entiers pour interdire les faux positifs (ex: "francois" matchant "francoise")
+						const baseWords = new Set(stripAccents(f.basename).split(/[^a-z0-9]+/).filter(w => w.length >= 2));
+						const pathWords = new Set(stripAccents(f.path).split(/[^a-z0-9]+/).filter(w => w.length >= 2));
+						let matchedTokens = 0;
 
-					for (const token of queryTokens) {
-						if (baseNorm.includes(token)) {
-							matchedTokens += 2; // Priorité élevée si dans le nom de fichier
-						} else if (pathNorm.includes(token)) {
-							matchedTokens += 1;
+						for (const token of queryTokens) {
+							if (baseWords.has(token)) {
+								matchedTokens += 2; // Priorité élevée si mot entier dans le nom de fichier
+							} else if (pathWords.has(token)) {
+								matchedTokens += 1;
+							}
+						}
+
+						const maxPossible = queryTokens.length * 2;
+						const score = matchedTokens / maxPossible;
+
+						// Exigence stricte : tous les mots clés doivent matcher dans le basename ou score >= 0.85
+						if (score > bestScore && ((matchedTokens >= maxPossible) || (matchedTokens >= queryTokens.length && score >= 0.85))) {
+							bestScore = score;
+							bestFile = f;
 						}
 					}
 
-					const maxPossible = queryTokens.length * 2;
-					const score = matchedTokens / maxPossible;
-
-					if (score > bestScore && (matchedTokens >= queryTokens.length || score >= 0.7)) {
-						bestScore = score;
-						bestFile = f;
-					}
+					if (bestFile) return bestFile;
 				}
-
-				if (bestFile) return bestFile;
 			}
 		}
 

@@ -129,6 +129,7 @@ export class ActionExecutor {
 			isDailyNote?: boolean;
 			defaultFolder?: string;
 			initialContent?: string;
+			exactOnly?: boolean;
 		} = {}
 	): Promise<{ file: TFile | null; path: string; created: boolean }> {
 		if (!rawPath || typeof rawPath !== 'string') {
@@ -190,7 +191,7 @@ export class ActionExecutor {
 		}
 
 		// 2. Résolution canonique déterministe (sans devinette, insensible aux accents, à la casse et aux sous-dossiers)
-		const canonicalFile = this.vaultContext.resolveFileCanonically(clean);
+		const canonicalFile = this.vaultContext.resolveFileCanonically(clean, null, { allowFuzzy: !options.exactOnly });
 		if (isTFile(canonicalFile)) {
 			return { file: canonicalFile, path: normalizePath(canonicalFile.path), created: false };
 		}
@@ -410,8 +411,12 @@ export class ActionExecutor {
 					fullContent = `${tagsHeader}\n\n${fullContent}`;
 				}
 
+				const expectedBase = rawFileName.replace(/[\\:*?"<>|#^[\]]/g, '').replace(/\.md$/, '').trim();
+				const expectedBaseKey = normalizeCanonicalKey(expectedBase);
+
 				const resolved = await this.resolveTargetFile(targetPath, {
 					createIfMissing: true,
+					exactOnly: true, // Garde-fou strict : interdit toute correspondance floue pour la création de note
 					defaultFolder: folder || this.settings.inboxFolder || '00 - Boîte de réception',
 					initialContent: fullContent
 				});
@@ -423,6 +428,24 @@ export class ActionExecutor {
 						success: false,
 						message: `Impossible d'accéder au fichier : "${targetPath}".`,
 						createdOrModifiedPath: resolved.path
+					};
+				}
+
+				// Garde-fou absolu : si le fichier résolu n'a pas exactement le même nom demandé,
+				// on refuse catégoriquement d'écraser/compléter une autre note existante (ex: Françoise au lieu de François)
+				const resolvedBaseKey = normalizeCanonicalKey(file.basename);
+				if (!resolved.created && expectedBaseKey && resolvedBaseKey !== expectedBaseKey) {
+					const normFolder = normalizePath(folder || this.settings.inboxFolder || '00 - Boîte de réception');
+					if (normFolder && normFolder !== '.' && normFolder !== '/') {
+						await this.ensureFolderExists(normFolder);
+					}
+					const forcedPath = normalizePath(`${normFolder}/${expectedBase}.md`);
+					const createdNew = await this.app.vault.create(forcedPath, fullContent);
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Note "[[${createdNew.basename}]]" créée avec succès dans "${createdNew.parent?.path || ''}".`,
+						createdOrModifiedPath: forcedPath
 					};
 				}
 
