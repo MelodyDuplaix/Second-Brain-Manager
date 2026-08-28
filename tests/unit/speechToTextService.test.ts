@@ -8,6 +8,8 @@ describe('SpeechToTextService & AudioRecorderService (100% Local Whisper WASM)',
 	beforeEach(() => {
 		mockPlugin = {
 			settings: {
+				sttEngine: 'whisper-local',
+				sttModel: 'whisper-base',
 				sttLanguage: 'fr',
 				sttAutoSend: false
 			}
@@ -25,6 +27,38 @@ describe('SpeechToTextService & AudioRecorderService (100% Local Whisper WASM)',
 		expect(wavBlob.size).toBe(44 + samples.length * 2);
 	});
 
+	it('should normalize peak amplitude and trim silence in PCM samples', () => {
+		const quietSamples = new Float32Array(3200); // 200ms at 16kHz
+		quietSamples.fill(0); // silence
+		// Add some quiet speech in the middle
+		for (let i = 800; i < 2400; i++) {
+			quietSamples[i] = 0.2 * Math.sin(i);
+		}
+
+		const processed = AudioRecorderService.normalizeAndTrimSamples(quietSamples, 16000);
+		expect(processed).toBeDefined();
+		expect(processed.length).toBeGreaterThan(0);
+
+		// Verify peak is normalized towards 0.95
+		let maxPeak = 0;
+		for (let i = 0; i < processed.length; i++) {
+			const abs = Math.abs(processed[i]);
+			if (abs > maxPeak) maxPeak = abs;
+		}
+		expect(maxPeak).toBeCloseTo(0.95, 1);
+	});
+
+	it('should map sttModel setting to proper HuggingFace ONNX model ID', () => {
+		const service = new SpeechToTextService(mockPlugin);
+		expect(service.getModelId()).toBe('onnx-community/whisper-base');
+
+		mockPlugin.settings.sttModel = 'whisper-tiny';
+		expect(service.getModelId()).toBe('onnx-community/whisper-tiny');
+
+		mockPlugin.settings.sttModel = 'whisper-small';
+		expect(service.getModelId()).toBe('onnx-community/whisper-small');
+	});
+
 	it('should transcribe Float32 audio samples via Whisper Web Worker and notify progress', async () => {
 		const service = new SpeechToTextService(mockPlugin);
 		const samples = new Float32Array([0.1, 0.2, -0.1, -0.2]);
@@ -36,7 +70,7 @@ describe('SpeechToTextService & AudioRecorderService (100% Local Whisper WASM)',
 						data: { type: 'status', status: 'loading' }
 					});
 					mockWorker.listeners['message']?.({
-						data: { type: 'progress', progress: 50, file: 'whisper-tiny' }
+						data: { type: 'progress', progress: 50, file: 'whisper-base' }
 					});
 					mockWorker.listeners['message']?.({
 						data: { type: 'success', text: 'Bonjour, ceci est un test Whisper local.' }
@@ -62,8 +96,9 @@ describe('SpeechToTextService & AudioRecorderService (100% Local Whisper WASM)',
 		expect(mockWorker.postMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				type: 'transcribe',
-				audio: samples,
-				language: 'fr'
+				audio: expect.any(Float32Array),
+				language: 'fr',
+				modelId: 'onnx-community/whisper-base'
 			})
 		);
 		expect(result.text).toBe('Bonjour, ceci est un test Whisper local.');

@@ -560,23 +560,49 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		// 5.5 Reconnaissance Vocale & Entrée Audio (Voice-to-Text - 100% Local Whisper)
-		const sttGroup = new SettingGroup(this.containerEl).setHeading('🎙️ Reconnaissance vocale & Dictée (100% Local Whisper)');
+		// 5.5 Reconnaissance Vocale & Entrée Audio (Voice-to-Text)
+		const sttGroup = new SettingGroup(this.containerEl).setHeading('🎙️ Reconnaissance vocale & Dictée');
 
 		sttGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Moteur IA de transcription vocale')
-				.setDesc('Modèle Whisper WebAssembly embarqué (Xenova/whisper-tiny ~39 Mo). 100% local, privé, fonctionne hors-ligne sur Desktop et Mobile.')
-				.addExtraButton((btn) => {
-					btn.setIcon('shield-check');
-					btn.setTooltip('100% Local & Privé');
+				.setName('Moteur de transcription')
+				.setDesc('Choisissez entre le modèle Whisper local (100% privé, sans serveur) et la reconnaissance vocale système (Web Speech API).')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('whisper-local', '🧠 Modèle Whisper WebAssembly local (100% Privé & Hors-ligne)')
+						.addOption('web-speech', '⚡ Reconnaissance vocale système native (Web Speech API - 0 Mo)')
+						.setValue(this.plugin.settings.sttEngine || 'whisper-local')
+						.onChange(async (val: any) => {
+							this.plugin.settings.sttEngine = val;
+							await this.plugin.saveSettings();
+							this.render();
+						});
 				});
 		});
+
+		if ((this.plugin.settings.sttEngine || 'whisper-local') === 'whisper-local') {
+			sttGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Modèle Whisper')
+					.setDesc('Taille du modèle Whisper quantifié chargé dans le navigateur. "Whisper Base" est vivement recommandé pour le français.')
+					.addDropdown((dropdown) => {
+						dropdown
+							.addOption('whisper-base', '⚖️ Whisper Base (~73 Mo - Précision recommandée en français)')
+							.addOption('whisper-tiny', '⚡ Whisper Tiny (~39 Mo - Ultra-rapide & léger)')
+							.addOption('whisper-small', '🎯 Whisper Small (~240 Mo - Haute fidélité & précision)')
+							.setValue(this.plugin.settings.sttModel || 'whisper-base')
+							.onChange(async (val: any) => {
+								this.plugin.settings.sttModel = val;
+								await this.plugin.saveSettings();
+							});
+					});
+			});
+		}
 
 		sttGroup.addSetting((setting: Setting) => {
 			setting
 				.setName('Langue par défaut de transcription')
-				.setDesc('Langue de reconnaissance pour le modèle Whisper local (Français par défaut).')
+				.setDesc('Langue de reconnaissance pour la transcription vocale (Français par défaut).')
 				.addDropdown((dropdown) => {
 					dropdown
 						.addOption('fr', '🇫🇷 Français (Par défaut)')
