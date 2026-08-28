@@ -7,6 +7,7 @@ import { ActionProposal } from '../models/actions';
 import { ObsidianTask } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
 import { SecondBrainSettings } from '../main';
+import { JsonUtils } from '../utils/jsonUtils';
 
 export interface AgentStepEvent {
 	type: 'searching' | 'reading' | 'thinking' | 'streaming' | 'done';
@@ -183,6 +184,8 @@ FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si 
   }
 ]
 \`\`\`
+RÈGLE CRITIQUE SUR LES PROPOSITIONS DE CRÉATION DE NOTES (\`propose_create_note\`) :
+- Lorsque tu génères le texte d'un template ou d'une note dans l'argument "content", veille à ce que la chaîne JSON soit un JSON valide (guillemets internes échappés par \\", retours à la ligne échappés par \\n).
 
 ${toolDocs}`;
 	}
@@ -226,14 +229,14 @@ ${toolDocs}`;
 				(chunk, full) => {
 					currentTurnOutput = full;
 					// Filtrage en direct : on ne stream que le texte naturel, JAMAIS les blocs JSON de tool calls
-					const visibleStreamingText = full.replace(/```(?:json)?\s*[\s\S]*?(?:```|$)/g, '').trim();
+					const visibleStreamingText = JsonUtils.cleanStreamingText(full);
 					if (visibleStreamingText) {
 						onChunk(chunk, visibleStreamingText);
 					}
 				}
 			);
 
-			// Extraction des appels d'outils
+			// Extraction robuste des appels d'outils
 			const { toolCalls, cleanText } = this.extractToolCallsFromOutput(currentTurnOutput);
 
 			// Séparation lecture vs écriture
@@ -250,7 +253,7 @@ ${toolDocs}`;
 
 			// Si aucun outil de lecture n'est demandé, c'est la réponse finale
 			if (readCalls.length === 0) {
-				finalAnswerText = cleanText || currentTurnOutput.replace(/```(?:json)?\s*[\s\S]*?```/g, '').trim();
+				finalAnswerText = cleanText || JsonUtils.extractToolCallsFromText(currentTurnOutput).cleanText;
 				break;
 			}
 
@@ -320,36 +323,14 @@ ${toolDocs}`;
 	}
 
 	private extractToolCallsFromOutput(text: string): { toolCalls: ToolCallRequest[]; cleanText: string } {
-		const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
-		const toolCalls: ToolCallRequest[] = [];
-		let cleanText = text;
-		let match: RegExpExecArray | null;
-
-		while ((match = jsonBlockRegex.exec(text)) !== null) {
-			const jsonString = match[1].trim();
-			try {
-				const parsed = JSON.parse(jsonString);
-				const items = Array.isArray(parsed) ? parsed : [parsed];
-
-				let hasTool = false;
-				for (const item of items) {
-					const name = item.tool || item.name;
-					const args = item.arguments || item.args || item.parameters || {};
-
-					if (name && typeof name === 'string') {
-						toolCalls.push({ name, arguments: args });
-						hasTool = true;
-					}
-				}
-
-				if (hasTool) {
-					cleanText = cleanText.replace(match[0], '').trim();
-				}
-			} catch {
-				// Pas un bloc tool JSON
-			}
-		}
-
-		return { toolCalls, cleanText: cleanText.trim() };
+		const res = JsonUtils.extractToolCallsFromText(text);
+		const toolCalls: ToolCallRequest[] = res.toolCalls.map(tc => ({
+			name: tc.name,
+			arguments: tc.arguments
+		}));
+		return {
+			toolCalls,
+			cleanText: res.cleanText
+		};
 	}
 }

@@ -13,6 +13,7 @@ import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig'
 import { GoogleCalendarEvent } from '../models/googleCalendar';
 import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
+import { JsonUtils } from '../utils/jsonUtils';
 
 export interface BriefingVaultData {
 	dateStr: string;
@@ -616,21 +617,22 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 		vaultTasks: ObsidianTask[] = [],
 		todayStr?: string
 	): { cleanText: string; proposals: ActionProposal[] } {
-		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
+		const blocks = JsonUtils.extractJsonBlocks(responseText);
 
-		if (!jsonMatch) {
+		if (blocks.length === 0) {
 			return {
 				cleanText: responseText.trim(),
 				proposals: []
 			};
 		}
 
-		const cleanText = responseText.replace(jsonMatch[0], '').trim();
+		let cleanText = responseText;
+		const validatedProposals: ActionProposal[] = [];
 
-		try {
-			const parsed = JSON.parse(jsonMatch[1].trim());
+		for (const block of blocks) {
+			const parsed = JsonUtils.safeParseJson(block.jsonText);
 			if (Array.isArray(parsed) && parsed.length > 0) {
-				const validatedProposals: ActionProposal[] = parsed
+				const proposalsFromBlock = parsed
 					.filter(p => p && typeof p === 'object' && p.type)
 					.map((p, index) => {
 						const rawTarget = p.targetPath || (p.folder ? `${p.folder}/${p.fileName || 'Note'}` : p.fileName) || p.description || 'Note';
@@ -655,18 +657,18 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 						return TaskSafetyGuard.sanitizeProposal(prop, matchedTask, todayStr);
 					});
 
-				return {
-					cleanText,
-					proposals: validatedProposals
-				};
+				if (proposalsFromBlock.length > 0) {
+					validatedProposals.push(...proposalsFromBlock);
+					cleanText = cleanText.replace(block.fullMatchText, '');
+				}
 			}
-		} catch (err) {
-			console.warn('[Second Brain Manager] Erreur de parsing des actions JSON du briefing:', err);
 		}
 
+		cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim();
+
 		return {
-			cleanText,
-			proposals: []
+			cleanText: cleanText || responseText.trim(),
+			proposals: validatedProposals
 		};
 	}
 
