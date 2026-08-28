@@ -106,7 +106,7 @@ export class AudioRecorderService {
 					const rawMimeType = this.mediaRecorder?.mimeType || 'audio/webm';
 					const rawBlob = new Blob(this.recordedChunks, { type: rawMimeType });
 
-					// Convertit le blob audio natif en WAV 16kHz mono (universellement supporté par Whisper et le Web)
+					// Convertit le blob audio natif en WAV 16kHz mono (normalisé & sans silence)
 					const wavBlob = await this.convertTo16kHzWav(rawBlob);
 
 					this.cleanup();
@@ -210,6 +210,69 @@ export class AudioRecorderService {
 	}
 
 	/**
+	 * Normalise le gain de crête (Peak Normalization à ~0.95) et supprime les silences
+	 * au début et à la fin pour maximiser la clarté du signal envoyé à Whisper.
+	 */
+	public static normalizeAndTrimSamples(samples: Float32Array, sampleRate = 16000): Float32Array {
+		if (!samples || samples.length === 0) return samples;
+
+		// 1. Recherche du pic maximal d'amplitude
+		let maxPeak = 0;
+		for (let i = 0; i < samples.length; i++) {
+			const abs = Math.abs(samples[i]);
+			if (abs > maxPeak) maxPeak = abs;
+		}
+
+		// Si le signal est quasi inaudible (< 0.0001), rien à amplifier
+		if (maxPeak < 0.0001) return samples;
+
+		// 2. Normalisation de gain (mise à l'échelle vers 0.95)
+		const gainFactor = maxPeak > 0 ? 0.95 / maxPeak : 1;
+		const normalized = new Float32Array(samples.length);
+		for (let i = 0; i < samples.length; i++) {
+			normalized[i] = Math.max(-1, Math.min(1, samples[i] * gainFactor));
+		}
+
+		// 3. Détection d'activité vocale (VAD simple par seuil d'énergie RMS)
+		const silenceThreshold = 0.015; // seuil de silence sur signal normalisé
+		const windowSize = Math.floor(sampleRate * 0.05); // fenêtres de 50ms
+		let startIndex = 0;
+		let endIndex = normalized.length - 1;
+
+		// Recherche du début de la parole
+		for (let i = 0; i < normalized.length - windowSize; i += windowSize) {
+			let sumSq = 0;
+			for (let j = 0; j < windowSize; j++) {
+				sumSq += normalized[i + j] * normalized[i + j];
+			}
+			const rms = Math.sqrt(sumSq / windowSize);
+			if (rms > silenceThreshold) {
+				startIndex = Math.max(0, i - Math.floor(sampleRate * 0.1)); // 100ms de marge
+				break;
+			}
+		}
+
+		// Recherche de la fin de la parole
+		for (let i = normalized.length - windowSize; i >= windowSize; i -= windowSize) {
+			let sumSq = 0;
+			for (let j = 0; j < windowSize; j++) {
+				sumSq += normalized[i + j] * normalized[i + j];
+			}
+			const rms = Math.sqrt(sumSq / windowSize);
+			if (rms > silenceThreshold) {
+				endIndex = Math.min(normalized.length, i + windowSize + Math.floor(sampleRate * 0.15)); // 150ms de marge
+				break;
+			}
+		}
+
+		if (startIndex < endIndex && (endIndex - startIndex) >= sampleRate * 0.2) {
+			return normalized.subarray(startIndex, endIndex);
+		}
+
+		return normalized;
+	}
+
+	/**
 	 * Convertit n'importe quel Blob audio supporté en WAV 16 000 Hz Mono (format Whisper PCM).
 	 */
 	public async convertTo16kHzWav(sourceBlob: Blob): Promise<Blob> {
@@ -240,8 +303,11 @@ export class AudioRecorderService {
 			const renderedBuffer = await offlineCtx.startRendering();
 			const channelData = renderedBuffer.getChannelData(0);
 
+			// Normalisation et découpe des silences
+			const processedSamples = AudioRecorderService.normalizeAndTrimSamples(channelData, targetSampleRate);
+
 			// Encode en WAV 16-bit PCM
-			return this.encodePcmToWav(channelData, targetSampleRate);
+			return this.encodePcmToWav(processedSamples, targetSampleRate);
 		} catch {
 			// Si le décodage échoue, renvoie le blob brut d'origine
 			return sourceBlob;

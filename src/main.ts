@@ -38,7 +38,9 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	// Instructions personnalisées pour les prompts du LLM
 	customPromptInstructions: string;
 
-	// Paramètres de Reconnaissance Vocale (Voice-to-Text / STT 100% Local Whisper WASM)
+	// Paramètres de Reconnaissance Vocale (Voice-to-Text / STT)
+	sttEngine: 'whisper-local' | 'web-speech';
+	sttModel: 'whisper-tiny' | 'whisper-base' | 'whisper-small';
 	sttLanguage: 'auto' | 'fr' | 'en';
 	sttAutoSend: boolean;
 
@@ -80,6 +82,8 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 
 	customPromptInstructions: '',
 
+	sttEngine: 'whisper-local',
+	sttModel: 'whisper-base',
 	sttLanguage: 'fr',
 	sttAutoSend: false,
 

@@ -1,4 +1,5 @@
 import SecondBrainPlugin from '../main';
+import { AudioRecorderService } from './audioRecorderService';
 
 export interface SpeechToTextResult {
 	text: string;
@@ -22,11 +23,36 @@ export class SpeechToTextService {
 	}
 
 	/**
+	 * Vérifie si la Web Speech API native est disponible dans l'environnement actuel.
+	 */
+	public static isWebSpeechSupported(): boolean {
+		if (typeof window === 'undefined') return false;
+		const win = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+		return typeof win.SpeechRecognition !== 'undefined' || typeof win.webkitSpeechRecognition !== 'undefined';
+	}
+
+	/**
+	 * Convertit le choix de configuration en identifiant de modèle HuggingFace ONNX.
+	 */
+	public getModelId(): string {
+		const setting = this.plugin.settings.sttModel || 'whisper-base';
+		switch (setting) {
+			case 'whisper-tiny':
+				return 'onnx-community/whisper-tiny';
+			case 'whisper-small':
+				return 'onnx-community/whisper-small';
+			case 'whisper-base':
+			default:
+				return 'onnx-community/whisper-base';
+		}
+	}
+
+	/**
 	 * Initialise ou récupère le Web Worker Whisper WebAssembly isolé.
 	 * Masque `process` avant le dynamic import de `@huggingface/transformers`
 	 * pour forcer l'environnement Browser/WebAssembly sans dépendance à onnxruntime-node.
 	 */
-	private static getWhisperWorker(_onProgress?: (pct: number, file: string) => void): Promise<Worker> {
+	private static getWhisperWorker(): Promise<Worker> {
 		return new Promise((resolve, reject) => {
 			if (this.workerInstance) {
 				resolve(this.workerInstance);
@@ -36,14 +62,16 @@ export class SpeechToTextService {
 			try {
 				const workerCode = `
 					let transcriber = null;
+					let currentModelId = null;
 
 					self.onmessage = async (e) => {
-						const { type, audio, language } = e.data;
+						const { type, audio, language, modelId } = e.data;
+						const targetModel = modelId || 'onnx-community/whisper-base';
 
 						if (type === 'transcribe') {
 							try {
-								if (!transcriber) {
-									self.postMessage({ type: 'status', status: 'loading' });
+								if (!transcriber || currentModelId !== targetModel) {
+									self.postMessage({ type: 'status', status: 'loading', model: targetModel });
 
 									// Masquage impératif de process AVANT l'import pour forcer le runtime onnxruntime-web
 									try {
@@ -62,7 +90,7 @@ export class SpeechToTextService {
 										env.backends.onnx.wasm.proxy = false;
 									}
 
-									transcriber = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny', {
+									transcriber = await pipeline('automatic-speech-recognition', targetModel, {
 										device: 'wasm',
 										dtype: 'fp32',
 										progress_callback: (info) => {
@@ -70,11 +98,12 @@ export class SpeechToTextService {
 												self.postMessage({
 													type: 'progress',
 													progress: Math.round(info.progress),
-													file: info.file || 'whisper-tiny'
+													file: info.file || targetModel
 												});
 											}
 										}
 									});
+									currentModelId = targetModel;
 								}
 
 								self.postMessage({ type: 'status', status: 'transcribing' });
@@ -122,8 +151,8 @@ export class SpeechToTextService {
 	}
 
 	/**
-	 * Transcrit les données audio PCM Float32Array 16kHz via le modèle Whisper WASM local en Worker.
-	 * Notifie directement via `onProgress` pour un affichage in-situ dans l'UI du chat.
+	 * Transcrit les données audio PCM Float32Array 16kHz via le moteur sélectionné
+	 * (Whisper WASM local avec modèle choisi ou Web Speech API).
 	 */
 	public async transcribeAudio(
 		audioData: Float32Array | Blob,
@@ -134,7 +163,7 @@ export class SpeechToTextService {
 		if (audioData instanceof Blob) {
 			pcmSamples = await this.convertBlobTo16kHzFloat32(audioData);
 		} else {
-			pcmSamples = audioData;
+			pcmSamples = AudioRecorderService.normalizeAndTrimSamples(audioData);
 		}
 
 		if (!pcmSamples || pcmSamples.length === 0) {
@@ -142,6 +171,7 @@ export class SpeechToTextService {
 		}
 
 		const language = this.plugin.settings.sttLanguage || 'fr';
+		const modelId = this.getModelId();
 		const startTime = Date.now();
 		const worker = await SpeechToTextService.getWhisperWorker();
 
@@ -151,9 +181,10 @@ export class SpeechToTextService {
 				if (!data || typeof data !== 'object') return;
 
 				if (data.type === 'status' && data.status === 'loading') {
+					const modelName = modelId.split('/').pop() || 'whisper';
 					onProgress?.({
 						stage: 'loading',
-						message: 'Initialisation du modèle...'
+						message: `Initialisation ${modelName}...`
 					});
 				} else if (data.type === 'status' && data.status === 'transcribing') {
 					onProgress?.({
@@ -209,13 +240,14 @@ export class SpeechToTextService {
 			worker.postMessage({
 				type: 'transcribe',
 				audio: pcmSamples,
-				language
+				language,
+				modelId
 			});
 		});
 	}
 
 	/**
-	 * Convertit un Blob audio quelconque en Float32Array PCM 16 000 Hz Mono.
+	 * Convertit un Blob audio quelconque en Float32Array PCM 16 000 Hz Mono normalisé.
 	 */
 	public async convertBlobTo16kHzFloat32(sourceBlob: Blob): Promise<Float32Array> {
 		const arrayBuffer = await sourceBlob.arrayBuffer();
@@ -242,7 +274,10 @@ export class SpeechToTextService {
 			bufferSource.start(0);
 
 			const renderedBuffer = await offlineCtx.startRendering();
-			return renderedBuffer.getChannelData(0);
+			const channelData = renderedBuffer.getChannelData(0);
+
+			// Normalisation et découpe de silence de haute précision
+			return AudioRecorderService.normalizeAndTrimSamples(channelData, targetSampleRate);
 		} finally {
 			if (tempCtx.state !== 'closed') {
 				tempCtx.close().catch(() => {});
