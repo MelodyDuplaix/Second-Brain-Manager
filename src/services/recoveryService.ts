@@ -14,6 +14,7 @@ import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig'
 import { GoogleCalendarEvent } from '../models/googleCalendar';
 import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
+import { JsonUtils } from '../utils/jsonUtils';
 
 export interface RecoveryVaultData {
 	dateStr: string;
@@ -443,22 +444,22 @@ export class RecoveryService {
 		vaultTasks: ObsidianTask[] = [],
 		todayStr?: string
 	): { cleanText: string; proposals: ActionProposal[] } {
-		const jsonMatch = responseText.match(/```(?:json:actions|actions|json)\s*([\s\S]*?)```/);
+		const blocks = JsonUtils.extractJsonBlocks(responseText);
 
-		if (!jsonMatch) {
+		if (blocks.length === 0) {
 			return {
 				cleanText: responseText.trim(),
 				proposals: defaultProposals
 			};
 		}
 
-		const rawJson = jsonMatch[1].trim();
-		const cleanText = responseText.replace(jsonMatch[0], '').trim();
+		let cleanText = responseText;
+		const validatedProposals: ActionProposal[] = [];
 
-		try {
-			const parsed = JSON.parse(rawJson);
+		for (const block of blocks) {
+			const parsed = JsonUtils.safeParseJson(block.jsonText);
 			if (Array.isArray(parsed) && parsed.length > 0) {
-				const validatedProposals: ActionProposal[] = parsed
+				const proposalsFromBlock = parsed
 					.filter(p => p && typeof p === 'object' && p.type)
 					.map((p, index) => {
 						const rawTarget = p.targetPath || (p.folder ? `${p.folder}/${p.fileName || 'Note'}` : p.fileName) || p.description || 'Note';
@@ -508,20 +509,18 @@ export class RecoveryService {
 						return TaskSafetyGuard.sanitizeProposal(prop, matchedTask, todayStr);
 					});
 
-				if (validatedProposals.length > 0) {
-					return {
-						cleanText,
-						proposals: validatedProposals
-					};
+				if (proposalsFromBlock.length > 0) {
+					validatedProposals.push(...proposalsFromBlock);
+					cleanText = cleanText.replace(block.fullMatchText, '');
 				}
 			}
-		} catch {
-			// En cas d'erreur de parsing, repli sur defaultProposals
 		}
 
+		cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim();
+
 		return {
-			cleanText,
-			proposals: defaultProposals
+			cleanText: cleanText || responseText.trim(),
+			proposals: validatedProposals.length > 0 ? validatedProposals : defaultProposals
 		};
 	}
 
