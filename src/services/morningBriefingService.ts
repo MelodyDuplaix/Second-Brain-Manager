@@ -20,6 +20,11 @@ export interface BriefingVaultData {
 	energy: number;
 	modeText: string;
 	focusProject?: string;
+	priorityFolders?: string[];
+	priorityFiles?: string[];
+	priorityTags?: string[];
+	priorityProperties?: string[];
+	userPrioritizedTasks: ObsidianTask[];
 	inactivityText: string;
 	inactivityDays: number;
 	isRecoveryMode: boolean;
@@ -86,7 +91,12 @@ export class MorningBriefingService {
 	public static async collectBriefingData(
 		app: App,
 		plugin: SecondBrainPlugin,
-		focusProject?: string
+		focusProjectOrOptions?: string | {
+			focusProject?: string;
+			priorityFolders?: string[];
+			priorityFiles?: string[];
+			energy?: number;
+		}
 	): Promise<BriefingVaultData> {
 		const today = new Date();
 		const dateStr = today.toISOString().split('T')[0];
@@ -100,7 +110,21 @@ export class MorningBriefingService {
 		});
 		const capitalizedDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
 
-		const energy = plugin.settings.energyLevel;
+		let focusProject: string | undefined;
+		let priorityFolders: string[] = [];
+		let priorityFiles: string[] = [];
+		let requestedEnergy: number | undefined;
+
+		if (typeof focusProjectOrOptions === 'string') {
+			focusProject = focusProjectOrOptions;
+		} else if (focusProjectOrOptions) {
+			focusProject = focusProjectOrOptions.focusProject;
+			priorityFolders = focusProjectOrOptions.priorityFolders || [];
+			priorityFiles = focusProjectOrOptions.priorityFiles || [];
+			requestedEnergy = focusProjectOrOptions.energy;
+		}
+
+		const energy = requestedEnergy !== undefined ? requestedEnergy : plugin.settings.energyLevel;
 		const modeText = energy <= 3
 			? 'Mode Économie (Faible énergie - priorité à la préservation et au délestage)'
 			: energy <= 7
@@ -161,6 +185,18 @@ export class MorningBriefingService {
 			(t.startDate && t.startDate <= dateStr)
 		);
 
+		// Identification des tâches expressément prioritaires (dossiers/fichiers choisis + tags prioritaires + propriétés frontmatter prioritaires)
+		const normPriorityFolders = priorityFolders.map(f => normalizePath(f).toLowerCase());
+		const normPriorityFiles = priorityFiles.map(f => normalizePath(f).toLowerCase());
+
+		const userPrioritizedTasks = allOpenTasks.filter(t => {
+			const normPath = normalizePath(t.filePath || '').toLowerCase();
+			const inPriorityFolder = normPriorityFolders.some(f => normPath === f || normPath.startsWith(f + '/'));
+			const inPriorityFile = normPriorityFiles.some(f => normPath === f || normPath.endsWith('/' + f) || normPath.includes(f));
+			const hasPriorityTagOrProp = filterService.isTaskPrioritized(t);
+			return inPriorityFolder || inPriorityFile || hasPriorityTagOrProp;
+		});
+
 		// Identification des tâches très anciennes (souffrance / obsolescence)
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 		const staleTasks = overdueTasks.filter(t =>
@@ -175,10 +211,14 @@ export class MorningBriefingService {
 			return norm.startsWith(inboxFolder) || norm.includes('notes en vrac') || norm.includes('vrac') || isRoot;
 		});
 
-		const priorityTasks = allOpenTasks.filter(t => {
+		// Ordonnancement des tâches prioritaires : place d'abord les tâches prioritaires définies par l'utilisateur
+		const priorityTasksSet = new Set<ObsidianTask>();
+		userPrioritizedTasks.forEach(t => priorityTasksSet.add(t));
+		allOpenTasks.filter(t => {
 			const q = matrixAdapter.getQuadrant(t);
 			return q === 'q1' || q === 'q2' || (t.priority && (t.priority === 'highest' || t.priority === 'high'));
-		});
+		}).forEach(t => priorityTasksSet.add(t));
+		const priorityTasks = Array.from(priorityTasksSet);
 
 		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, non Q1)
 		const quickWinTasks = allOpenTasks
@@ -190,8 +230,14 @@ export class MorningBriefingService {
 			})
 			.slice(0, 3);
 
-		// Identification de la tâche majeure (The One Thing) : priorité Q1
-		let oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+		// Identification de la tâche majeure (The One Thing) : priorité aux tâches prioritaires définies par l'utilisateur
+		let oneThingTask = userPrioritizedTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || t.dueDate === dateStr);
+		if (!oneThingTask && userPrioritizedTasks.length > 0) {
+			oneThingTask = userPrioritizedTasks[0];
+		}
+		if (!oneThingTask) {
+			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+		}
 		if (!oneThingTask) {
 			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
 		}
@@ -293,6 +339,11 @@ export class MorningBriefingService {
 			looseNotes,
 			inboxNotePreviews,
 			folders: structure.folders,
+			priorityFolders: priorityFolders.length > 0 ? priorityFolders : undefined,
+			priorityFiles: priorityFiles.length > 0 ? priorityFiles : undefined,
+			priorityTags: filterService.getPriorityTags().length > 0 ? filterService.getPriorityTags() : undefined,
+			priorityProperties: filterService.getPriorityProperties().length > 0 ? filterService.getPriorityProperties().map(p => p.value !== undefined ? `${p.key}: ${p.value}` : p.key) : undefined,
+			userPrioritizedTasks,
 			isCluttered,
 			projects: structure.projects,
 			contacts: structure.contacts,
@@ -365,7 +416,26 @@ export class MorningBriefingService {
 
 		let focusDirectives = '';
 		if (data.focusProject) {
-			focusDirectives = `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
+			focusDirectives += `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
+		}
+
+		let prioritiesSection = '';
+		const hasPriorityFolders = data.priorityFolders && data.priorityFolders.length > 0;
+		const hasPriorityFiles = data.priorityFiles && data.priorityFiles.length > 0;
+		const hasPriorityRules = (data.priorityTags && data.priorityTags.length > 0) || (data.priorityProperties && data.priorityProperties.length > 0);
+		const hasUserPrioritizedTasks = data.userPrioritizedTasks && data.userPrioritizedTasks.length > 0;
+
+		if (hasPriorityFolders || hasPriorityFiles || hasPriorityRules || hasUserPrioritizedTasks) {
+			const lines: string[] = [];
+			if (hasPriorityFolders) lines.push(`- Dossiers prioritaires sélectionnés : ${data.priorityFolders!.join(', ')}`);
+			if (hasPriorityFiles) lines.push(`- Fichiers prioritaires sélectionnés : ${data.priorityFiles!.join(', ')}`);
+			if (data.priorityTags && data.priorityTags.length > 0) lines.push(`- Tags prioritaires configurés : ${data.priorityTags.map(t => '#' + t).join(', ')}`);
+			if (data.priorityProperties && data.priorityProperties.length > 0) lines.push(`- Propriétés frontmatter prioritaires : ${data.priorityProperties.join(', ')}`);
+			if (hasUserPrioritizedTasks) {
+				lines.push(`- Tâches hautement prioritaires identifiées :\n${data.userPrioritizedTasks.slice(0, 8).map(t => '  * ' + t.title + (t.filePath ? ` (dans [[${t.filePath}]])` : '')).join('\n')}`);
+			}
+			prioritiesSection = `\nFOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L'UTILISATEUR :\n${lines.join('\n')}\n*(CONSIGNE MAJEURE : Accorde une priorité toute particulière à ces dossiers, fichiers et tâches lors du choix de "The One Thing" et de l'ordonnancement du plan de journée)*\n`;
+			focusDirectives += `\n- **Dossiers/Fichiers/Tâches prioritaires** : Priorise expressément les tâches issues des dossiers, fichiers et tags prioritaires indiqués ci-dessous.`;
 		}
 
 		let customInstructionsSection = '';
@@ -455,6 +525,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${prioritiesSection}
 ${calendarSectionText}
 TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
@@ -511,6 +582,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${prioritiesSection}
 ${calendarSectionText}
 TACHES PLANIFIEES POUR AUJOURD'HUI :
 ${todayText}
@@ -606,9 +678,14 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 		plugin: SecondBrainPlugin,
 		signal?: AbortSignal,
 		onChunk?: (chunk: string, fullText: string) => void,
-		focusProject?: string
+		focusProjectOrOptions?: string | {
+			focusProject?: string;
+			priorityFolders?: string[];
+			priorityFiles?: string[];
+			energy?: number;
+		}
 	): Promise<{ text: string; data: BriefingVaultData; allTasks: ObsidianTask[] }> {
-		const data = await this.collectBriefingData(app, plugin, focusProject);
+		const data = await this.collectBriefingData(app, plugin, focusProjectOrOptions);
 		const messages = this.buildBriefingMessages(data, plugin.settings);
 
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);

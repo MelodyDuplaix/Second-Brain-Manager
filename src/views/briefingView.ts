@@ -7,6 +7,7 @@ import { ActionPreviewWidget } from './actionPreviewWidget';
 import { ActionExecutor } from '../services/actionExecutor';
 import { MorningBriefingService, BriefingVaultData } from '../services/morningBriefingService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
+import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { VaultContextService } from '../services/vaultContextService';
 import { ChatMessage } from '../models/llm';
 import SecondBrainPlugin from '../main';
@@ -22,6 +23,10 @@ export class BriefingView extends ItemView {
 	private vaultTasks: ObsidianTask[] = [];
 	private selectedProject = 'all';
 
+	private selectedEnergy = 5;
+	private selectedPriorityFolders: string[] = [];
+	private selectedPriorityFiles: string[] = [];
+
 	private contentElWrapper: HTMLElement | null = null;
 	private responseAreaEl: HTMLElement | null = null;
 	private energySelectEl: HTMLSelectElement | null = null;
@@ -32,6 +37,7 @@ export class BriefingView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
 		super(leaf);
 		this.plugin = plugin;
+		this.selectedEnergy = plugin.settings.energyLevel || 5;
 	}
 
 	getViewType(): string {
@@ -47,18 +53,14 @@ export class BriefingView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		this.selectedEnergy = this.plugin.settings.energyLevel || 5;
 		await this.render();
-		if (!this.generatedBriefingText) {
-			window.setTimeout(() => {
-				if (!this.isGenerating && !this.generatedBriefingText) {
-					void this.triggerBriefingGeneration();
-				}
-			}, 100);
-		}
 	}
 
 	public async launchBriefingWithEnergy(energy: number): Promise<void> {
+		this.selectedEnergy = energy;
 		this.plugin.settings.energyLevel = energy;
+		await this.plugin.saveSettings();
 		this.cancelCurrentGeneration();
 		this.generatedBriefingText = '';
 		await this.render();
@@ -83,7 +85,7 @@ export class BriefingView extends ItemView {
 		container.empty();
 		container.addClass('sbm-briefing-view-container');
 
-		const currentEnergy = this.plugin.settings.energyLevel;
+		const currentEnergy = this.selectedEnergy;
 		const todayFormatted = new Date().toLocaleDateString('fr-FR', {
 			weekday: 'long',
 			day: 'numeric',
@@ -130,7 +132,9 @@ export class BriefingView extends ItemView {
 				? 'Focus global activé.'
 				: `Focus projet activé : [[${this.selectedProject}]]`
 			);
-			await this.triggerBriefingGeneration();
+			if (this.generatedBriefingText) {
+				await this.triggerBriefingGeneration();
+			}
 		});
 
 		// Jauge d'énergie compacte
@@ -155,6 +159,7 @@ export class BriefingView extends ItemView {
 
 		this.energySelectEl.addEventListener('change', async () => {
 			const val = parseInt(this.energySelectEl?.value || '5', 10);
+			this.selectedEnergy = val;
 			this.plugin.settings.energyLevel = val;
 			await this.plugin.saveSettings();
 
@@ -165,8 +170,10 @@ export class BriefingView extends ItemView {
 				);
 			}
 
-			new Notice(`Énergie : ${val}/10. Actualisation du briefing...`);
-			await this.triggerBriefingGeneration();
+			if (this.generatedBriefingText) {
+				new Notice(`Énergie : ${val}/10. Actualisation du briefing...`);
+				await this.triggerBriefingGeneration();
+			}
 		});
 
 		this.regenBtnEl = headerActions.createEl('button', { cls: 'sbm-briefing-regen-btn' });
@@ -180,6 +187,10 @@ export class BriefingView extends ItemView {
 		// 2. Corps central scrollable du Briefing (Document fluide et aéré)
 		const scrollBody = container.createEl('div', { cls: 'sbm-briefing-scroll-body' });
 		this.contentElWrapper = scrollBody.createEl('div', { cls: 'sbm-briefing-content-flow' });
+
+		if (!this.generatedBriefingText) {
+			this.renderPreflightCard();
+		}
 
 		// Délégation globale de clics : résout les wikilinks dans le briefing
 		scrollBody.addEventListener('click', async (e: MouseEvent) => {
@@ -204,6 +215,143 @@ export class BriefingView extends ItemView {
 		// 3. Footer fixe en bas pour la transition fluide vers le Chat
 		this.responseAreaEl = container.createEl('div', { cls: 'sbm-briefing-footer-dock' });
 		this.renderResponseArea();
+	}
+
+	private renderPreflightCard(): void {
+		if (!this.contentElWrapper) return;
+		this.contentElWrapper.empty();
+
+		const preflightCard = this.contentElWrapper.createDiv({ cls: 'sbm-briefing-preflight-card' });
+
+		// 1. Titre & Présentation Ultra-Compact
+		const heroSection = preflightCard.createDiv({ cls: 'sbm-preflight-hero' });
+		const heroTitleRow = heroSection.createDiv({ cls: 'sbm-preflight-hero-title-row' });
+		const heroIcon = heroTitleRow.createSpan({ cls: 'sbm-preflight-hero-icon' });
+		setIcon(heroIcon, 'sun');
+		heroTitleRow.createEl('span', { text: 'Préparation du Briefing', cls: 'sbm-preflight-hero-title' });
+
+		// 2. Section Niveau d'Énergie Compact
+		const energySection = preflightCard.createDiv({ cls: 'sbm-preflight-section' });
+		const energyHeader = energySection.createDiv({ cls: 'sbm-preflight-section-header' });
+		
+		const energyLeft = energyHeader.createDiv({ cls: 'sbm-preflight-section-header-left' });
+		const energyIcon = energyLeft.createSpan({ cls: 'sbm-preflight-icon' });
+		setIcon(energyIcon, 'zap');
+		energyLeft.createEl('span', { text: 'Énergie', cls: 'sbm-preflight-section-title' });
+
+		const modeBadgeSpan = energyHeader.createSpan({
+			cls: `sbm-mode-badge ${this.selectedEnergy <= 3 ? 'economy' : this.selectedEnergy <= 7 ? 'balanced' : 'full'}`,
+			text: this.selectedEnergy <= 3 ? 'Économie' : this.selectedEnergy <= 7 ? 'Équilibré' : 'Plein Potentiel'
+		});
+
+		const buttonsRow = energySection.createDiv({ cls: 'sbm-preflight-energy-buttons' });
+		const energyButtons: HTMLElement[] = [];
+
+		const updateEnergyUI = (val: number) => {
+			this.selectedEnergy = val;
+			this.plugin.settings.energyLevel = val;
+			void this.plugin.saveSettings();
+
+			if (this.energySelectEl) this.energySelectEl.value = val.toString();
+			if (this.modeBadgeEl) {
+				this.modeBadgeEl.className = `sbm-mode-badge ${val <= 3 ? 'economy' : val <= 7 ? 'balanced' : 'full'}`;
+				this.modeBadgeEl.setText(val <= 3 ? 'Économie' : val <= 7 ? 'Équilibré' : 'Plein Potentiel');
+			}
+
+			modeBadgeSpan.className = `sbm-mode-badge ${val <= 3 ? 'economy' : val <= 7 ? 'balanced' : 'full'}`;
+			modeBadgeSpan.setText(val <= 3 ? 'Économie' : val <= 7 ? 'Équilibré' : 'Plein Potentiel');
+
+			energyButtons.forEach((b, idx) => {
+				if (idx + 1 === val) b.addClass('is-selected');
+				else b.removeClass('is-selected');
+			});
+		};
+
+		for (let i = 1; i <= 10; i++) {
+			const btn = buttonsRow.createEl('button', {
+				cls: `sbm-preflight-energy-btn ${i === this.selectedEnergy ? 'is-selected' : ''}`,
+				text: `${i}`
+			});
+			btn.addEventListener('click', () => updateEnergyUI(i));
+			energyButtons.push(btn);
+		}
+
+		updateEnergyUI(this.selectedEnergy);
+
+		// 3. Section Dossiers & Fichiers Prioritaires Compacte
+		const prioritySection = preflightCard.createDiv({ cls: 'sbm-preflight-section' });
+		const priorityHeader = prioritySection.createDiv({ cls: 'sbm-preflight-section-header' });
+		
+		const priorityLeft = priorityHeader.createDiv({ cls: 'sbm-preflight-section-header-left' });
+		const priorityIcon = priorityLeft.createSpan({ cls: 'sbm-preflight-icon' });
+		setIcon(priorityIcon, 'target');
+		priorityLeft.createEl('span', { text: 'Focus & Priorités', cls: 'sbm-preflight-section-title' });
+
+		const addContextBtn = priorityHeader.createEl('button', {
+			cls: 'sbm-preflight-add-btn',
+			text: '+ Ajouter...'
+		});
+		addContextBtn.addEventListener('click', () => {
+			new ContextPickerModal(this.app, (item: ContextItem) => {
+				if (item.type === 'folder') {
+					if (!this.selectedPriorityFolders.includes(item.path)) {
+						this.selectedPriorityFolders.push(item.path);
+					}
+				} else {
+					if (!this.selectedPriorityFiles.includes(item.path)) {
+						this.selectedPriorityFiles.push(item.path);
+					}
+				}
+				renderChips();
+			}, this.plugin.settings).open();
+		});
+
+		const chipsContainer = prioritySection.createDiv({ cls: 'sbm-preflight-chips-container' });
+
+		const renderChips = () => {
+			chipsContainer.empty();
+			if (this.selectedPriorityFolders.length === 0 && this.selectedPriorityFiles.length === 0) {
+				chipsContainer.createSpan({ cls: 'sbm-preflight-empty-chips', text: 'Aucun focus spécifique (analyse globale).' });
+			} else {
+				this.selectedPriorityFolders.forEach((folderPath) => {
+					const chip = chipsContainer.createDiv({ cls: 'sbm-preflight-chip is-folder' });
+					const iconSpan = chip.createSpan({ cls: 'sbm-chip-icon' });
+					setIcon(iconSpan, 'folder');
+					chip.createSpan({ cls: 'sbm-chip-text', text: folderPath });
+					const delBtn = chip.createSpan({ cls: 'sbm-chip-remove', text: '×' });
+					delBtn.title = 'Retirer ce dossier';
+					delBtn.addEventListener('click', () => {
+						this.selectedPriorityFolders = this.selectedPriorityFolders.filter(f => f !== folderPath);
+						renderChips();
+					});
+				});
+
+				this.selectedPriorityFiles.forEach((filePath) => {
+					const chip = chipsContainer.createDiv({ cls: 'sbm-preflight-chip is-file' });
+					const iconSpan = chip.createSpan({ cls: 'sbm-chip-icon' });
+					setIcon(iconSpan, 'file-text');
+					chip.createSpan({ cls: 'sbm-chip-text', text: filePath.split('/').pop() || filePath });
+					const delBtn = chip.createSpan({ cls: 'sbm-chip-remove', text: '×' });
+					delBtn.title = 'Retirer ce fichier';
+					delBtn.addEventListener('click', () => {
+						this.selectedPriorityFiles = this.selectedPriorityFiles.filter(f => f !== filePath);
+						renderChips();
+					});
+				});
+			}
+		};
+
+		renderChips();
+
+		// 4. Bouton Principal de Démarrage
+		const startActionSection = preflightCard.createDiv({ cls: 'sbm-preflight-cta-section' });
+		const startBtn = startActionSection.createEl('button', {
+			cls: 'sbm-preflight-start-btn',
+			text: '🚀 Lancer le Briefing'
+		});
+		startBtn.addEventListener('click', async () => {
+			await this.triggerBriefingGeneration();
+		});
 	}
 
 	private async triggerBriefingGeneration(): Promise<void> {
@@ -261,7 +409,12 @@ export class BriefingView extends ItemView {
 					const clean = fullText.replace(/`(\[\[[^`\]]+\]\])`/g, '$1');
 					textDisplayEl.setText(clean);
 				},
-				this.selectedProject
+				{
+					focusProject: this.selectedProject,
+					priorityFolders: this.selectedPriorityFolders,
+					priorityFiles: this.selectedPriorityFiles,
+					energy: this.selectedEnergy
+				}
 			);
 
 			// 1. Extraction des propositions d'actions structurées et nettoyage du texte markdown

@@ -330,4 +330,34 @@ describe('MorningBriefingService', () => {
 		expect(messages[0].content).toContain('INSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L\'UTILISATEUR');
 		expect(messages[0].content).toContain('toujours réserver 15 min de pause à 11h.');
 	});
+
+	it('should include priority folders, files, tags and properties in briefing messages', () => {
+		const data: BriefingVaultData = {
+			dateStr: '2026-08-28',
+			formattedDate: 'Vendredi 28 Août 2026',
+			energy: 7,
+			modeText: 'Mode Équilibré',
+			priorityFolders: ['01 - Projets/Rapport'],
+			priorityFiles: ['01 - Projets/CahierDesCharges.md'],
+			priorityTags: ['urgent', 'focus'],
+			priorityProperties: ['priorite: haute'],
+			userPrioritizedTasks: [mockTasks[0]],
+			overdueTasks: [],
+			todayTasks: [],
+			priorityTasks: [mockTasks[0]],
+			inboxTasks: [],
+			projectTasks: [],
+			projects: ['Rapport'],
+			contacts: []
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(data);
+		expect(messages[0].content).toContain('Dossiers/Fichiers/Tâches prioritaires');
+		expect(messages[1].content).toContain('FOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L\'UTILISATEUR');
+		expect(messages[1].content).toContain('01 - Projets/Rapport');
+		expect(messages[1].content).toContain('01 - Projets/CahierDesCharges.md');
+		expect(messages[1].content).toContain('#urgent, #focus');
+		expect(messages[1].content).toContain('priorite: haute');
+		expect(messages[1].content).toContain('Finir la maquette client');
+	});
 });

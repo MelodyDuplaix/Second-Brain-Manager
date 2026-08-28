@@ -12,7 +12,6 @@ import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts 
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { EnergyLevelModal } from './modals/energyLevelModal';
-import { BriefingEnergyModal } from './modals/briefingEnergyModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
 
@@ -31,6 +30,10 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	excludedFiles: string;
 	excludedTags: string;
 	excludedProperties: string;
+
+	// Éléments et règles de priorité IA (Briefing & planification)
+	priorityTags: string;
+	priorityProperties: string;
 
 	// Instructions personnalisées pour les prompts du LLM
 	customPromptInstructions: string;
@@ -67,6 +70,9 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	excludedFiles: '',
 	excludedTags: '',
 	excludedProperties: '',
+
+	priorityTags: '',
+	priorityProperties: '',
 
 	customPromptInstructions: '',
 
@@ -160,9 +166,7 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 
 		this.addRibbonIcon('sun', 'Briefing du matin (avec tri & reprise)', () => {
-			new BriefingEnergyModal(this.app, this, (energy) => {
-				void this.activateBriefingView(energy);
-			}).open();
+			this.activateBriefingView();
 		});
 
 		this.addRibbonIcon('moon', 'Revue du soir', () => {
@@ -248,9 +252,7 @@ export default class SecondBrainPlugin extends Plugin {
 			id: 'ouvrir-briefing',
 			name: 'Ouvrir le briefing du matin',
 			callback: () => {
-				new BriefingEnergyModal(this.app, this, (energy) => {
-					void this.activateBriefingView(energy);
-				}).open();
+				this.activateBriefingView();
 			}
 		});
 
@@ -266,9 +268,7 @@ export default class SecondBrainPlugin extends Plugin {
 			id: 'ouvrir-reprise-pause',
 			name: 'Reprendre après une pause',
 			callback: () => {
-				new BriefingEnergyModal(this.app, this, (energy) => {
-					void this.activateBriefingView(energy);
-				}).open();
+				this.activateBriefingView();
 			}
 		});
 

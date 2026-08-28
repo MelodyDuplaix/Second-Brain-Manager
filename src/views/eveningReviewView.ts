@@ -42,12 +42,6 @@ export class EveningReviewView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		await this.render();
-		// Lancement automatique de la revue en tâche de fond immédiate (non-bloquant pour l'ouverture de la vue)
-		if (!this.generatedReviewText) {
-			window.setTimeout(() => {
-				void this.triggerReviewGeneration();
-			}, 50);
-		}
 	}
 
 	async onClose(): Promise<void> {
@@ -108,6 +102,10 @@ export class EveningReviewView extends ItemView {
 		const scrollBody = container.createEl('div', { cls: 'sbm-briefing-scroll-body' });
 		this.contentElWrapper = scrollBody.createEl('div', { cls: 'sbm-briefing-content-flow' });
 
+		if (!this.generatedReviewText) {
+			void this.renderPreflightCard();
+		}
+
 		// Délégation globale de clics : résout les wikilinks dans la revue
 		scrollBody.addEventListener('click', async (e: MouseEvent) => {
 			const target = e.target as HTMLElement;
@@ -131,6 +129,76 @@ export class EveningReviewView extends ItemView {
 		// 3. Footer fixe en bas pour la transition vers le Chat
 		this.responseAreaEl = container.createEl('div', { cls: 'sbm-briefing-footer-dock' });
 		this.renderResponseArea();
+	}
+
+	private async renderPreflightCard(): Promise<void> {
+		if (!this.contentElWrapper) return;
+		this.contentElWrapper.empty();
+
+		const preflightCard = this.contentElWrapper.createDiv({ cls: 'sbm-briefing-preflight-card sbm-evening-preflight-card' });
+
+		// 1. Hero Ultra-Compact
+		const heroSection = preflightCard.createDiv({ cls: 'sbm-preflight-hero' });
+		const heroTitleRow = heroSection.createDiv({ cls: 'sbm-preflight-hero-title-row' });
+		const heroIcon = heroTitleRow.createSpan({ cls: 'sbm-preflight-hero-icon sbm-evening-hero-icon' });
+		setIcon(heroIcon, 'moon');
+		heroTitleRow.createEl('span', { text: 'Revue du Soir', cls: 'sbm-preflight-hero-title' });
+
+		// Récupération des statistiques du jour pour l'aperçu
+		let data = this.eveningVaultData;
+		if (!data) {
+			try {
+				data = await EveningReviewService.collectEveningData(this.app, this.plugin);
+				this.eveningVaultData = data;
+				this.renderHeaderBadges();
+			} catch (e) {
+				console.warn('[Second Brain Manager] Erreur collecte données pré-revue:', e);
+			}
+		}
+
+		// 2. Section Aperçu Compact de la journée
+		const statsSection = preflightCard.createDiv({ cls: 'sbm-preflight-section' });
+		const statsHeader = statsSection.createDiv({ cls: 'sbm-preflight-section-header' });
+		const statsIcon = statsHeader.createSpan({ cls: 'sbm-preflight-icon' });
+		setIcon(statsIcon, 'bar-chart-2');
+		statsHeader.createEl('span', { text: 'Activité du jour', cls: 'sbm-preflight-section-title' });
+
+		const statsGrid = statsSection.createDiv({ cls: 'sbm-evening-preflight-grid' });
+
+		const completedCount = data?.completedTodayTasks.length || 0;
+		const coinsCount = data?.coinsEarnedToday || 0;
+		const unfinishedCount = data?.unfinishedTodayTasks.length || 0;
+		const overdueCount = data?.overdueTasks.length || 0;
+
+		const c1 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-success' });
+		c1.createSpan({ cls: 'sbm-stat-icon', text: '✅' });
+		c1.createSpan({ cls: 'sbm-stat-value', text: `${completedCount}` });
+		c1.createSpan({ cls: 'sbm-stat-label', text: `faite${completedCount > 1 ? 's' : ''}` });
+
+		const c2 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-coins' });
+		c2.createSpan({ cls: 'sbm-stat-icon', text: '🪙' });
+		c2.createSpan({ cls: 'sbm-stat-value', text: `+${coinsCount}` });
+		c2.createSpan({ cls: 'sbm-stat-label', text: `pièce${coinsCount > 1 ? 's' : ''}` });
+
+		const c3 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-pending' });
+		c3.createSpan({ cls: 'sbm-stat-icon', text: '⏳' });
+		c3.createSpan({ cls: 'sbm-stat-value', text: `${unfinishedCount}` });
+		c3.createSpan({ cls: 'sbm-stat-label', text: `restante${unfinishedCount > 1 ? 's' : ''}` });
+
+		const c4 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-warning' });
+		c4.createSpan({ cls: 'sbm-stat-icon', text: '⚠️' });
+		c4.createSpan({ cls: 'sbm-stat-value', text: `${overdueCount}` });
+		c4.createSpan({ cls: 'sbm-stat-label', text: `en retard` });
+
+		// 3. Bouton Principal de Lancement
+		const ctaSection = preflightCard.createDiv({ cls: 'sbm-preflight-cta-section' });
+		const startBtn = ctaSection.createEl('button', {
+			cls: 'sbm-preflight-start-btn sbm-evening-start-btn',
+			text: '🌙 Lancer la Revue du Soir'
+		});
+		startBtn.addEventListener('click', async () => {
+			await this.triggerReviewGeneration();
+		});
 	}
 
 	private renderHeaderBadges(): void {

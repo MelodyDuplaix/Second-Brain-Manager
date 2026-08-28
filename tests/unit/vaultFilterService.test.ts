@@ -293,4 +293,67 @@ Contenu normal sans tag secret.`;
 			expect(structure.totalMarkdownFiles).toBe(1);
 		});
 	});
+
+	describe('Priority rules detection', () => {
+		it('should detect priority tags accurately', () => {
+			const service = new VaultFilterService(mockApp, {
+				...DEFAULT_SETTINGS,
+				priorityTags: '#urgent, #focus, #p1, prioritaire'
+			});
+
+			expect(service.hasActivePriorityRules()).toBe(true);
+			expect(service.isTagPrioritized('#urgent')).toBe(true);
+			expect(service.isTagPrioritized('#focus')).toBe(true);
+			expect(service.isTagPrioritized('#p1/subtag')).toBe(true);
+			expect(service.isTagPrioritized('prioritaire')).toBe(true);
+			expect(service.isTagPrioritized(['#normal', '#urgent'])).toBe(true);
+			expect(service.isTagPrioritized(['#normal', '#autre'])).toBe(false);
+		});
+
+		it('should detect priority frontmatter properties accurately', () => {
+			const service = new VaultFilterService(mockApp, {
+				...DEFAULT_SETTINGS,
+				priorityProperties: 'priorite: haute, focus: true, statut: actif, important'
+			});
+
+			expect(service.isPropertiesPrioritized({ priorite: 'haute' })).toBe(true);
+			expect(service.isPropertiesPrioritized({ focus: true })).toBe(true);
+			expect(service.isPropertiesPrioritized({ statut: 'actif' })).toBe(true);
+			expect(service.isPropertiesPrioritized({ important: 'n\'importe quoi' })).toBe(true);
+			expect(service.isPropertiesPrioritized({ priorite: 'basse' })).toBe(false);
+			expect(service.isPropertiesPrioritized({ statut: 'archive' })).toBe(false);
+		});
+
+		it('should detect prioritized task with priority tags or from prioritized file', () => {
+			const service = new VaultFilterService(mockApp, {
+				...DEFAULT_SETTINGS,
+				priorityTags: '#urgent, #focus'
+			});
+
+			const taskA: ObsidianTask = {
+				title: 'Tâche urgente',
+				completed: false,
+				status: 'todo',
+				lineNumber: 1,
+				filePath: '01 - Projets/Projet.md',
+				rawLine: '- [ ] Tâche urgente #urgent',
+				indentLevel: 0,
+				domainTags: ['#urgent']
+			};
+
+			const taskB: ObsidianTask = {
+				title: 'Tâche normale',
+				completed: false,
+				status: 'todo',
+				lineNumber: 2,
+				filePath: '01 - Projets/Projet.md',
+				rawLine: '- [ ] Tâche normale #normal',
+				indentLevel: 0,
+				domainTags: ['#normal']
+			};
+
+			expect(service.isTaskPrioritized(taskA)).toBe(true);
+			expect(service.isTaskPrioritized(taskB)).toBe(false);
+		});
+	});
 });

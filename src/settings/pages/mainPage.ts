@@ -199,7 +199,41 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		// 5. Syntaxes des Tâches & Priorités
+		// 5. Priorités & Valorisation IA
+		const priorityGroup = new SettingGroup(this.containerEl).setHeading('Règles de priorité IA (Briefing & planification)');
+		priorityGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Tags prioritaires')
+				.setDesc('Tags accordant une priorité maximale aux notes et tâches correspondantes lors de l\'analyse du matin et de la sélection des priorités (séparés par des virgules ou retours à la ligne).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: #urgent, #prioritaire, #important, #focus, #p1')
+						.setValue(this.plugin.settings.priorityTags || '')
+						.onChange(async (value) => {
+							this.plugin.settings.priorityTags = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		priorityGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Propriétés frontmatter prioritaires')
+				.setDesc('Propriétés YAML valorisant la priorité des notes et de leurs tâches pour l\'IA (ex: priorite: haute, focus: true, statut: actif, priority: high).')
+				.addTextArea((textarea) => {
+					textarea
+						.setPlaceholder('ex: priorite: haute, focus: true, statut: actif, priority: high')
+						.setValue(this.plugin.settings.priorityProperties || '')
+						.onChange(async (value) => {
+							this.plugin.settings.priorityProperties = value;
+							await this.plugin.saveSettings();
+						});
+					textarea.inputEl.rows = 2;
+				});
+		});
+
+		// 6. Syntaxes des Tâches & Priorités
 		const syntaxGroup = new SettingGroup(this.containerEl).setHeading('Syntaxes des tâches et priorités');
 		syntaxGroup.addSetting((setting: Setting) => {
 			setting

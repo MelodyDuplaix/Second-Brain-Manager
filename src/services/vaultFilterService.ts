@@ -350,4 +350,145 @@ export class VaultFilterService {
 		if (!this.hasActiveFilters()) return tasks;
 		return tasks.filter(t => !this.isTaskExcluded(t));
 	}
+
+	/**
+	 * Renvoie la liste normalisée des tags prioritaires configurés.
+	 */
+	public getPriorityTags(): string[] {
+		return VaultFilterService.parseList(this.settings.priorityTags).map(t => t.replace(/^#/, '').toLowerCase());
+	}
+
+	/**
+	 * Renvoie la liste normalisée des propriétés frontmatter prioritaires configurées.
+	 */
+	public getPriorityProperties(): Array<{ key: string; value?: string }> {
+		return VaultFilterService.parseProperties(this.settings.priorityProperties);
+	}
+
+	/**
+	 * Indique si des règles de priorité sont configurées.
+	 */
+	public hasActivePriorityRules(): boolean {
+		return this.getPriorityTags().length > 0 || this.getPriorityProperties().length > 0;
+	}
+
+	/**
+	 * Vérifie si un tag ou une liste de tags correspond aux tags prioritaires.
+	 */
+	public isTagPrioritized(tagOrTags?: string | string[]): boolean {
+		if (!tagOrTags) return false;
+		const priorityTags = this.getPriorityTags();
+		if (priorityTags.length === 0) return false;
+
+		const list = Array.isArray(tagOrTags) ? tagOrTags : [tagOrTags];
+		for (const t of list) {
+			if (!t) continue;
+			const clean = t.replace(/^#/, '').trim().toLowerCase();
+			for (const pTag of priorityTags) {
+				if (clean === pTag || clean.startsWith(pTag + '/') || clean.startsWith(pTag + '-')) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Vérifie si les propriétés frontmatter correspondent aux règles prioritaires.
+	 */
+	public isPropertiesPrioritized(frontmatter?: Record<string, any>): boolean {
+		if (!frontmatter || typeof frontmatter !== 'object') return false;
+		const priorityProps = this.getPriorityProperties();
+		if (priorityProps.length === 0) return false;
+
+		const lowerKeys = Object.keys(frontmatter).reduce((acc, k) => {
+			acc[k.toLowerCase()] = frontmatter[k];
+			return acc;
+		}, {} as Record<string, any>);
+
+		for (const propRule of priorityProps) {
+			const val = lowerKeys[propRule.key];
+			if (val !== undefined && val !== null) {
+				if (propRule.value === undefined) {
+					return true;
+				}
+				const strVal = String(val).trim().toLowerCase();
+				if (strVal === propRule.value || (Array.isArray(val) && val.map(v => String(v).trim().toLowerCase()).includes(propRule.value))) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Vérifie si un fichier est prioritaire (par ses tags ou son frontmatter).
+	 */
+	public isFilePrioritized(file: TFile, fileContent?: string): boolean {
+		if (!file) return false;
+		if (!this.hasActivePriorityRules()) return false;
+
+		if (this.app?.metadataCache) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			if (cache) {
+				if (cache.frontmatter) {
+					if (this.isPropertiesPrioritized(cache.frontmatter)) {
+						return true;
+					}
+					if (cache.frontmatter.tags) {
+						const tags = Array.isArray(cache.frontmatter.tags)
+							? cache.frontmatter.tags
+							: String(cache.frontmatter.tags).split(/[\s,]+/);
+						if (this.isTagPrioritized(tags)) {
+							return true;
+						}
+					}
+				}
+				if (cache.tags && cache.tags.length > 0) {
+					if (this.isTagPrioritized(cache.tags.map(t => t.tag))) {
+						return true;
+					}
+				}
+			}
+		}
+
+		if (fileContent) {
+			const inlineTags = fileContent.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			if (inlineTags.length > 0 && this.isTagPrioritized(inlineTags)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Vérifie si une tâche est prioritaire (par ses tags ou son fichier hôte).
+	 */
+	public isTaskPrioritized(task: ObsidianTask, fileContent?: string): boolean {
+		if (!task) return false;
+		if (!this.hasActivePriorityRules()) return false;
+
+		const taskTags: string[] = [];
+		if (task.domainTags && Array.isArray(task.domainTags)) {
+			taskTags.push(...task.domainTags);
+		}
+		if (task.rawText) {
+			const inline = task.rawText.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			taskTags.push(...inline);
+		}
+		if (this.isTagPrioritized(taskTags)) {
+			return true;
+		}
+
+		if (task.filePath && this.app?.vault) {
+			const file = (typeof this.app.vault.getFileByPath === 'function' ? this.app.vault.getFileByPath(task.filePath) : null)
+				|| (typeof this.app.vault.getAbstractFileByPath === 'function' ? this.app.vault.getAbstractFileByPath(task.filePath) : null);
+			if (file instanceof TFile) {
+				return this.isFilePrioritized(file, fileContent);
+			}
+		}
+
+		return false;
+	}
 }

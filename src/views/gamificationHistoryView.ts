@@ -42,11 +42,11 @@ export class GamificationHistoryView extends ItemView {
 
 		const headerEl = container.createEl('div', { cls: 'sbm-history-header' });
 		const titleWrap = headerEl.createDiv({ cls: 'sbm-history-title-wrap' });
-		titleWrap.createEl('h2', { text: '🪙 Gamification — Portefeuille, séries et trophées' });
+		titleWrap.createEl('h2', { text: '🪙 Gamification & Trophées' });
 
 		const resetBtn = headerEl.createEl('button', {
 			cls: 'sbm-history-reset-btn',
-			text: '🔄 Repartir à zéro'
+			text: '🔄 Réinitialiser'
 		});
 		resetBtn.title = 'Archiver le score actuel dans une note et remettre les compteurs à 0';
 		resetBtn.addEventListener('click', () => {
@@ -58,7 +58,7 @@ export class GamificationHistoryView extends ItemView {
 
 		const historyTabBtn = tabNav.createEl('button', {
 			cls: `sbm-tab-btn ${this.currentTab === 'history' ? 'active' : ''}`,
-			text: '📜 Historique des gains'
+			text: '📜 Historique'
 		});
 		historyTabBtn.addEventListener('click', () => {
 			this.currentTab = 'history';
@@ -67,7 +67,7 @@ export class GamificationHistoryView extends ItemView {
 
 		const badgesTabBtn = tabNav.createEl('button', {
 			cls: `sbm-tab-btn ${this.currentTab === 'badges' ? 'active' : ''}`,
-			text: '🏆 Trophées & Séries (Streaks)'
+			text: '🏆 Trophées'
 		});
 		badgesTabBtn.addEventListener('click', () => {
 			this.currentTab = 'badges';
@@ -76,7 +76,7 @@ export class GamificationHistoryView extends ItemView {
 
 		const statsTabBtn = tabNav.createEl('button', {
 			cls: `sbm-tab-btn ${this.currentTab === 'stats' ? 'active' : ''}`,
-			text: '📊 Statistiques avancées'
+			text: '📊 Statistiques'
 		});
 		statsTabBtn.addEventListener('click', () => {
 			this.currentTab = 'stats';
@@ -87,22 +87,22 @@ export class GamificationHistoryView extends ItemView {
 		const summaryRow = container.createEl('div', { cls: 'sbm-history-summary' });
 
 		const balanceStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		balanceStat.createEl('div', { cls: 'sbm-summary-label', text: 'Solde portefeuille' });
+		balanceStat.createEl('div', { cls: 'sbm-summary-label', text: 'Solde actuel' });
 		balanceStat.createEl('div', { cls: 'sbm-summary-val gold', text: `${this.plugin.pluginData.wallet.balance} 🪙` });
 
 		const streakStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		streakStat.createEl('div', { cls: 'sbm-summary-label', text: 'Série active (Streak)' });
+		streakStat.createEl('div', { cls: 'sbm-summary-label', text: 'Série (Streak)' });
 		streakStat.createEl('div', { cls: 'sbm-summary-val streak-val', text: `🔥 ${this.plugin.pluginData.streak.currentStreak} j` });
 
 		const lifetimeStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		lifetimeStat.createEl('div', { cls: 'sbm-summary-label', text: 'Total gagné à vie' });
+		lifetimeStat.createEl('div', { cls: 'sbm-summary-label', text: 'Total à vie' });
 		lifetimeStat.createEl('div', { cls: 'sbm-summary-val green', text: `${this.plugin.pluginData.wallet.lifetimeEarned} 🪙` });
 
 		const events = Object.values(this.plugin.pluginData.completionEvents)
 			.sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
 
 		const countStat = summaryRow.createEl('div', { cls: 'sbm-summary-card' });
-		countStat.createEl('div', { cls: 'sbm-summary-label', text: 'Tâches validées' });
+		countStat.createEl('div', { cls: 'sbm-summary-label', text: 'Tâches faites' });
 		countStat.createEl('div', { cls: 'sbm-summary-val', text: `${events.length}` });
 
 		const mainContent = container.createEl('div', { cls: 'sbm-tab-content' });
@@ -125,14 +125,14 @@ export class GamificationHistoryView extends ItemView {
 		setIcon(streakIconWrap, 'flame');
 
 		const streakInfo = streakHero.createDiv({ cls: 'sbm-streak-hero-info' });
-		streakInfo.createEl('h3', { text: `🔥 Série active : ${currentStreak} jour${currentStreak > 1 ? 's' : ''} consécutif${currentStreak > 1 ? 's' : ''}` });
+		streakInfo.createEl('h3', { text: `🔥 Série : ${currentStreak} jour${currentStreak > 1 ? 's' : ''}` });
 		streakInfo.createEl('p', { 
-			text: `Record historique : ${longestStreak} jour${longestStreak > 1 ? 's' : ''} — Complétez au moins une tâche chaque jour pour maintenir votre flamme !`,
+			text: `Record : ${longestStreak} j — Complétez 1 tâche par jour pour maintenir votre flamme.`,
 			cls: 'sbm-streak-hero-desc'
 		});
 
 		// Galerie des Badges & Trophées
-		container.createEl('h3', { text: '🏆 Galerie des Trophées & Accomplissements', cls: 'sbm-badges-section-title' });
+		container.createEl('h3', { text: '🏆 Galerie des Trophées', cls: 'sbm-badges-section-title' });
 
 		const gridEl = container.createEl('div', { cls: 'sbm-badges-grid' });
 
@@ -244,19 +244,19 @@ export class GamificationHistoryView extends ItemView {
 
 		// 1. Courbe d'évolution sur 14 jours
 		const sparkCard = grid.createEl('div', { cls: 'sbm-stat-card full-width' });
-		sparkCard.createEl('h3', { text: '📈 Évolution des gains (14 derniers jours)' });
+		sparkCard.createEl('h3', { text: '📈 Gains (14 derniers jours)' });
 		const trendData = this.calculate14DayTrend(events);
 		this.renderSparkline(sparkCard, trendData);
 
 		// 2. Répartition par catégorie / Tag (Camembert SVG)
 		const catCard = grid.createEl('div', { cls: 'sbm-stat-card' });
-		catCard.createEl('h3', { text: '🍩 Répartition par catégorie' });
+		catCard.createEl('h3', { text: '🍩 Répartition catégories' });
 		const catData = this.calculateCategoryDistribution(events);
 		this.renderCategoryDonut(catCard, catData);
 
 		// 3. Tâches validées par jour (Barres SVG)
 		const barCard = grid.createEl('div', { cls: 'sbm-stat-card' });
-		barCard.createEl('h3', { text: '📊 Activité quotidienne récente' });
+		barCard.createEl('h3', { text: '📊 Activité récente (7 jours)' });
 		this.renderDailyBarChart(barCard, trendData.slice(-7));
 	}
 
