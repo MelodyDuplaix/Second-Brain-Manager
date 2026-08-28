@@ -162,4 +162,59 @@ describe('ActionPreviewWidget & Interactive Proposals Customization', () => {
 		expect(createProp.energy).toBe(5);
 		expect(createProp.priority).toBe('highest');
 	});
+
+	it('should support individual execution and filtering of single action proposals', async () => {
+		const proposals: ActionProposal[] = [
+			{
+				id: 'prop-single-1',
+				type: 'update_task',
+				description: 'Modifier tâche',
+				selected: true,
+				targetPath: '01 - Projets/Test.md',
+				lineNumber: 2,
+				taskTitle: 'Tâche test 1',
+				newDueDate: '2026-08-28'
+			} as UpdateTaskActionProposal,
+			{
+				id: 'prop-single-2',
+				type: 'create_task',
+				description: 'Créer tâche',
+				selected: true,
+				targetPath: '01 - Projets/Test.md',
+				taskTitle: 'Tâche test 2'
+			} as unknown as ActionProposal
+		];
+
+		const executedProposals: ActionProposal[] = [];
+		const mockExecutor = {
+			executeProposals: async (props: ActionProposal[]) => {
+				executedProposals.push(...props);
+				return props.map(p => ({
+					proposalId: p.id,
+					success: true,
+					message: `Succès pour ${p.id}`,
+					createdOrModifiedPath: p.targetPath
+				}));
+			}
+		};
+
+		// Execute single proposal 1
+		const results1 = await mockExecutor.executeProposals([proposals[0]]);
+		expect(results1.length).toBe(1);
+		expect(results1[0].success).toBe(true);
+		expect(results1[0].proposalId).toBe('prop-single-1');
+
+		// Remove executed proposal from array
+		proposals.splice(0, 1);
+		expect(proposals.length).toBe(1);
+		expect(proposals[0].id).toBe('prop-single-2');
+
+		// Execute remaining proposal
+		const results2 = await mockExecutor.executeProposals([proposals[0]]);
+		expect(results2.length).toBe(1);
+		expect(results2[0].proposalId).toBe('prop-single-2');
+		proposals.splice(0, 1);
+		expect(proposals.length).toBe(0);
+	});
 });
+

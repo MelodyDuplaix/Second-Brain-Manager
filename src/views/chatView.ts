@@ -482,12 +482,12 @@ export class ChatView extends ItemView {
 			});
 		}
 
-		// 3. Bouton Régénérer (pour messages assistant)
-		if (msg.role === 'assistant' && msgIndex > 0) {
-			const regenBtn = actionsGroup.createEl('button', { cls: 'sbm-msg-action-icon-btn' });
-			setIcon(regenBtn, 'rotate-cw');
-			regenBtn.title = 'Régénérer cette réponse';
-			regenBtn.addEventListener('click', async () => {
+		// 3. Bouton Réessayer / Régénérer (pour TOUS les messages assistant)
+		if (msg.role === 'assistant') {
+			const retryBtn = actionsGroup.createEl('button', { cls: 'sbm-msg-action-icon-btn sbm-msg-retry-btn' });
+			setIcon(retryBtn, 'rotate-cw');
+			retryBtn.title = 'Réessayer / Régénérer la réponse';
+			retryBtn.addEventListener('click', async () => {
 				this.messages.splice(msgIndex); // Retire cette réponse et les suivantes
 				this.renderFullMessages();
 				await this.triggerAssistantGeneration();
@@ -904,6 +904,18 @@ export class ChatView extends ItemView {
 				new Notice('Réponse copiée dans le presse-papier !');
 				setIcon(copyBtn, 'check');
 				setTimeout(() => setIcon(copyBtn, 'copy'), 1500);
+			});
+
+			const retryBtn = actionsGroup.createEl('button', { cls: 'sbm-msg-action-icon-btn sbm-msg-retry-btn' });
+			setIcon(retryBtn, 'rotate-cw');
+			retryBtn.title = 'Réessayer / Régénérer la réponse';
+			retryBtn.addEventListener('click', async () => {
+				const idx = this.messages.indexOf(assistantMsg);
+				if (idx !== -1) {
+					this.messages.splice(idx);
+				}
+				this.renderFullMessages();
+				await this.triggerAssistantGeneration();
 			});
 
 			const delBtn = actionsGroup.createEl('button', { cls: 'sbm-msg-action-icon-btn' });

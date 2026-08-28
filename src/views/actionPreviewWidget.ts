@@ -35,7 +35,7 @@ export class ActionPreviewWidget {
 		const headerEl = widgetEl.createDiv({ cls: 'sbm-preview-header' });
 		const titleRow = headerEl.createDiv({ cls: 'sbm-preview-title-row' });
 
-		titleRow.createEl('h4', {
+		const titleEl = titleRow.createEl('h4', {
 			text: `📋 Plan d'Allègement & Tri Proposé (${proposals.length} élément${proposals.length > 1 ? 's' : ''})`,
 			cls: 'sbm-preview-title'
 		});
@@ -181,6 +181,10 @@ export class ActionPreviewWidget {
 				prop,
 				editDrawer,
 				updateUI,
+				executor,
+				itemRow,
+				proposals,
+				titleEl,
 				app
 			);
 
@@ -507,7 +511,11 @@ export class ActionPreviewWidget {
 		prop: ActionProposal,
 		editDrawer: HTMLElement,
 		updateUI: () => void,
-		_app?: App
+		executor?: ActionExecutor,
+		itemRow?: HTMLElement,
+		proposals?: ActionProposal[],
+		titleHeaderEl?: HTMLElement,
+		app?: App
 	): void {
 		quickBar.empty();
 
@@ -517,6 +525,69 @@ export class ActionPreviewWidget {
 		const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
 		const isTask = prop.type === 'update_task' || prop.type === 'create_task' || prop.type === 'decompose_task';
+
+		// Bouton Valider / Appliquer cette action seule de manière séparée
+		if (executor && itemRow) {
+			const applySingleBtn = quickBar.createEl('button', {
+				cls: 'sbm-preview-quick-btn btn-apply-single mod-cta',
+				text: '⚡ Appliquer'
+			});
+			applySingleBtn.title = 'Appliquer immédiatement et séparément cette action seule';
+			applySingleBtn.addEventListener('click', async (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				applySingleBtn.disabled = true;
+				applySingleBtn.setText('Application...');
+
+				try {
+					const results = await executor.executeProposals([prop]);
+					const result = results[0];
+
+					if (result && result.success) {
+						new Notice(`Action appliquée : ${result.message}`);
+						itemRow.empty();
+						itemRow.className = 'sbm-preview-item is-applied';
+						const appliedBox = itemRow.createDiv({ cls: 'sbm-preview-applied-box' });
+						appliedBox.createSpan({ cls: 'sbm-preview-applied-icon', text: '✅' });
+						appliedBox.createSpan({ cls: 'sbm-preview-applied-text', text: result.message });
+						if (result.createdOrModifiedPath && app) {
+							const openBtn = appliedBox.createEl('button', {
+								cls: 'sbm-preview-open-applied-btn',
+								text: '📄 Ouvrir'
+							});
+							openBtn.title = `Ouvrir ${result.createdOrModifiedPath}`;
+							openBtn.addEventListener('click', async () => {
+								await ActionPreviewWidget.openNote(app, result.createdOrModifiedPath!);
+							});
+						}
+
+						if (proposals) {
+							const idx = proposals.indexOf(prop);
+							if (idx !== -1) {
+								proposals.splice(idx, 1);
+							}
+							if (titleHeaderEl) {
+								if (proposals.length === 0) {
+									titleHeaderEl.setText('📋 Toutes les modifications ont été appliquées !');
+								} else {
+									titleHeaderEl.setText(`📋 Plan d'Allègement & Tri Proposé (${proposals.length} restant${proposals.length > 1 ? 's' : ''})`);
+								}
+							}
+						}
+					} else {
+						const errMsg = result?.message || 'Erreur lors de l\'exécution';
+						new Notice(`Échec de l'action : ${errMsg}`);
+						applySingleBtn.disabled = false;
+						applySingleBtn.setText('⚡ Appliquer');
+					}
+				} catch (err: unknown) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					new Notice(`Erreur : ${errMsg}`);
+					applySingleBtn.disabled = false;
+					applySingleBtn.setText('⚡ Appliquer');
+				}
+			});
+		}
 
 		if (isTask) {
 			// Bouton Reporter à Demain (conserve les autres actions configurées)
@@ -609,7 +680,7 @@ export class ActionPreviewWidget {
 		// Bouton "⚙️ Modifier l'action" (Point unique et complet de configuration)
 		const customizeBtn = quickBar.createEl('button', {
 			cls: 'sbm-preview-quick-btn btn-customize',
-			text: '⚙️ Modifier l\'action'
+			text: '⚙️ Modifier'
 		});
 		customizeBtn.title = 'Modifier et configurer les paramètres de l\'action (date, quadrant, énergie, dossier, renommage, liaisons...)';
 		customizeBtn.addEventListener('click', (e) => {
