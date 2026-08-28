@@ -10,6 +10,8 @@ import { VaultContextService } from '../services/vaultContextService';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { ModelPickerModal } from '../modals/modelPickerModal';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
+import { AudioRecorderService } from '../services/audioRecorderService';
+import { SpeechToTextService } from '../services/speechToTextService';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_CHAT = 'sbm-chat-view';
@@ -26,15 +28,24 @@ export class ChatView extends ItemView {
 
 	private orchestrator: AgentOrchestrator;
 	private actionExecutor: ActionExecutor;
+	private audioRecorder: AudioRecorderService;
+	private speechToText: SpeechToTextService;
+	private recordingBannerEl: HTMLElement | null = null;
+	private recordingTimerInterval: number | null = null;
+	private recordingSeconds = 0;
+
 	private attachedContexts: ContextItem[] = [];
 	private editingMessageIndex: number | null = null;
 	private lastActiveFile: TFile | null = null;
+	private voiceStatusPillEl: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 		this.orchestrator = new AgentOrchestrator(this.app, this.plugin.settings);
 		this.actionExecutor = new ActionExecutor(this.app, this.plugin.settings);
+		this.audioRecorder = new AudioRecorderService();
+		this.speechToText = new SpeechToTextService(this.plugin);
 
 		this.messages = [
 			{
@@ -75,6 +86,10 @@ export class ChatView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.cancelCurrentGeneration();
+		this.stopRecordingTimer();
+		if (this.audioRecorder.isRecording()) {
+			this.audioRecorder.cancelRecording();
+		}
 		return super.onClose();
 	}
 
@@ -166,11 +181,13 @@ export class ChatView extends ItemView {
 		this.cardTopContextEl = inputCard.createEl('div', { cls: 'sbm-card-top-context' });
 		this.renderContextInsideCard();
 
-		// 2. Zone de texte fluide
+		// 2. Zone de texte fluide avec auto-agrandissement dynamique
 		this.textareaEl = inputCard.createEl('textarea', {
 			cls: 'sbm-chat-textarea',
 			placeholder: 'Votre assistant IA pour Obsidian • @ pour ajouter du contexte • / pour les commandes'
 		});
+
+		this.textareaEl.addEventListener('input', () => this.adjustTextareaHeight());
 
 		// 3. Barre d'outils inférieure intégrée DANS le cadre
 		const inputBottomBar = inputCard.createEl('div', { cls: 'sbm-input-bottom-bar' });
@@ -191,6 +208,19 @@ export class ChatView extends ItemView {
 
 		currentModelBtn.addEventListener('click', openModelModal);
 
+		const voiceBtn = inputLeftActions.createEl('button', {
+			cls: 'sbm-input-voice-btn'
+		});
+		setIcon(voiceBtn, 'mic');
+		voiceBtn.title = 'Parler à l\'assistant (Dictée vocale)';
+		voiceBtn.addEventListener('click', () => {
+			this.toggleVoiceRecording(voiceBtn, inputCard);
+		});
+
+		// Pastille de progression vocale in-situ (à côté du micro)
+		this.voiceStatusPillEl = inputLeftActions.createEl('div', { cls: 'sbm-voice-inline-status' });
+		this.voiceStatusPillEl.hide();
+
 		this.sendBtnEl = inputBottomBar.createEl('button', {
 			cls: 'sbm-chat-send-btn mod-cta'
 		});
@@ -209,6 +239,7 @@ export class ChatView extends ItemView {
 						this.addContextItem(item);
 						if (this.textareaEl) {
 							this.textareaEl.value = this.textareaEl.value.replace(/@\s*$/, '');
+							this.adjustTextareaHeight();
 							this.textareaEl.focus();
 						}
 					}, this.plugin.settings).open();
@@ -217,7 +248,10 @@ export class ChatView extends ItemView {
 		});
 
 		setTimeout(() => {
-			if (this.textareaEl) this.textareaEl.focus();
+			if (this.textareaEl) {
+				this.adjustTextareaHeight();
+				this.textareaEl.focus();
+			}
 		}, 30);
 	}
 
@@ -750,6 +784,7 @@ export class ChatView extends ItemView {
 		this.renderFullMessages();
 
 		this.textareaEl.value = '';
+		this.adjustTextareaHeight();
 		await this.triggerAssistantGeneration();
 	}
 
@@ -1027,5 +1062,177 @@ export class ChatView extends ItemView {
 			this.scrollToBottom();
 			if (this.textareaEl) this.textareaEl.focus();
 		}
+	}
+
+	private adjustTextareaHeight(): void {
+		if (!this.textareaEl) return;
+		this.textareaEl.style.height = 'auto';
+		const scrollH = this.textareaEl.scrollHeight;
+		const targetHeight = Math.min(Math.max(scrollH, 44), 220);
+		this.textareaEl.style.height = `${targetHeight}px`;
+	}
+
+	private updateVoiceInlineStatus(status: { text: string; isRecording?: boolean; isTranscribing?: boolean } | null): void {
+		if (!this.voiceStatusPillEl) return;
+
+		if (!status) {
+			this.voiceStatusPillEl.empty();
+			this.voiceStatusPillEl.hide();
+			return;
+		}
+
+		this.voiceStatusPillEl.empty();
+		this.voiceStatusPillEl.show();
+		this.voiceStatusPillEl.className = 'sbm-voice-inline-status';
+
+		if (status.isRecording) {
+			this.voiceStatusPillEl.addClass('is-recording');
+			this.voiceStatusPillEl.createSpan({ cls: 'sbm-voice-dot-live' });
+		} else if (status.isTranscribing) {
+			this.voiceStatusPillEl.addClass('is-transcribing');
+			this.voiceStatusPillEl.createSpan({ cls: 'sbm-voice-inline-spinner' });
+		}
+
+		this.voiceStatusPillEl.createSpan({ text: status.text, cls: 'sbm-voice-status-text' });
+	}
+
+	private async toggleVoiceRecording(voiceBtn: HTMLButtonElement, inputCard: HTMLElement): Promise<void> {
+		if (this.audioRecorder.isRecording()) {
+			await this.stopVoiceRecording(voiceBtn);
+		} else {
+			await this.startVoiceRecording(voiceBtn, inputCard);
+		}
+	}
+
+	private async startVoiceRecording(voiceBtn: HTMLButtonElement, inputCard: HTMLElement): Promise<void> {
+		try {
+			voiceBtn.addClass('is-recording');
+			setIcon(voiceBtn, 'square');
+			voiceBtn.title = 'Arrêter l\'enregistrement et transcrire';
+
+			this.recordingSeconds = 0;
+			this.updateVoiceInlineStatus({ text: 'Écoute 00:00', isRecording: true });
+			this.renderRecordingBanner(inputCard, voiceBtn);
+
+			await this.audioRecorder.startRecording((volume) => {
+				if (this.recordingBannerEl) {
+					const waveBars = this.recordingBannerEl.querySelectorAll('.sbm-voice-wave-bar');
+					waveBars.forEach((bar, idx) => {
+						const height = Math.max(4, Math.min(22, Math.round(volume * 24 * (1 + idx * 0.25))));
+						(bar as HTMLElement).style.height = `${height}px`;
+					});
+				}
+			});
+
+			this.recordingTimerInterval = window.setInterval(() => {
+				this.recordingSeconds++;
+				const mins = Math.floor(this.recordingSeconds / 60).toString().padStart(2, '0');
+				const secs = (this.recordingSeconds % 60).toString().padStart(2, '0');
+				this.updateVoiceInlineStatus({ text: `Écoute ${mins}:${secs}`, isRecording: true });
+				const timerEl = this.recordingBannerEl?.querySelector('.sbm-voice-timer');
+				if (timerEl) {
+					timerEl.textContent = `${mins}:${secs}`;
+				}
+			}, 1000);
+		} catch (err: unknown) {
+			this.stopRecordingTimer();
+			voiceBtn.removeClass('is-recording');
+			setIcon(voiceBtn, 'mic');
+			voiceBtn.title = 'Parler à l\'assistant (Dictée vocale)';
+			this.updateVoiceInlineStatus(null);
+			if (this.recordingBannerEl) {
+				this.recordingBannerEl.remove();
+				this.recordingBannerEl = null;
+			}
+			const msg = err instanceof Error ? err.message : String(err);
+			new Notice(msg);
+		}
+	}
+
+	private async stopVoiceRecording(voiceBtn: HTMLButtonElement): Promise<void> {
+		this.stopRecordingTimer();
+		voiceBtn.removeClass('is-recording');
+		voiceBtn.addClass('is-transcribing');
+		setIcon(voiceBtn, 'loader');
+		voiceBtn.title = 'Transcription en cours...';
+
+		if (this.recordingBannerEl) {
+			this.recordingBannerEl.remove();
+			this.recordingBannerEl = null;
+		}
+
+		this.updateVoiceInlineStatus({ text: '⏳ Initialisation...', isTranscribing: true });
+
+		try {
+			const result = await this.audioRecorder.stopRecording();
+			const sttResult = await this.speechToText.transcribeAudio(result.blob, (update) => {
+				if (update.stage === 'loading') {
+					this.updateVoiceInlineStatus({ text: '⏳ Modèle Whisper...', isTranscribing: true });
+				} else if (update.stage === 'progress') {
+					this.updateVoiceInlineStatus({ text: `⏳ Téléchargement ${update.percent ?? 0}%`, isTranscribing: true });
+				} else if (update.stage === 'transcribing') {
+					this.updateVoiceInlineStatus({ text: '🧠 Transcription...', isTranscribing: true });
+				}
+			});
+
+			if (sttResult.text) {
+				if (this.textareaEl) {
+					const curVal = this.textareaEl.value.trim();
+					this.textareaEl.value = curVal ? `${curVal} ${sttResult.text}` : sttResult.text;
+					this.adjustTextareaHeight();
+					this.textareaEl.focus();
+
+					if (this.plugin.settings.sttAutoSend) {
+						await this.handleSendMessage();
+					}
+				}
+			}
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.updateVoiceInlineStatus({ text: '⚠️ Erreur transcription', isTranscribing: false });
+			setTimeout(() => this.updateVoiceInlineStatus(null), 3000);
+			new Notice(`Erreur transcription : ${msg}`);
+		} finally {
+			voiceBtn.removeClass('is-transcribing');
+			setIcon(voiceBtn, 'mic');
+			voiceBtn.title = 'Parler à l\'assistant (Dictée vocale)';
+			this.updateVoiceInlineStatus(null);
+			if (this.recordingBannerEl) {
+				this.recordingBannerEl.remove();
+				this.recordingBannerEl = null;
+			}
+		}
+	}
+
+	private stopRecordingTimer(): void {
+		if (this.recordingTimerInterval !== null) {
+			clearInterval(this.recordingTimerInterval);
+			this.recordingTimerInterval = null;
+		}
+	}
+
+	private renderRecordingBanner(inputCard: HTMLElement, voiceBtn: HTMLButtonElement): void {
+		if (this.recordingBannerEl) {
+			this.recordingBannerEl.remove();
+		}
+
+		this.recordingBannerEl = inputCard.createDiv({ cls: 'sbm-voice-recording-banner' });
+		const left = this.recordingBannerEl.createDiv({ cls: 'sbm-voice-banner-left' });
+		left.createSpan({ cls: 'sbm-voice-dot-live' });
+		left.createSpan({ cls: 'sbm-voice-banner-label', text: 'Écoute active...' });
+		left.createSpan({ cls: 'sbm-voice-timer', text: '00:00' });
+
+		const waveContainer = this.recordingBannerEl.createDiv({ cls: 'sbm-voice-wave-container' });
+		for (let i = 0; i < 5; i++) {
+			waveContainer.createSpan({ cls: 'sbm-voice-wave-bar' });
+		}
+
+		const stopBtn = this.recordingBannerEl.createEl('button', {
+			cls: 'sbm-voice-stop-btn',
+			text: 'Terminer'
+		});
+		stopBtn.addEventListener('click', () => {
+			this.stopVoiceRecording(voiceBtn);
+		});
 	}
 }

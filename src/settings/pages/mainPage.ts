@@ -560,6 +560,50 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
+		// 5.5 Reconnaissance Vocale & Entrée Audio (Voice-to-Text - 100% Local Whisper)
+		const sttGroup = new SettingGroup(this.containerEl).setHeading('🎙️ Reconnaissance vocale & Dictée (100% Local Whisper)');
+
+		sttGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Moteur IA de transcription vocale')
+				.setDesc('Modèle Whisper WebAssembly embarqué (Xenova/whisper-tiny ~39 Mo). 100% local, privé, fonctionne hors-ligne sur Desktop et Mobile.')
+				.addExtraButton((btn) => {
+					btn.setIcon('shield-check');
+					btn.setTooltip('100% Local & Privé');
+				});
+		});
+
+		sttGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Langue par défaut de transcription')
+				.setDesc('Langue de reconnaissance pour le modèle Whisper local (Français par défaut).')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('fr', '🇫🇷 Français (Par défaut)')
+						.addOption('en', '🇬🇧 Anglais')
+						.addOption('auto', '🌐 Détection automatique multilingue')
+						.setValue(this.plugin.settings.sttLanguage || 'fr')
+						.onChange(async (val: any) => {
+							this.plugin.settings.sttLanguage = val;
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+
+		sttGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Envoi automatique après la dictée')
+				.setDesc('Si activé, le message transcrit sera directement soumis à l\'IA dès l\'arrêt de l\'enregistrement vocal.')
+				.addToggle((toggle) => {
+					toggle
+						.setValue(this.plugin.settings.sttAutoSend ?? false)
+						.onChange(async (val) => {
+							this.plugin.settings.sttAutoSend = val;
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+
 		// 6. Google Calendar & Agenda
 		const calGroup = new SettingGroup(this.containerEl).setHeading('Google Calendar et agenda');
 

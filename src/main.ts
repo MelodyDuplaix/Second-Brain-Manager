@@ -38,6 +38,10 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	// Instructions personnalisées pour les prompts du LLM
 	customPromptInstructions: string;
 
+	// Paramètres de Reconnaissance Vocale (Voice-to-Text / STT 100% Local Whisper WASM)
+	sttLanguage: 'auto' | 'fr' | 'en';
+	sttAutoSend: boolean;
+
 	llmProvider: 'gemini' | 'openai' | 'openrouter' | 'infomaniak' | 'ollama' | 'lm-studio' | 'lmstudio';
 	llmEndpoint: string;
 	llmModel: string;
@@ -75,6 +79,9 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	priorityProperties: '',
 
 	customPromptInstructions: '',
+
+	sttLanguage: 'fr',
+	sttAutoSend: false,
 
 	llmProvider: 'gemini',
 	llmEndpoint: 'https://generativelanguage.googleapis.com',
