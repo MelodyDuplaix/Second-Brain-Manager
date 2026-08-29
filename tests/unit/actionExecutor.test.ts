@@ -538,6 +538,29 @@ scheduled today
 		expect(createdFiles['03 - Contacts/Claire Dupont.md']).toContain('- Société : Initech');
 		expect(createdFiles['03 - Contacts/Claire Dupont.md']).toContain('- Rôle : VP Sales');
 	});
+
+	it('should NOT duplicate task if already present in note content', async () => {
+		const initialContent = `# Fiche : Kwarto\n\n## Prochaines étapes\n- [ ] Recontacter [[Kwarto]] pour faire un point de suivi [due:: 2026-09-01] [priority:: medium]\n`;
+		createdFiles['03 - Contacts/Kwarto.md'] = initialContent;
+
+		const taskProp: CreateTaskActionProposal = {
+			id: 'act-kwarto-task',
+			type: 'create_task',
+			description: 'Tâche Kwarto',
+			selected: true,
+			targetPath: '03 - Contacts/Kwarto.md',
+			taskTitle: 'Recontacter [[Kwarto]] pour faire un point de suivi',
+			dueDate: '2026-09-01',
+			linkedNotes: ['Kwarto'] // Self link to filter out
+		};
+
+		const results = await executor.executeProposals([taskProp]);
+		expect(results[0].success).toBe(true);
+
+		const finalContent = createdFiles['03 - Contacts/Kwarto.md'];
+		const occurrences = (finalContent.match(/Recontacter \[\[Kwarto\]\]/g) || []).length;
+		expect(occurrences).toBe(1); // Exactement 1 occurrence, aucun doublon !
+	});
 });
 
 

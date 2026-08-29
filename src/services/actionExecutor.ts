@@ -251,6 +251,23 @@ export class ActionExecutor {
 		const isCRLF = content.includes('\r\n');
 		const lines = content.replace(/\r\n/g, '\n').split('\n');
 
+		// Garde-fou strict anti-doublon : si une tâche identique existe déjà dans la note
+		const targetCleanTitle = normalizeCanonicalKey(TaskMutator.cleanTaskPrefix(taskLine));
+		if (targetCleanTitle) {
+			const alreadyPresent = lines.some(l => {
+				const trimmed = l.trim();
+				if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
+					const existingClean = normalizeCanonicalKey(TaskMutator.cleanTaskPrefix(trimmed));
+					return existingClean === targetCleanTitle;
+				}
+				return false;
+			});
+
+			if (alreadyPresent) {
+				return content; // Ne pas ré-insérer de doublon
+			}
+		}
+
 		const cleanHeadingForComparison = (str: string): string => {
 			return str.trim()
 				.replace(/^#{1,6}\s+/, '')
@@ -832,8 +849,13 @@ export class ActionExecutor {
 			taskLine = `${taskLine} ${tagsStr}`;
 		}
 		if (proposal.linkedNotes && proposal.linkedNotes.length > 0) {
-			const linksStr = proposal.linkedNotes.map(n => n.startsWith('[[') ? n : `[[${n}]]`).join(' ');
-			taskLine = `${taskLine} ${linksStr}`;
+			const currentBase = file.basename || resolved.path.split('/').pop()?.replace('.md', '') || '';
+			const linksStr = proposal.linkedNotes
+				.filter(n => normalizeCanonicalKey(n) !== normalizeCanonicalKey(currentBase))
+				.map(n => n.startsWith('[[') ? n : `[[${n}]]`).join(' ');
+			if (linksStr) {
+				taskLine = `${taskLine} ${linksStr}`;
+			}
 		}
 		if (proposal.blockId) {
 			taskLine = `${taskLine} ^${proposal.blockId.replace(/^\^/, '')}`;

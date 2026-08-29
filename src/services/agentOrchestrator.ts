@@ -155,13 +155,16 @@ ${taskSyntaxDocs}
         a) Des micro-tâches purement personnelles, domestiques ou généralistes sans note de projet/contact dédiée (ex: "Acheter des piles", "Prendre RDV contrôle technique").
         b) Lorsque l'utilisateur demande explicitement d'ajouter ou noter dans son journal, sa note du jour ou pour "aujourd'hui".
 
-4. RÈGLE SUR LA RÉSOLUTION DES CHEMINS DE NOTES & CRÉATION DE TÂCHES :
+4. RÈGLE SUR LA RÉSOLUTION DES CHEMINS DE NOTES & CRÉATION DE TÂCHES (GARDE-FOU ANTI-DOUBLON STRICT) :
    - Si l'action cible la note actuellement ouverte ou que l'utilisateur dit "dans cette note", "ici", ou nomme la note ouverte :
      -> Utilise le chemin canonique de la note ouverte (ex: "${effectiveActive instanceof TFile ? normalizePath(effectiveActive.path) : ''}") comme \`filePath\`.
    - Si l'utilisateur nomme un projet ou une note existante du coffre :
      -> Utilise le chemin complet retourné par les recherches (ex: "Note rangés/MFRB/Tâche à faire MFRB.md" ou "01 - Projets/Second Brain.md") ou le nom exact de la note.
-   - Si l'utilisateur demande de créer une nouvelle note avec des tâches associées (ex: créer un projet ou une fiche personne avec des actions à mener) :
-     -> Émets \`propose_create_note\` pour créer la note avec sa structure, et place les tâches correspondantes directement dans son \`content\` ou émets \`propose_create_task\` en ciblant le \`filePath\` de cette nouvelle note.
+   - LORS DE LA CRÉATION CONJOINTE D'UNE NOUVELLE NOTE ET D'UNE TÂCHE (ex: créer la fiche [[Kwarto]] et y inscrire la relance) :
+     -> **GARDE-FOU ANTI-DOUBLON CRITIQUE** :
+        * Si tu appelles l'outil \`propose_create_task\` pour que la tâche soit interactive et approuvable par l'utilisateur, **NE RÉDIGE PAS la ligne de tâche \`- [ ] ...\` en dur dans le \`content\` de \`propose_create_note\`** ! Laisse la section vide (ex: \`## Prochaines étapes\\n\\n\`). L'exécution de \`propose_create_task\` insérera proprement la tâche à cet endroit précis.
+        * Inversement, si tu intègres déjà la tâche dans le corps \`content\` de \`propose_create_note\`, **N'ÉMETS PAS d'appel \`propose_create_task\` en plus pour cette même tâche**.
+        * **NE METS JAMAIS une même tâche en double à la fois dans le corps de \`propose_create_note\` ET dans un appel \`propose_create_task\` séparé**.
    - Pour créer des tâches, appelle TOUJOURS \`propose_create_task\` (ou intègre-les dans \`propose_create_note\` / \`propose_append_to_note\`), et n'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
    - Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
 
