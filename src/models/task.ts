@@ -1,4 +1,4 @@
-export type TaskStatus = 'todo' | 'in-progress' | 'done' | 'cancelled' | string;
+export type TaskStatus = 'todo' | 'in-progress' | 'done' | 'cancelled' | 'paused' | string;
 export type TaskPriority = 'highest' | 'high' | 'medium' | 'normal' | 'low' | 'lowest';
 
 export interface DateFormatOptions {
@@ -12,6 +12,7 @@ export interface ObsidianTask {
 	title: string;
 
 	completed: boolean;
+	isPaused?: boolean;
 	statusChar: string;
 	status: TaskStatus;
 

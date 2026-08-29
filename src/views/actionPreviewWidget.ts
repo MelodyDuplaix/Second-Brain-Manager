@@ -262,6 +262,10 @@ export class ActionPreviewWidget {
 				const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-postpone' });
 				badge.setText('⏳ En cours');
 				hasAny = true;
+			} else if (up.newStatus === 'paused') {
+				const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-pause' });
+				badge.setText('⏸️ En pause');
+				hasAny = true;
 			}
 
 			// Échéance
@@ -309,8 +313,16 @@ export class ActionPreviewWidget {
 				badge.setText('📝 Modifier tâche');
 			}
 		} else if (prop.type === 'create_task') {
+			const cr = prop as CreateTaskActionProposal;
 			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-create' });
 			badge.setText('➕ Créer tâche');
+			if (cr.dueDate) {
+				const dateBadge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-postpone' });
+				dateBadge.setText(`📅 ${cr.dueDate}`);
+			} else {
+				const noDateBadge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-remove-due' });
+				noDateBadge.setText('🧹 Sans date');
+			}
 		} else if (prop.type === 'decompose_task') {
 			const badge = parentEl.createSpan({ cls: 'sbm-preview-action-type-badge type-decompose' });
 			badge.setText('🧩 Décomposer');
@@ -444,6 +456,9 @@ export class ActionPreviewWidget {
 				} else if (newS === 'in-progress' || newS === 'in_progress' || newS === '/') {
 					const statusPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill is-progress-diff' });
 					statusPill.createSpan({ text: '⏳ Statut : En cours [/]' });
+				} else if (newS === 'paused') {
+					const statusPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill is-paused-diff' });
+					statusPill.createSpan({ text: '⏸️ Statut : En pause' });
 				}
 			}
 		} else if (prop.type === 'move_note' || prop.type === 'rename_note') {
@@ -474,6 +489,30 @@ export class ActionPreviewWidget {
 			if (moveProp.appendContent) {
 				const appendPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
 				appendPill.createSpan({ text: '📌 Texte inséré', cls: 'sbm-diff-new' });
+			}
+		} else if (prop.type === 'create_task') {
+			const crProp = prop as CreateTaskActionProposal;
+			const dueDiffPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+			dueDiffPill.createSpan({ text: '📅 ' });
+			if (crProp.dueDate) {
+				dueDiffPill.createSpan({ text: `Échéance : ${crProp.dueDate}`, cls: 'sbm-diff-new' });
+			} else {
+				dueDiffPill.createSpan({ text: 'Sans date', cls: 'sbm-diff-removed' });
+			}
+			if (crProp.matrixQuadrant) {
+				const quadPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+				quadPill.createSpan({ text: '🎯 ' });
+				quadPill.createSpan({ text: `#${crProp.matrixQuadrant.toUpperCase()}`, cls: 'sbm-diff-new' });
+			}
+			if (crProp.energy !== undefined) {
+				const energyPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+				energyPill.createSpan({ text: '⚡ ' });
+				energyPill.createSpan({ text: `#energie/${crProp.energy}`, cls: 'sbm-diff-new' });
+			}
+			if (crProp.priority) {
+				const prioPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
+				prioPill.createSpan({ text: '🔺 ' });
+				prioPill.createSpan({ text: crProp.priority, cls: 'sbm-diff-new' });
 			}
 		} else if (prop.type === 'link_notes') {
 			const linkProp = prop as LinkNotesActionProposal;
@@ -635,16 +674,22 @@ export class ActionPreviewWidget {
 			removeDueBtn.addEventListener('click', (e) => {
 				e.preventDefault();
 				if (prop.type === 'create_task') {
-					(prop as CreateTaskActionProposal).dueDate = undefined;
+					const cr = prop as CreateTaskActionProposal;
+					cr.dueDate = undefined;
+					(cr as any).scheduledDate = null;
+					cr.startDate = undefined;
 				} else if (prop.type === 'update_task') {
 					const up = prop as UpdateTaskActionProposal;
 					up.newDueDate = null;
+					(up as any).newScheduledDate = null;
+					up.newStartDate = null;
 				}
 				updateUI();
 			});
 
 			// Bouton Annuler / Obsolète (uniquement pertinent pour tâche existante)
 			if (prop.type === 'update_task') {
+				const up = prop as UpdateTaskActionProposal;
 				const cancelTaskBtn = quickBar.createEl('button', {
 					cls: 'sbm-preview-quick-btn btn-danger',
 					text: '❌ Annuler'
@@ -652,8 +697,19 @@ export class ActionPreviewWidget {
 				cancelTaskBtn.title = 'Marquer la tâche comme annulée / obsolète (- [-])';
 				cancelTaskBtn.addEventListener('click', (e) => {
 					e.preventDefault();
-					const up = prop as UpdateTaskActionProposal;
 					up.newStatus = up.newStatus === 'cancelled' ? undefined : 'cancelled';
+					updateUI();
+				});
+
+				const isPausedProposal = up.newStatus === 'paused';
+				const pauseTaskBtn = quickBar.createEl('button', {
+					cls: `sbm-preview-quick-btn ${isPausedProposal ? 'is-active' : ''}`,
+					text: isPausedProposal ? '⏸️ En pause' : '⏸️ Mettre en pause'
+				});
+				pauseTaskBtn.title = isPausedProposal ? 'Annuler la mise en pause' : 'Mettre cette tâche en pause (On Hold)';
+				pauseTaskBtn.addEventListener('click', (e) => {
+					e.preventDefault();
+					up.newStatus = up.newStatus === 'paused' ? undefined : 'paused';
 					updateUI();
 				});
 			}
@@ -736,7 +792,12 @@ export class ActionPreviewWidget {
 			});
 			dateInput.value = crProp.dueDate || '';
 			dateInput.addEventListener('change', () => {
-				crProp.dueDate = dateInput.value.trim() || undefined;
+				const val = dateInput.value.trim();
+				crProp.dueDate = val || undefined;
+				if (!val) {
+					(crProp as any).scheduledDate = null;
+					crProp.startDate = undefined;
+				}
 				updateUI();
 			});
 
@@ -754,6 +815,10 @@ export class ActionPreviewWidget {
 				chip.addEventListener('click', (e) => {
 					e.preventDefault();
 					crProp.dueDate = val;
+					if (!val) {
+						(crProp as any).scheduledDate = null;
+						crProp.startDate = undefined;
+					}
 					dateInput.value = val || '';
 					updateUI();
 				});
@@ -887,7 +952,12 @@ export class ActionPreviewWidget {
 			});
 			dateInput.value = upProp.newDueDate || '';
 			dateInput.addEventListener('change', () => {
-				upProp.newDueDate = dateInput.value.trim() || null;
+				const val = dateInput.value.trim();
+				upProp.newDueDate = val || null;
+				if (!val) {
+					(upProp as any).newScheduledDate = null;
+					upProp.newStartDate = null;
+				}
 				updateUI();
 			});
 
@@ -905,6 +975,10 @@ export class ActionPreviewWidget {
 				chip.addEventListener('click', (e) => {
 					e.preventDefault();
 					upProp.newDueDate = val;
+					if (val === null) {
+						(upProp as any).newScheduledDate = null;
+						upProp.newStartDate = null;
+					}
 					dateInput.value = val || '';
 					updateUI();
 				});

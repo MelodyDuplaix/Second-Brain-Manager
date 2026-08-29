@@ -14,6 +14,7 @@ import { SettingsPageManager, SettingsPageType } from './settings/settingsPageMa
 import { EnergyLevelModal } from './modals/energyLevelModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
+import { VaultContextService } from './services/vaultContextService';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings {
 	energyLevel: number;
@@ -139,6 +140,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 	async onload() {
 		await this.loadPluginData();
+		this.touchActiveSession();
 
 		// Enregistrement des vues
 		this.registerView(
@@ -678,6 +680,13 @@ export default class SecondBrainPlugin extends Plugin {
 			lastActiveSession: this.pluginData.lastActiveSession
 		};
 		await this.saveData(dataToStore);
+	}
+
+	public async touchActiveSession(): Promise<void> {
+		if (this.pluginData) {
+			this.pluginData.lastActiveSession = new Date().toISOString();
+			await this.savePluginData();
+		}
 	}
 
 	async saveSettings() {

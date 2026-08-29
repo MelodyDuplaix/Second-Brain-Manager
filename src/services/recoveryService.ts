@@ -66,13 +66,15 @@ export class RecoveryService {
 		} else if (diffDays >= 7) {
 			const weeks = Math.floor(diffDays / 7);
 			return { inactivityText: `Reprise après ${weeks} semaine(s) de pause`, inactivityDays: diffDays };
-		} else if (diffDays >= 1) {
-			return { inactivityText: `Reprise après ${diffDays} jour(s) de pause`, inactivityDays: diffDays };
+		} else if (diffDays >= 2) {
+			return { inactivityText: `Reprise après ${diffDays} jours de pause`, inactivityDays: diffDays };
+		} else if (diffDays === 1) {
+			return { inactivityText: `Reprise de session (hier)`, inactivityDays: 1 };
 		} else if (diffHours >= 2) {
 			return { inactivityText: `Reprise après ${diffHours} heures de pause`, inactivityDays: 0 };
 		}
 
-		return { inactivityText: 'Reprise en douceur', inactivityDays: 0 };
+		return { inactivityText: 'Session active', inactivityDays: 0 };
 	}
 
 	/**
@@ -92,18 +94,26 @@ export class RecoveryService {
 
 		const energy = plugin.settings.energyLevel;
 
-		// Calcul de la durée d'inactivité
-		let lastActiveTime = plugin.pluginData?.lastActiveSession;
-		if (!lastActiveTime && plugin.pluginData?.completionEvents) {
-			const timestamps = Object.values(plugin.pluginData.completionEvents)
-				.map(e => e.completedAt)
-				.filter(Boolean);
-			if (timestamps.length > 0) {
-				timestamps.sort();
-				lastActiveTime = timestamps[timestamps.length - 1];
-			}
+		// Récupération de l'horodatage d'activité le plus récent parmi toutes les sources disponibles
+		const candidateTimestamps: number[] = [];
+		if (plugin.pluginData?.lastActiveSession) {
+			const t = new Date(plugin.pluginData.lastActiveSession).getTime();
+			if (!isNaN(t)) candidateTimestamps.push(t);
 		}
-		const { inactivityText, inactivityDays } = this.calculateInactivity(lastActiveTime);
+		if (plugin.pluginData?.completionEvents) {
+			Object.values(plugin.pluginData.completionEvents).forEach(e => {
+				if (e.completedAt) {
+					const t = new Date(e.completedAt).getTime();
+					if (!isNaN(t)) candidateTimestamps.push(t);
+				}
+			});
+		}
+		if (plugin.pluginData?.streak?.lastCompletedDate) {
+			const t = new Date(plugin.pluginData.streak.lastCompletedDate).getTime();
+			if (!isNaN(t)) candidateTimestamps.push(t);
+		}
+		const mostRecentActive = candidateTimestamps.length > 0 ? Math.max(...candidateTimestamps) : undefined;
+		const { inactivityText, inactivityDays } = this.calculateInactivity(mostRecentActive);
 
 		const matrixAdapter = MatrixAdapterFactory.createAdapter(
 			plugin.settings.matrixProvider,

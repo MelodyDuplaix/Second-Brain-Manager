@@ -238,7 +238,7 @@ Contenu normal sans tag secret.`;
 
 			mockApp.vault.getMarkdownFiles = () => [fileNormal, filePrivateFolder, fileSecretTag];
 			mockApp.vault.read = async (f: TFile) => {
-				if (f.path === '01 - Projets/Normal.md') return '# Normal\n- [ ] Tâche A 📅 2026-08-30';
+				if (f.path === '01 - Projets/Normal.md') return '# Normal\n- [ ] Tâche A 📅 2026-08-30\n- [ ] Tâche En Pause #pause';
 				if (f.path === 'Chaos/Archives/Ancien.md') return '# Ancien\n- [ ] Tâche B 📅 2026-08-30';
 				if (f.path === '00 - Inbox/Doc.md') return '# Doc #secret\n- [ ] Tâche Secrète 📅 2026-08-30';
 				return '';
@@ -250,9 +250,15 @@ Contenu normal sans tag secret.`;
 			expect(searchResults.length).toBe(1);
 			expect(searchResults[0].path).toBe('01 - Projets/Normal.md');
 
+			// Par défaut, searchTasks exclut les tâches en pause
 			const taskResults = await vaultContext.searchTasks({});
 			expect(taskResults.length).toBe(1);
 			expect(taskResults[0].title).toBe('Tâche A');
+
+			// Si demandé explicitement (isPaused: true ou status: 'paused'), les tâches en pause sont retournées
+			const pausedResults = await vaultContext.searchTasks({ isPaused: true });
+			expect(pausedResults.length).toBe(1);
+			expect(pausedResults[0].title).toBe('Tâche En Pause');
 
 			// readNote on secret file returns null
 			const readSecret = await vaultContext.readNote('00 - Inbox/Doc.md');

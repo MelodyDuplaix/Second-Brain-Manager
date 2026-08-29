@@ -44,15 +44,67 @@ export class TaskMutator {
 		return lineWithStatus;
 	}
 
-	public static setStatus(rawLine: string, status: 'in_progress' | 'done' | 'todo' | 'cancelled' | string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
+	public static setPaused(
+		rawLine: string,
+		paused: boolean,
+		config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG
+	): string {
 		const checkboxRegex = DynamicRegexBuilder.buildCheckboxRegex(config);
 		const match = checkboxRegex.exec(rawLine);
 		if (!match) return rawLine;
 
 		const indentWhitespace = match[1];
+		const currentStatusChar = match[2];
+		let body = match[3];
+
+		const pauseMode = config.pauseMode || 'tag';
+		const pauseSymbol = config.pauseStatusSymbol || '?';
+		const pauseTag = config.pauseTag ? config.pauseTag.toLowerCase().replace(/^#/, '') : 'pause';
+
+		const pauseTagRegex = new RegExp(`(?:^|\\s)#(?:${DynamicRegexBuilder.escapeRegex(pauseTag)}|pause|en-pause|on-hold)(?=[\\s^$]|$)`, 'gi');
+		const dvPausedRegex = /\[status::\s*paused\]/gi;
+
+		// Nettoie tout tag de pause existant
+		body = body.replace(pauseTagRegex, '').replace(dvPausedRegex, '').replace(/\s+/g, ' ').trim();
+
+		if (paused) {
+			if (pauseMode === 'status') {
+				// Mode statut Markdown : remplace la case par [?] ou [p]
+				return `${indentWhitespace}- [${pauseSymbol}] ${body}`;
+			} else if (config.taskFormat === 'dataview') {
+				const line = `${indentWhitespace}- [ ] ${body}`;
+				return this.insertMetaBeforeBlockId(line, '[status:: paused]');
+			} else {
+				// Mode tag : conserve le statut [ ] et insère #pause
+				const tagString = `#${pauseTag}`;
+				const line = `${indentWhitespace}- [ ] ${body}`;
+				return this.insertMetaBeforeBlockId(line, tagString);
+			}
+		} else {
+			// Reprise / Dépause
+			let newStatusChar = currentStatusChar;
+			if (currentStatusChar === pauseSymbol || currentStatusChar === '?' || currentStatusChar === 'p') {
+				newStatusChar = ' ';
+			}
+			return `${indentWhitespace}- [${newStatusChar}] ${body}`;
+		}
+	}
+
+	public static setStatus(rawLine: string, status: 'in_progress' | 'done' | 'todo' | 'cancelled' | 'paused' | string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
+		if (status === 'paused') {
+			return this.setPaused(rawLine, true, config);
+		}
+
+		// En cas de changement vers un autre statut, on retire d'abord l'état de pause
+		const unpausedLine = this.setPaused(rawLine, false, config);
+		const checkboxRegex = DynamicRegexBuilder.buildCheckboxRegex(config);
+		const match = checkboxRegex.exec(unpausedLine);
+		if (!match) return unpausedLine;
+
+		const indentWhitespace = match[1];
 		const body = match[3];
 		let statusChar = ' ';
-		if (status === 'in_progress' || status === '/') statusChar = '/';
+		if (status === 'in_progress' || status === 'in-progress' || status === '/') statusChar = '/';
 		else if (status === 'done' || status === 'completed' || status === 'x') statusChar = 'x';
 		else if (status === 'cancelled' || status === '-') statusChar = '-';
 		else statusChar = ' ';
@@ -66,14 +118,26 @@ export class TaskMutator {
 		const dvDueRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['due']);
 		const tagDueRegex = DynamicRegexBuilder.buildTagDateRegex(['due']);
 
-		const lineWithoutDue = rawLine
+		// Wikilink dates like [[2026-08-29]] or [[17-08-2026]] if clearing date
+		const wikiDateRegex = /\[\[(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/g;
+
+		const indentMatch = /^(\s*)/.exec(rawLine);
+		const indent = indentMatch ? indentMatch[1] : '';
+
+		let lineWithoutDue = rawLine
 			.replace(dueDateRegex, '')
 			.replace(stdDueRegex, '')
 			.replace(dvDueRegex, '')
-			.replace(tagDueRegex, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-		if (!dateStr) return lineWithoutDue;
+			.replace(tagDueRegex, '');
+
+		if (!dateStr) {
+			lineWithoutDue = lineWithoutDue.replace(wikiDateRegex, '');
+			const cleaned = lineWithoutDue.replace(/\s+/g, ' ').trim();
+			return `${indent}${cleaned}`;
+		}
+
+		const cleaned = lineWithoutDue.replace(/\s+/g, ' ').trim();
+		const lineWithIndent = `${indent}${cleaned}`;
 
 		const formattedDate = this.formatDate(dateStr, config);
 		let meta = `${config.dueDateSignifier} ${formattedDate}`;
@@ -82,7 +146,7 @@ export class TaskMutator {
 		} else if (config.taskFormat === 'tag') {
 			meta = `#due/${formattedDate}`;
 		}
-		return this.insertMetaBeforeBlockId(lineWithoutDue, meta);
+		return this.insertMetaBeforeBlockId(lineWithIndent, meta);
 	}
 
 	public static setStartDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
@@ -91,14 +155,22 @@ export class TaskMutator {
 		const dvStartRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['start']);
 		const tagStartRegex = DynamicRegexBuilder.buildTagDateRegex(['start']);
 
+		const indentMatch = /^(\s*)/.exec(rawLine);
+		const indent = indentMatch ? indentMatch[1] : '';
+
 		const lineWithoutStart = rawLine
 			.replace(startDateRegex, '')
 			.replace(stdStartRegex, '')
 			.replace(dvStartRegex, '')
-			.replace(tagStartRegex, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-		if (!dateStr) return lineWithoutStart;
+			.replace(tagStartRegex, '');
+
+		if (!dateStr) {
+			const cleaned = lineWithoutStart.replace(/\s+/g, ' ').trim();
+			return `${indent}${cleaned}`;
+		}
+
+		const cleaned = lineWithoutStart.replace(/\s+/g, ' ').trim();
+		const lineWithIndent = `${indent}${cleaned}`;
 
 		const formattedDate = this.formatDate(dateStr, config);
 		let meta = `${config.startDateSignifier} ${formattedDate}`;
@@ -107,7 +179,7 @@ export class TaskMutator {
 		} else if (config.taskFormat === 'tag') {
 			meta = `#start/${formattedDate}`;
 		}
-		return this.insertMetaBeforeBlockId(lineWithoutStart, meta);
+		return this.insertMetaBeforeBlockId(lineWithIndent, meta);
 	}
 
 	public static setScheduledDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
@@ -116,14 +188,22 @@ export class TaskMutator {
 		const dvScheduledRegex = DynamicRegexBuilder.buildDataviewFieldRegex(['scheduled']);
 		const tagScheduledRegex = DynamicRegexBuilder.buildTagDateRegex(['scheduled']);
 
+		const indentMatch = /^(\s*)/.exec(rawLine);
+		const indent = indentMatch ? indentMatch[1] : '';
+
 		const lineWithoutScheduled = rawLine
 			.replace(scheduledDateRegex, '')
 			.replace(stdScheduledRegex, '')
 			.replace(dvScheduledRegex, '')
-			.replace(tagScheduledRegex, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-		if (!dateStr) return lineWithoutScheduled;
+			.replace(tagScheduledRegex, '');
+
+		if (!dateStr) {
+			const cleaned = lineWithoutScheduled.replace(/\s+/g, ' ').trim();
+			return `${indent}${cleaned}`;
+		}
+
+		const cleaned = lineWithoutScheduled.replace(/\s+/g, ' ').trim();
+		const lineWithIndent = `${indent}${cleaned}`;
 
 		const formattedDate = this.formatDate(dateStr, config);
 		let meta = `${config.scheduledDateSignifier} ${formattedDate}`;
@@ -132,7 +212,21 @@ export class TaskMutator {
 		} else if (config.taskFormat === 'tag') {
 			meta = `#scheduled/${formattedDate}`;
 		}
-		return this.insertMetaBeforeBlockId(lineWithoutScheduled, meta);
+		return this.insertMetaBeforeBlockId(lineWithIndent, meta);
+	}
+
+	/**
+	 * Supprime toutes les dates associées à une tâche (échéance, programmée, début, dates wikilinks).
+	 */
+	public static removeAllDates(rawLine: string, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
+		let line = this.setDueDate(rawLine, null, config);
+		line = this.setScheduledDate(line, null, config);
+		line = this.setStartDate(line, null, config);
+		const wikiDateRegex = /\[\[(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})(?:\s+[a-zA-ZÀ-ÿ]+)?\]\]/g;
+		const indentMatch = /^(\s*)/.exec(line);
+		const indent = indentMatch ? indentMatch[1] : '';
+		const cleaned = line.replace(wikiDateRegex, '').replace(/\s+/g, ' ').trim();
+		return `${indent}${cleaned}`;
 	}
 
 	public static setPriority(rawLine: string, priority: TaskPriority | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {

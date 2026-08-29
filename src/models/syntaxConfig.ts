@@ -25,6 +25,11 @@ export interface TaskSyntaxConfig {
 	dateFormat: string;
 	useWikilinks: boolean;
 	statusSymbols: string[];
+
+	// Configuration de mise en pause des tâches
+	pauseMode: 'tag' | 'status';
+	pauseStatusSymbol: string;
+	pauseTag: string;
 }
 
 export const DEFAULT_SYNTAX_CONFIG: TaskSyntaxConfig = {
@@ -51,5 +56,9 @@ export const DEFAULT_SYNTAX_CONFIG: TaskSyntaxConfig = {
 
 	dateFormat: 'YYYY-MM-DD',
 	useWikilinks: false,
-	statusSymbols: [' ', 'x', 'X', '/', '-', '!', '?', '>', 'b'],
+	statusSymbols: [' ', 'x', 'X', '/', '-', '!', '?', '>', 'b', 'p'],
+
+	pauseMode: 'tag',
+	pauseStatusSymbol: '?',
+	pauseTag: 'pause',
 };

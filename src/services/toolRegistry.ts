@@ -34,12 +34,13 @@ export class ToolRegistry {
 		},
 		{
 			name: 'search_tasks',
-			description: 'Recherche des tâches Markdown Tasks existantes avec filtres (échéance, énergie, quadrant, statut).',
+			description: 'Recherche des tâches Markdown Tasks existantes avec filtres (échéance, énergie, quadrant, statut, en pause).',
 			parameters: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Texte contenu dans la tâche.' },
-					status: { type: 'string', description: 'Statut de la tâche', enum: ['todo', 'done', 'in-progress', 'cancelled', 'all'] },
+					status: { type: 'string', description: 'Statut de la tâche', enum: ['todo', 'done', 'in-progress', 'cancelled', 'paused', 'all'] },
+					isPaused: { type: 'boolean', description: 'Filtrer uniquement les tâches en pause (true) ou actives (false).' },
 					dueBefore: { type: 'string', description: 'Date d\'échéance maximale (format YYYY-MM-DD).' },
 					quadrant: { type: 'string', description: 'Quadrant d\'Eisenhower', enum: ['q1', 'q2', 'q3', 'q4'] },
 					energyMax: { type: 'number', description: 'Niveau d\'énergie maximum (1-10).' },
@@ -341,7 +342,8 @@ export class ToolRegistry {
 			case 'search_tasks': {
 				const res = await this.vaultContext.searchTasks({
 					query: args.query ? String(args.query) : undefined,
-					status: args.status as 'todo' | 'done' | 'in-progress' | 'cancelled' | 'all',
+					status: args.status as 'todo' | 'done' | 'in-progress' | 'cancelled' | 'paused' | 'all',
+					isPaused: typeof args.isPaused === 'boolean' ? args.isPaused : undefined,
 					dueBefore: args.dueBefore ? String(args.dueBefore) : undefined,
 					quadrant: args.quadrant ? String(args.quadrant) : undefined,
 					energyMax: typeof args.energyMax === 'number' ? args.energyMax : undefined,
@@ -353,6 +355,8 @@ export class ToolRegistry {
 					line: t.lineNumber,
 					title: t.title,
 					completed: t.completed,
+					isPaused: t.isPaused,
+					status: t.status,
 					dueDate: t.dueDate,
 					energy: t.energy,
 					pieces: t.pieces,

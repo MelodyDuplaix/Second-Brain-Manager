@@ -176,4 +176,37 @@ describe('TaskMutator', () => {
 
 		expect(line).toBe('- [ ] Tâche en format standard emoji 📅 2026-08-30 ⏳ 2026-08-29 🛫 2026-08-28 ⏫ #energie/3 #tm/q2 [[Projet Beta]]');
 	});
+
+	it('should remove due date and preserve leading indentation', () => {
+		const line = '    - [ ] Tâche indentée 📅 2026-08-30 #energie/3';
+		const updated = TaskMutator.setDueDate(line, null, DEFAULT_SYNTAX_CONFIG);
+		expect(updated).toBe('    - [ ] Tâche indentée #energie/3');
+	});
+
+	it('should pause task in tag mode by adding #pause and preserving blockId', () => {
+		const line = '- [ ] Réfléchir au projet 📅 2026-08-30 ^block-1';
+		const paused = TaskMutator.setPaused(line, true, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'tag', pauseTag: 'pause' });
+		expect(paused).toBe('- [ ] Réfléchir au projet 📅 2026-08-30 #pause ^block-1');
+
+		const unpaused = TaskMutator.setPaused(paused, false, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'tag', pauseTag: 'pause' });
+		expect(unpaused).toBe('- [ ] Réfléchir au projet 📅 2026-08-30 ^block-1');
+	});
+
+	it('should pause task in status symbol mode by changing checkbox to [?] or custom symbol', () => {
+		const line = '  - [ ] Développer le module 📅 2026-08-30';
+		const paused = TaskMutator.setPaused(line, true, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'status', pauseStatusSymbol: '?' });
+		expect(paused).toBe('  - [?] Développer le module 📅 2026-08-30');
+
+		const unpaused = TaskMutator.setPaused(paused, false, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'status', pauseStatusSymbol: '?' });
+		expect(unpaused).toBe('  - [ ] Développer le module 📅 2026-08-30');
+	});
+
+	it('should support setStatus with "paused" and toggle back to "todo"', () => {
+		const line = '- [ ] Tester la feature';
+		const paused = TaskMutator.setStatus(line, 'paused', { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'tag', pauseTag: 'pause' });
+		expect(paused).toBe('- [ ] Tester la feature #pause');
+
+		const resumed = TaskMutator.setStatus(paused, 'in_progress', { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'tag', pauseTag: 'pause' });
+		expect(resumed).toBe('- [/] Tester la feature');
+	});
 });

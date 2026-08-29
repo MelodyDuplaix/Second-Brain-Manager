@@ -418,6 +418,44 @@ scheduled today
 		expect(createdFiles['Personnes/François Gafier.md']).toContain('François Gafier');
 		expect(createdFiles['Personnes/Françoise Jabveneau.md']).toBe('# Françoise Jabveneau\n\nContact amie');
 	});
+
+	it('should cleanly remove all dates when executeUpdateTask is called with newDueDate: null', async () => {
+		createdFiles['01 - Projets/Test.md'] = '- [ ] Tâche avec date 📅 2026-08-30 ⏳ 2026-08-29 #energie/3\n';
+
+		const removeDateProp: UpdateTaskActionProposal = {
+			id: 'act-remove-date',
+			type: 'update_task',
+			description: 'Retirer date',
+			selected: true,
+			targetPath: '01 - Projets/Test.md',
+			lineNumber: 1,
+			taskTitle: 'Tâche avec date',
+			newDueDate: null
+		};
+
+		const results = await executor.executeProposals([removeDateProp]);
+		expect(results[0].success).toBe(true);
+		expect(processedFiles['01 - Projets/Test.md']).toBe('- [ ] Tâche avec date #energie/3\n');
+	});
+
+	it('should pause task when executeUpdateTask is called with newStatus: "paused"', async () => {
+		createdFiles['01 - Projets/PauseTest.md'] = '- [ ] Tâche à mettre en pause 📅 2026-08-30\n';
+
+		const pauseProp: UpdateTaskActionProposal = {
+			id: 'act-pause-task',
+			type: 'update_task',
+			description: 'Mettre en pause',
+			selected: true,
+			targetPath: '01 - Projets/PauseTest.md',
+			lineNumber: 1,
+			taskTitle: 'Tâche à mettre en pause',
+			newStatus: 'paused'
+		};
+
+		const results = await executor.executeProposals([pauseProp]);
+		expect(results[0].success).toBe(true);
+		expect(processedFiles['01 - Projets/PauseTest.md']).toBe('- [ ] Tâche à mettre en pause 📅 2026-08-30 #pause\n');
+	});
 });
 
 

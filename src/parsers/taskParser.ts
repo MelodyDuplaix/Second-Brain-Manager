@@ -166,6 +166,9 @@ export class TaskParser {
 
 		const domainTags = this.extractDomainTags(body, config);
 
+		const rawPauseTag = config.pauseTag ? config.pauseTag.toLowerCase().replace(/^#/, '') : 'pause';
+		const pauseTagRegex = new RegExp(`#(?:${rawPauseTag}|pause|en-pause|on-hold)(?=[^\\w-]|$)`, 'gi');
+
 		const blockIdMatch = this.BLOCK_ID_REGEX.exec(body);
 		const blockId = blockIdMatch ? blockIdMatch[1] : undefined;
 
@@ -181,16 +184,26 @@ export class TaskParser {
 			matrixRegex, stdMatrixTmRegex, stdMatrixQRegex, stdMatrixFocusRegex,
 			this.PRIORITY_EMOJIS_REGEX,
 			DynamicRegexBuilder.DATAVIEW_ANY_FIELD_REGEX, DynamicRegexBuilder.ANY_TAG_DATE_REGEX,
-			rawWikiDateRegex, this.BLOCK_ID_REGEX
+			rawWikiDateRegex, this.BLOCK_ID_REGEX,
+			pauseTagRegex
 		]);
+
+		const isPausedByTag = (body.toLowerCase().includes('#pause') || body.toLowerCase().includes('#en-pause') || body.toLowerCase().includes('#on-hold') || (rawPauseTag && body.toLowerCase().includes(`#${rawPauseTag}`))) || (config.taskFormat === 'dataview' && body.includes('[status:: paused]'));
+
+		const pauseSymbol = config.pauseStatusSymbol || '?';
+		const isPausedByStatus = statusChar === pauseSymbol || statusChar === '?' || statusChar === 'p';
+
+		const isPaused = !completed && (isPausedByTag || isPausedByStatus);
+		const finalStatus: TaskStatus = isPaused ? 'paused' : status;
 
 		return {
 			rawText: rawLine,
 			cleanText: body,
 			title,
 			completed,
+			isPaused,
 			statusChar,
-			status,
+			status: finalStatus,
 			filePath,
 			lineNumber,
 			indentLevel,
@@ -283,6 +296,9 @@ export class TaskParser {
 				return 'in-progress';
 			case '-':
 				return 'cancelled';
+			case '?':
+			case 'p':
+				return 'paused';
 			case ' ':
 				return 'todo';
 			default:
@@ -349,7 +365,11 @@ export class TaskParser {
 			'#q2',
 			'#q3',
 			'#q4',
-			'#focus'
+			'#focus',
+			'#pause',
+			'#en-pause',
+			'#on-hold',
+			`#${(config.pauseTag || 'pause').toLowerCase().replace(/^#/, '')}`
 		];
 
 		while ((match = this.ALL_TAGS_REGEX.exec(text)) !== null) {

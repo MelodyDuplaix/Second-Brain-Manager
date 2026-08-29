@@ -46,6 +46,8 @@ export interface BriefingVaultData {
 	dailyNoteContent?: string;
 	calendarEvents?: GoogleCalendarEvent[];
 	calendarEventsText?: string;
+	pausedTasks?: ObsidianTask[];
+	canSuggestPausedTasks?: boolean;
 	customPromptInstructions?: string;
 }
 
@@ -77,13 +79,15 @@ export class MorningBriefingService {
 		} else if (diffDays >= 7) {
 			const weeks = Math.floor(diffDays / 7);
 			return { inactivityText: `Reprise après ${weeks} semaine(s) de pause`, inactivityDays: diffDays };
-		} else if (diffDays >= 1) {
-			return { inactivityText: `Reprise après ${diffDays} jour(s) de pause`, inactivityDays: diffDays };
+		} else if (diffDays >= 2) {
+			return { inactivityText: `Reprise après ${diffDays} jours de pause`, inactivityDays: diffDays };
+		} else if (diffDays === 1) {
+			return { inactivityText: `Reprise de session (hier)`, inactivityDays: 1 };
 		} else if (diffHours >= 2) {
 			return { inactivityText: `Reprise après ${diffHours} heures de pause`, inactivityDays: 0 };
 		}
 
-		return { inactivityText: 'Reprise en douceur', inactivityDays: 0 };
+		return { inactivityText: 'Session active', inactivityDays: 0 };
 	}
 
 	/**
@@ -132,18 +136,26 @@ export class MorningBriefingService {
 				? 'Mode Équilibré (Énergie moyenne - focus sur 1 tâche majeure et 2-3 secondaires)'
 				: 'Mode Plein Potentiel (Haute énergie - idéal pour les chantiers complexes et créatifs)';
 
-		// Calcul de la durée d'inactivité
-		let lastActiveTime = plugin.pluginData?.lastActiveSession;
-		if (!lastActiveTime && plugin.pluginData?.completionEvents) {
-			const timestamps = Object.values(plugin.pluginData.completionEvents)
-				.map(e => e.completedAt)
-				.filter(Boolean);
-			if (timestamps.length > 0) {
-				timestamps.sort();
-				lastActiveTime = timestamps[timestamps.length - 1];
-			}
+		// Récupération de l'horodatage d'activité le plus récent parmi toutes les sources disponibles
+		const candidateTimestamps: number[] = [];
+		if (plugin.pluginData?.lastActiveSession) {
+			const t = new Date(plugin.pluginData.lastActiveSession).getTime();
+			if (!isNaN(t)) candidateTimestamps.push(t);
 		}
-		const { inactivityText, inactivityDays } = this.calculateInactivity(lastActiveTime);
+		if (plugin.pluginData?.completionEvents) {
+			Object.values(plugin.pluginData.completionEvents).forEach(e => {
+				if (e.completedAt) {
+					const t = new Date(e.completedAt).getTime();
+					if (!isNaN(t)) candidateTimestamps.push(t);
+				}
+			});
+		}
+		if (plugin.pluginData?.streak?.lastCompletedDate) {
+			const t = new Date(plugin.pluginData.streak.lastCompletedDate).getTime();
+			if (!isNaN(t)) candidateTimestamps.push(t);
+		}
+		const mostRecentActive = candidateTimestamps.length > 0 ? Math.max(...candidateTimestamps) : undefined;
+		const { inactivityText, inactivityDays } = this.calculateInactivity(mostRecentActive);
 
 		const matrixAdapter = MatrixAdapterFactory.createAdapter(
 			plugin.settings.matrixProvider,
@@ -175,12 +187,16 @@ export class MorningBriefingService {
 		const allTasks = results.flat();
 		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
-		// Classification
-		const overdueTasks = allOpenTasks.filter(t =>
+		// Séparation stricte : le LLM et les analyses n'ingèrent pas les tâches en pause
+		const pausedTasks = allOpenTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
+		const activeOpenTasks = allOpenTasks.filter(t => !t.isPaused && t.status !== 'paused');
+
+		// Classification basée exclusivement sur les tâches actives
+		const overdueTasks = activeOpenTasks.filter(t =>
 			(t.dueDate && t.dueDate < dateStr) ||
 			(t.scheduledDate && t.scheduledDate < dateStr)
 		);
-		const todayTasks = allOpenTasks.filter(t =>
+		const todayTasks = activeOpenTasks.filter(t =>
 			t.dueDate === dateStr ||
 			t.scheduledDate === dateStr ||
 			(t.startDate && t.startDate <= dateStr)
@@ -190,7 +206,7 @@ export class MorningBriefingService {
 		const normPriorityFolders = priorityFolders.map(f => normalizePath(f).toLowerCase());
 		const normPriorityFiles = priorityFiles.map(f => normalizePath(f).toLowerCase());
 
-		const userPrioritizedTasks = allOpenTasks.filter(t => {
+		const userPrioritizedTasks = activeOpenTasks.filter(t => {
 			const normPath = normalizePath(t.filePath || '').toLowerCase();
 			const inPriorityFolder = normPriorityFolders.some(f => normPath === f || normPath.startsWith(f + '/'));
 			const inPriorityFile = normPriorityFiles.some(f => normPath === f || normPath.endsWith('/' + f) || normPath.includes(f));
@@ -206,7 +222,7 @@ export class MorningBriefingService {
 		);
 
 		const inboxFolder = plugin.settings.inboxFolder ? normalizePath(plugin.settings.inboxFolder).toLowerCase() : '00 - inbox';
-		const inboxTasks = allOpenTasks.filter(t => {
+		const inboxTasks = activeOpenTasks.filter(t => {
 			const norm = normalizePath(t.filePath).toLowerCase();
 			const isRoot = !norm.includes('/');
 			return norm.startsWith(inboxFolder) || norm.includes('notes en vrac') || norm.includes('vrac') || isRoot;
@@ -215,14 +231,14 @@ export class MorningBriefingService {
 		// Ordonnancement des tâches prioritaires : place d'abord les tâches prioritaires définies par l'utilisateur
 		const priorityTasksSet = new Set<ObsidianTask>();
 		userPrioritizedTasks.forEach(t => priorityTasksSet.add(t));
-		allOpenTasks.filter(t => {
+		activeOpenTasks.filter(t => {
 			const q = matrixAdapter.getQuadrant(t);
 			return q === 'q1' || q === 'q2' || (t.priority && (t.priority === 'highest' || t.priority === 'high'));
 		}).forEach(t => priorityTasksSet.add(t));
 		const priorityTasks = Array.from(priorityTasksSet);
 
 		// Identification des Quick Wins (tâches courtes, faciles ou faible énergie, non Q1)
-		const quickWinTasks = allOpenTasks
+		const quickWinTasks = activeOpenTasks
 			.filter(t => {
 				const isLowEnergy = t.energy !== undefined && t.energy <= 3;
 				const isEasy = t.difficulty && t.difficulty.toLowerCase() === 'facile';
@@ -237,10 +253,10 @@ export class MorningBriefingService {
 			oneThingTask = userPrioritizedTasks[0];
 		}
 		if (!oneThingTask) {
-			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
+			oneThingTask = activeOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
 		}
 		if (!oneThingTask) {
-			oneThingTask = allOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
+			oneThingTask = activeOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
 		}
 		if (!oneThingTask && overdueTasks.length > 0) {
 			oneThingTask = overdueTasks[0];
@@ -248,12 +264,22 @@ export class MorningBriefingService {
 
 		// Tâches spécifiques au projet focus si sélectionné
 		const projectTasks = (focusProject && focusProject !== 'all')
-			? allOpenTasks.filter(t =>
+			? activeOpenTasks.filter(t =>
 				(t.filePath && t.filePath.toLowerCase().includes(focusProject.toLowerCase())) ||
 				(t.title && t.title.toLowerCase().includes(focusProject.toLowerCase())) ||
 				(t.domainTags && Array.isArray(t.domainTags) && t.domainTags.some(tag => tag.toLowerCase().includes(focusProject.toLowerCase())))
 			)
 			: [];
+
+		// Calcul du volume de tâches actionnables (en retard, du jour ou sans date)
+		const actionableTasks = activeOpenTasks.filter(t =>
+			(t.dueDate && t.dueDate <= dateStr) ||
+			(t.scheduledDate && t.scheduledDate <= dateStr) ||
+			(!t.dueDate && !t.scheduledDate)
+		);
+
+		// Condition spéciale : le LLM peut suggérer les tâches en pause UNIQUEMENT s'il y a très peu de tâches actives (< 3)
+		const canSuggestPausedTasks = actionableTasks.length < 3 && pausedTasks.length > 0;
 
 		const looseNotes = structure.looseNotes || [];
 
@@ -285,9 +311,9 @@ export class MorningBriefingService {
 		);
 		const inboxNotePreviews = rawPreviews.filter((p): p is { path: string; name: string; preview: string } => p !== null);
 
-		// Déclenchement automatique du mode Reprise & Décongestion si encombrement ou pause
+		// Déclenchement automatique du mode Reprise & Décongestion si encombrement ou pause prolongée (>= 3 jours)
 		const isCluttered = overdueTasks.length >= 4 || staleTasks.length >= 2 || inboxTasks.length >= 4 || inboxNotePreviews.length >= 3;
-		const isRecoveryMode = isCluttered || inactivityDays >= 1;
+		const isRecoveryMode = isCluttered || inactivityDays >= 3;
 
 		// Lecture ou création automatique de la note quotidienne du jour (avec template et Templater)
 		let dailyNoteContent: string | undefined;
@@ -351,6 +377,8 @@ export class MorningBriefingService {
 			dailyNoteContent,
 			calendarEvents,
 			calendarEventsText,
+			pausedTasks,
+			canSuggestPausedTasks,
 			customPromptInstructions: plugin.settings.customPromptInstructions
 		};
 	}
@@ -449,6 +477,14 @@ export class MorningBriefingService {
 			calendarSectionText = `\nAGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE) :\n${data.calendarEventsText}\nATTENTION : Ces rendez-vous sont des contraintes fermes prioritaires sur toutes les tâches. Tu dois impérativement articuler le plan d'action et les tâches dans les temps libres restants entre ces créneaux.\n`;
 		}
 
+		let pausedSectionText = '';
+		let pausedDirectives = '';
+		if (data.canSuggestPausedTasks && data.pausedTasks && data.pausedTasks.length > 0) {
+			const pausedList = data.pausedTasks.slice(0, 10).map(formatTaskLine).join('\n');
+			pausedSectionText = `\nTACHES EN PAUSE DISPONIBLES (${data.pausedTasks.length} au total) :\n${pausedList}\n`;
+			pausedDirectives = `\n- **Opportunité - Tâches en Pause** : L'utilisateur a très peu de tâches actives prioritaires aujourd'hui (moins de 3 tâches en retard, du jour ou sans date). Mentionne-lui avec bienveillance qu'il a ${data.pausedTasks.length} tâche(s) en pause et demande-lui s'il souhaite profiter de cette journée allégée pour en réactiver ou en traiter certaines (cite 1 ou 2 exemples concrets parmi la liste fournie).`;
+		}
+
 		let systemPrompt = '';
 		let userMessage = '';
 
@@ -469,7 +505,7 @@ CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et bienveillant.
 
 CONSIGNES DE REDACTION EN MODE REPRISE :
-1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}
+1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}${pausedDirectives}
 2. **Structure du Briefing de Reprise** :
    - **Accueil & Bilan Déculpabilisant** (2 phrases bienveillantes pour poser un cadre serein)
    - **Les Rendez-vous Fixes & Contraintes Agenda** (Rappel des créneaux incontournables du jour)
@@ -546,6 +582,7 @@ ${looseNotesText}
 
 Tâches en vrac :
 ${inboxText}
+${pausedSectionText}
 ${dailyNoteSnippet}
 Propose-moi mon briefing en mode reprise avec un tri large et déculpabilisant des tâches et notes, accompagné du bloc json:actions pour que je puisse tout appliquer en 1 clic. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
 
@@ -564,7 +601,7 @@ CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
 
 CONSIGNES DE REDACTION :
-1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}
+1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}${pausedDirectives}
 2. **Structure du Briefing** :
    - **Cap du Jour** (Le focus ou projet n°1 incontournable)
    - **Rendez-vous & Contraintes Fixes de l'Agenda** (Rappel clair des heures de réunions/rendez-vous à honorer en priorité)
@@ -599,6 +636,7 @@ ${inboxText}
 
 NOTES EN VRAC :
 ${looseNotesText}
+${pausedSectionText}
 ${dailyNoteSnippet}
 Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le bloc json:actions pour les actions proposées. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
 		}
@@ -715,7 +753,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 			...data.todayTasks,
 			...data.priorityTasks,
 			...data.inboxTasks,
-			...data.projectTasks
+			...data.projectTasks,
+			...(data.pausedTasks || [])
 		];
 
 		return {

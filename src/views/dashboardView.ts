@@ -14,6 +14,7 @@ export class DashboardView extends ItemView {
 	private plugin: SecondBrainPlugin;
 	private popover: InlineMetaPopover;
 	private taskSearchQuery = '';
+	private taskFilterMode: 'active' | 'paused' | 'all' = 'active';
 	private showAllTodoTasks = false;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
@@ -83,23 +84,40 @@ export class DashboardView extends ItemView {
 		// Chargement de toutes les tâches
 		const allTasks = await this.loadAllVaultTasks();
 		const todoTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
+		const pausedTasks = todoTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
+		const activeTasks = todoTasks.filter(t => !t.isPaused && t.status !== 'paused');
 
 		// Badge récapitulatif global des tâches détectées (aide au debug)
 		const summaryCard = container.createEl('div', { cls: 'sbm-tasks-summary-card' });
 		summaryCard.createEl('span', {
 			cls: 'sbm-summary-badge total',
-			text: `📋 ${todoTasks.length} tâche${todoTasks.length > 1 ? 's' : ''} à faire détectée${todoTasks.length > 1 ? 's' : ''}`
+			text: `📋 ${todoTasks.length} tâche${todoTasks.length > 1 ? 's' : ''} détectée${todoTasks.length > 1 ? 's' : ''}`
 		});
-		const dueCount = todoTasks.filter(t => !!t.dueDate || !!t.scheduledDate).length;
+		summaryCard.createEl('span', {
+			cls: 'sbm-summary-badge active',
+			text: `⚡ ${activeTasks.length} active${activeTasks.length > 1 ? 's' : ''}`
+		});
+		if (pausedTasks.length > 0) {
+			const pausedBadge = summaryCard.createEl('span', {
+				cls: 'sbm-summary-badge paused sbm-clickable-link',
+				text: `⏸️ ${pausedTasks.length} en pause`
+			});
+			pausedBadge.title = 'Cliquer pour filtrer uniquement les tâches en pause';
+			pausedBadge.addEventListener('click', async () => {
+				this.taskFilterMode = this.taskFilterMode === 'paused' ? 'active' : 'paused';
+				await this.render();
+			});
+		}
+		const dueCount = activeTasks.filter(t => !!t.dueDate || !!t.scheduledDate).length;
 		if (dueCount > 0) {
 			summaryCard.createEl('span', { cls: 'sbm-summary-badge due', text: `📅 ${dueCount} avec échéance` });
 		}
-		const energyCount = todoTasks.filter(t => t.energy !== undefined).length;
+		const energyCount = activeTasks.filter(t => t.energy !== undefined).length;
 		if (energyCount > 0) {
 			summaryCard.createEl('span', { cls: 'sbm-summary-badge energy', text: `⚡ ${energyCount} avec énergie` });
 		}
 
-		// Barre de recherche de tâches
+		// Barre de recherche et filtres de tâches
 		const searchContainer = container.createEl('div', { cls: 'sbm-task-search-container' });
 		const searchInput = searchContainer.createEl('input', {
 			type: 'text',
@@ -109,6 +127,25 @@ export class DashboardView extends ItemView {
 		searchInput.addEventListener('input', () => {
 			this.taskSearchQuery = searchInput.value.toLowerCase().trim();
 			this.renderSections(sectionsContainer, allTasks, isEconomyMode);
+		});
+
+		// Filtres d'onglets (Actives / En pause / Toutes)
+		const filterChipsContainer = container.createEl('div', { cls: 'sbm-task-filter-chips' });
+		const chips: { key: 'active' | 'paused' | 'all'; label: string }[] = [
+			{ key: 'active', label: `⚡ Actives (${activeTasks.length})` },
+			{ key: 'paused', label: `⏸️ En pause (${pausedTasks.length})` },
+			{ key: 'all', label: `📋 Toutes (${todoTasks.length})` }
+		];
+
+		chips.forEach(c => {
+			const chip = filterChipsContainer.createEl('button', {
+				cls: `sbm-filter-chip ${this.taskFilterMode === c.key ? 'is-active' : ''}`,
+				text: c.label
+			});
+			chip.addEventListener('click', async () => {
+				this.taskFilterMode = c.key;
+				await this.render();
+			});
 		});
 
 		const sectionsContainer = container.createEl('div', { cls: 'sbm-sections-wrapper' });
@@ -130,21 +167,34 @@ export class DashboardView extends ItemView {
 			return matchTitle || matchPath || matchRaw || matchTags;
 		});
 
+		const pausedTasks = filteredTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
+		const activeTasks = filteredTasks.filter(t => !t.isPaused && t.status !== 'paused');
+
+		if (this.taskFilterMode === 'paused') {
+			this.renderSection(container, `⏸️ Tâches en pause (${pausedTasks.length})`, pausedTasks, 'paused');
+			return;
+		}
+
 		const matrixAdapter = MatrixAdapterFactory.createAdapter(
 			this.plugin.settings.matrixProvider,
 			this.plugin.settings.customMatrixMapping
 		);
 
-		const mainTask = filteredTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || (t.energy && t.energy >= 6));
-		const secondaryTasks = filteredTasks.filter(t => t !== mainTask && (matrixAdapter.getQuadrant(t) === 'q2' || (t.energy && t.energy <= 5)));
-		const deadlines = filteredTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && (t.dueDate || t.scheduledDate));
-		const unclassified = filteredTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && !deadlines.includes(t));
+		const mainTask = activeTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || (t.energy && t.energy >= 6));
+		const secondaryTasks = activeTasks.filter(t => t !== mainTask && (matrixAdapter.getQuadrant(t) === 'q2' || (t.energy && t.energy <= 5)));
+		const deadlines = activeTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && (t.dueDate || t.scheduledDate));
+		const unclassified = activeTasks.filter(t => t !== mainTask && !secondaryTasks.includes(t) && !deadlines.includes(t));
 
 		this.renderSection(container, '🎯 Tâche principale', mainTask ? [mainTask] : [], 'main');
 		this.renderSection(container, '📋 Tâches secondaires', isEconomyMode ? secondaryTasks.slice(0, 1) : secondaryTasks, 'secondary');
 		this.renderSection(container, '⏰ Échéances et urgences', deadlines, 'deadlines');
 		this.renderSection(container, '❓ Tâches à qualifier (sans tag ni échéance)', unclassified, 'unclassified', true);
-		this.renderSection(container, `📑 Toutes les tâches à faire détectées (${filteredTasks.length})`, filteredTasks, 'all-todo', true);
+
+		if (pausedTasks.length > 0) {
+			this.renderSection(container, `⏸️ Tâches en pause (${pausedTasks.length})`, pausedTasks, 'paused', true);
+		}
+
+		this.renderSection(container, `📑 Toutes les tâches actives détectées (${activeTasks.length})`, activeTasks, 'all-todo', true);
 	}
 
 	private renderGamificationStatsCard(container: Element): void {
@@ -258,15 +308,22 @@ export class DashboardView extends ItemView {
 		const displayedTasks = tasks.slice(0, limit);
 
 		displayedTasks.forEach(task => {
-			const cardEl = listEl.createEl('div', { cls: 'sbm-task-card' });
+			const isPaused = Boolean(task.isPaused || task.status === 'paused');
+			const cardEl = listEl.createEl('div', { cls: `sbm-task-card ${isPaused ? 'is-paused' : ''}` });
 
 			const infoEl = cardEl.createEl('div', { cls: 'sbm-task-info' });
 
-			const titleEl = infoEl.createEl('span', { cls: 'sbm-task-title sbm-clickable-link', text: task.title });
+			const titleRow = infoEl.createEl('div', { cls: 'sbm-task-title-row' });
+			const titleEl = titleRow.createEl('span', { cls: 'sbm-task-title sbm-clickable-link', text: task.title });
 			titleEl.title = `Cliquer pour ouvrir ${task.filePath} L:${task.lineNumber}`;
 			titleEl.addEventListener('click', async () => {
 				await this.openTaskLocation(task);
 			});
+
+			if (isPaused) {
+				const pauseBadge = titleRow.createEl('span', { cls: 'sbm-task-pause-indicator', text: '⏸️ En pause' });
+				pauseBadge.title = 'Cette tâche est actuellement en pause';
+			}
 
 			const fileEl = infoEl.createEl('span', { cls: 'sbm-task-file sbm-clickable-link', text: `📄 ${task.filePath.split('/').pop()}:${task.lineNumber}` });
 			fileEl.addEventListener('click', async () => {
@@ -305,12 +362,13 @@ export class DashboardView extends ItemView {
 
 			const actionGroup = cardEl.createEl('div', { cls: 'sbm-action-group' });
 
-			const startBtn = actionGroup.createEl('button', { cls: 'sbm-action-btn start', text: '🚀 Commencer' });
-			startBtn.title = 'Passer la tâche en cours [/]';
-			startBtn.addEventListener('click', async () => {
-				await this.updateTaskStatus(task, true);
-				new Notice(`Tâche démarrée : ${task.title}`);
-				await this.render();
+			const pauseBtn = actionGroup.createEl('button', {
+				cls: `sbm-action-btn pause ${isPaused ? 'active' : ''}`,
+				text: isPaused ? '▶️ Reprendre' : '⏸️ Mettre en pause'
+			});
+			pauseBtn.title = isPaused ? 'Reprendre la tâche' : 'Mettre cette tâche en pause';
+			pauseBtn.addEventListener('click', async () => {
+				await this.togglePauseTask(task);
 			});
 
 			const completeBtn = actionGroup.createEl('button', { cls: 'sbm-action-btn complete', text: '✅ Terminer' });
@@ -435,19 +493,34 @@ export class DashboardView extends ItemView {
 		await this.render();
 	}
 
+	private async togglePauseTask(task: ObsidianTask): Promise<void> {
+		const isCurrentlyPaused = Boolean(task.isPaused || task.status === 'paused');
+		const newPaused = !isCurrentlyPaused;
+		await this.mutateTaskLine(task, (line) => TaskMutator.setPaused(line, newPaused, this.plugin.settings));
+		new Notice(newPaused ? `⏸️ Tâche mise en pause : ${task.title}` : `▶️ Tâche reprise : ${task.title}`);
+		await this.render();
+	}
+
 	private async mutateTaskLine(task: ObsidianTask, mutatorFn: (line: string) => string): Promise<void> {
 		const normalized = normalizePath(task.filePath);
 		const file = this.app.vault.getFileByPath(normalized) || this.app.vault.getAbstractFileByPath(normalized);
 		if (!(file instanceof TFile)) return;
 
 		await this.app.vault.process(file, (content) => {
-			const lines = content.split('\n');
-			const lineIdx = task.lineNumber - 1;
+			const isCRLF = content.includes('\r\n');
+			const lines = isCRLF ? content.split('\r\n') : content.split('\n');
+			let lineIdx = task.lineNumber - 1;
+
+			if (lines[lineIdx] === undefined || !lines[lineIdx].includes(task.title)) {
+				const cleanSearch = task.title.trim().toLowerCase();
+				const found = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+				if (found !== -1) lineIdx = found;
+			}
 
 			if (lines[lineIdx] !== undefined) {
 				lines[lineIdx] = mutatorFn(lines[lineIdx]);
 			}
-			return lines.join('\n');
+			return isCRLF ? lines.join('\r\n') : lines.join('\n');
 		});
 	}
 

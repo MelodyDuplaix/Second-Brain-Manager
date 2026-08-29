@@ -301,7 +301,8 @@ export class VaultContextService {
 	 */
 	public async searchTasks(filter: {
 		query?: string;
-		status?: 'todo' | 'done' | 'in-progress' | 'cancelled' | 'all';
+		status?: 'todo' | 'done' | 'in-progress' | 'cancelled' | 'paused' | 'all';
+		isPaused?: boolean;
 		dueBefore?: string;
 		quadrant?: string;
 		energyMax?: number;
@@ -349,11 +350,23 @@ export class VaultContextService {
 					continue;
 				}
 
+				// Par défaut, le LLM et les recherches régulières n'ingèrent JAMAIS les tâches en pause (sauf demande explicite)
+				const isTaskPaused = Boolean(task.isPaused || task.status === 'paused');
+				if (filter.isPaused === undefined && filter.status !== 'paused' && filter.status !== 'all') {
+					if (isTaskPaused) continue;
+				}
+
+				// Filtre explicite isPaused
+				if (filter.isPaused !== undefined) {
+					if (isTaskPaused !== filter.isPaused) continue;
+				}
+
 				// Filtre statut
 				if (filter.status && filter.status !== 'all') {
+					if (filter.status === 'paused' && !isTaskPaused) continue;
 					if (filter.status === 'done' && !task.completed && task.status !== 'done') continue;
-					if (filter.status === 'todo' && (task.completed || task.status === 'cancelled')) continue;
-					if (filter.status === 'in-progress' && task.status !== 'in-progress') continue;
+					if (filter.status === 'todo' && (task.completed || task.status === 'cancelled' || isTaskPaused)) continue;
+					if (filter.status === 'in-progress' && task.status !== 'in-progress' && task.status !== 'in_progress') continue;
 					if (filter.status === 'cancelled' && task.status !== 'cancelled') continue;
 				}
 

@@ -360,4 +360,73 @@ describe('MorningBriefingService', () => {
 		expect(messages[1].content).toContain('priorite: haute');
 		expect(messages[1].content).toContain('Finir la maquette client');
 	});
+
+	it('should suggest paused tasks ONLY when canSuggestPausedTasks is true (< 3 actionable tasks)', () => {
+		const pausedTask: ObsidianTask = {
+			title: 'Refonte du site web',
+			completed: false,
+			status: 'paused',
+			isPaused: true,
+			lineNumber: 10,
+			filePath: '01 - Projets/Web.md',
+			rawLine: '- [ ] Refonte du site web #pause',
+			indentLevel: 0
+		};
+
+		const dataWithOpportunity: BriefingVaultData = {
+			dateStr: '2026-08-29',
+			formattedDate: 'Samedi 29 Août 2026',
+			energy: 8,
+			modeText: 'Mode Plein Potentiel',
+			overdueTasks: [],
+			todayTasks: [mockTasks[1]], // Only 1 task
+			priorityTasks: [],
+			inboxTasks: [],
+			projectTasks: [],
+			pausedTasks: [pausedTask],
+			canSuggestPausedTasks: true,
+			projects: [],
+			contacts: []
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(dataWithOpportunity);
+		expect(messages[0].content).toContain('Opportunité - Tâches en Pause');
+		expect(messages[0].content).toContain('moins de 3 tâches en retard');
+		expect(messages[1].content).toContain('TACHES EN PAUSE DISPONIBLES (1 au total)');
+		expect(messages[1].content).toContain('Refonte du site web');
+	});
+
+	it('should NOT suggest paused tasks when canSuggestPausedTasks is false (>= 3 tasks)', () => {
+		const pausedTask: ObsidianTask = {
+			title: 'Refonte du site web',
+			completed: false,
+			status: 'paused',
+			isPaused: true,
+			lineNumber: 10,
+			filePath: '01 - Projets/Web.md',
+			rawLine: '- [ ] Refonte du site web #pause',
+			indentLevel: 0
+		};
+
+		const busyData: BriefingVaultData = {
+			dateStr: '2026-08-29',
+			formattedDate: 'Samedi 29 Août 2026',
+			energy: 5,
+			modeText: 'Mode Équilibré',
+			overdueTasks: [mockTasks[0]],
+			todayTasks: [mockTasks[1]],
+			priorityTasks: [mockTasks[0]],
+			inboxTasks: [mockTasks[2]],
+			projectTasks: [],
+			pausedTasks: [pausedTask],
+			canSuggestPausedTasks: false,
+			projects: [],
+			contacts: []
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(busyData);
+		expect(messages[0].content).not.toContain('Opportunité - Tâches en Pause');
+		expect(messages[1].content).not.toContain('TACHES EN PAUSE DISPONIBLES');
+		expect(messages[1].content).not.toContain('Refonte du site web');
+	});
 });

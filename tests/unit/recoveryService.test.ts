@@ -59,7 +59,7 @@ describe('RecoveryService', () => {
 		it('should format days correctly', () => {
 			const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 			const res = RecoveryService.calculateInactivity(threeDaysAgo);
-			expect(res.inactivityText).toContain('3 jour(s) de pause');
+			expect(res.inactivityText).toContain('3 jours de pause');
 			expect(res.inactivityDays).toBe(3);
 		});
 

@@ -701,14 +701,17 @@ export class ActionExecutor {
 			};
 		}
 
-		// Si la note cible est une note quotidienne (ou mentionne aujourd'hui/date) et qu'aucune date planifiée n'est spécifiée,
+		// Si la note cible est une note quotidienne et qu'aucune date planifiée n'est spécifiée,
 		// on assigne automatiquement la date de la note comme scheduledDate pour alimenter les requêtes Obsidian Tasks / Dataview
+		// UNIQUEMENT si l'utilisateur n'a pas explicitement demandé "sans date" (dueDate ou scheduledDate à null)
 		const isDailyNote = resolved.path.toLowerCase().includes('journal') ||
 			resolved.path.toLowerCase().includes('quotidienne') ||
 			/\b\d{4}-\d{2}-\d{2}\b/.test(resolved.path) ||
 			/\b\d{2}-\d{2}-\d{4}\b/.test(resolved.path);
 
-		if (isDailyNote && !proposal.scheduledDate) {
+		const isExplicitlyNoDate = (proposal as any).dueDate === null || (proposal as any).scheduledDate === null;
+
+		if (isDailyNote && !proposal.scheduledDate && !isExplicitlyNoDate && proposal.dueDate !== undefined) {
 			const isoMatch = resolved.path.match(/\b(\d{4}-\d{2}-\d{2})\b/);
 			const frMatch = resolved.path.match(/\b(\d{2}-\d{2}-\d{4})\b/);
 			if (isoMatch) {
@@ -727,10 +730,10 @@ export class ActionExecutor {
 		if (proposal.dueDate) {
 			taskLine = TaskMutator.setDueDate(taskLine, proposal.dueDate, this.settings);
 		}
-		if (proposal.scheduledDate) {
+		if (proposal.scheduledDate && !isExplicitlyNoDate) {
 			taskLine = TaskMutator.setScheduledDate(taskLine, proposal.scheduledDate, this.settings);
 		}
-		if (proposal.startDate) {
+		if (proposal.startDate && !isExplicitlyNoDate) {
 			taskLine = TaskMutator.setStartDate(taskLine, proposal.startDate, this.settings);
 		}
 		if (proposal.priority) {
@@ -822,7 +825,11 @@ export class ActionExecutor {
 					}
 				}
 				if (proposal.newDueDate !== undefined) {
-					line = TaskMutator.setDueDate(line, proposal.newDueDate, this.settings);
+					if (proposal.newDueDate === null) {
+						line = TaskMutator.removeAllDates(line, this.settings);
+					} else {
+						line = TaskMutator.setDueDate(line, proposal.newDueDate, this.settings);
+					}
 				}
 				if ((proposal as any).newScheduledDate !== undefined) {
 					line = TaskMutator.setScheduledDate(line, (proposal as any).newScheduledDate, this.settings);

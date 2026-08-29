@@ -53,20 +53,27 @@ export class TaskCardWidget {
 		});
 		dueBadge.title = 'Cliquer pour modifier la date d\'échéance';
 		dueBadge.addEventListener('click', (e) => {
-			const current = task.dueDate || today;
+			const current = task.dueDate || '';
 			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {
 				title: 'Échéance',
 				type: 'date',
 				initialValue: current,
 				onSubmit: async (val) => {
 					const newDate = val.trim() || null;
-					await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
-						TaskMutator.setDueDate(line, newDate, plugin.settings)
-					);
+					await TaskCardWidget.mutateTaskLine(plugin, task, (line) => {
+						if (!newDate) {
+							return TaskMutator.removeAllDates(line, plugin.settings);
+						}
+						return TaskMutator.setDueDate(line, newDate, plugin.settings);
+					});
 					task.dueDate = newDate || undefined;
+					if (!newDate) {
+						task.scheduledDate = undefined;
+						task.startDate = undefined;
+					}
 					dueBadge.setText(newDate ? `📅 ${newDate}` : '+ 📅 Date');
 					dueBadge.toggleClass('is-overdue', Boolean(newDate && newDate < today && !task.completed));
-					newNotice(`Échéance mise à jour : ${task.title}`);
+					newNotice(newDate ? `Échéance mise à jour : ${task.title}` : `Échéance supprimée : ${task.title}`);
 					if (onTaskUpdated) onTaskUpdated();
 				}
 			});
@@ -188,41 +195,38 @@ export class TaskCardWidget {
 		// 3. Barre d'actions rapides
 		const actionsRow = cardEl.createDiv({ cls: 'sbm-chat-task-actions' });
 
-		// Bouton Commencer [/]
-		const startBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn start', text: '🚀 Commencer' });
-		startBtn.title = 'Passer la tâche en cours [/] ou la remettre à faire';
-
-		if (task.status === 'in_progress') {
-			cardEl.addClass('is-in-progress');
-			checkbox.indeterminate = true;
-			startBtn.setText('⏳ En cours');
-			startBtn.addClass('active');
+		// Bouton Pause / Reprendre (remplace Commencer)
+		const isPaused = Boolean(task.isPaused || task.status === 'paused');
+		const pauseBtn = actionsRow.createEl('button', {
+			cls: `sbm-chat-task-btn pause ${isPaused ? 'active' : ''}`,
+			text: isPaused ? '▶️ Reprendre' : '⏸️ Mettre en pause'
+		});
+		if (isPaused) {
+			cardEl.addClass('is-paused');
 		}
-
-		startBtn.addEventListener('click', async () => {
-			const isAlreadyInProgress = task.status === 'in_progress';
-			const newStatus = isAlreadyInProgress ? 'todo' : 'in_progress';
+		pauseBtn.title = 'Mettre cette tâche en pause ou la reprendre';
+		pauseBtn.addEventListener('click', async () => {
+			const currentlyPaused = Boolean(task.isPaused || task.status === 'paused');
+			const newPaused = !currentlyPaused;
 
 			await TaskCardWidget.mutateTaskLine(plugin, task, (line) =>
-				TaskMutator.setStatus(line, newStatus, plugin.settings)
+				TaskMutator.setPaused(line, newPaused, plugin.settings)
 			);
-			task.status = newStatus;
-			task.completed = false;
-			checkbox.checked = false;
+			task.isPaused = newPaused;
+			task.status = newPaused ? 'paused' : 'todo';
 
-			if (newStatus === 'in_progress') {
-				cardEl.addClass('is-in-progress');
-				cardEl.removeClass('is-completed');
-				checkbox.indeterminate = true;
-				startBtn.setText('⏳ En cours');
-				startBtn.addClass('active');
-				newNotice(`🚀 Tâche passée en cours [/] : ${task.title}`);
-			} else {
+			if (newPaused) {
+				cardEl.addClass('is-paused');
 				cardEl.removeClass('is-in-progress');
+				pauseBtn.setText('▶️ Reprendre');
+				pauseBtn.addClass('active');
 				checkbox.indeterminate = false;
-				startBtn.setText('🚀 Commencer');
-				startBtn.removeClass('active');
-				newNotice(`Tâche remise à faire [ ] : ${task.title}`);
+				newNotice(`⏸️ Tâche mise en pause : ${task.title}`);
+			} else {
+				cardEl.removeClass('is-paused');
+				pauseBtn.setText('⏸️ Mettre en pause');
+				pauseBtn.removeClass('active');
+				newNotice(`▶️ Tâche reprise : ${task.title}`);
 			}
 			if (onTaskUpdated) onTaskUpdated();
 		});
@@ -236,8 +240,6 @@ export class TaskCardWidget {
 			checkbox.indeterminate = false;
 			cardEl.addClass('is-completed');
 			cardEl.removeClass('is-in-progress');
-			startBtn.setText('🚀 Commencer');
-			startBtn.removeClass('active');
 			if (onTaskUpdated) onTaskUpdated();
 		});
 
@@ -275,8 +277,6 @@ export class TaskCardWidget {
 			if (isDone) {
 				cardEl.removeClass('is-in-progress');
 				checkbox.indeterminate = false;
-				startBtn.setText('🚀 Commencer');
-				startBtn.removeClass('active');
 			}
 			if (onTaskUpdated) onTaskUpdated();
 		});
@@ -306,12 +306,18 @@ export class TaskCardWidget {
 		const file = plugin.app.vault.getFileByPath(normalized) || plugin.app.vault.getAbstractFileByPath(normalized);
 		if (file instanceof TFile) {
 			await plugin.app.vault.process(file, (content) => {
-				const lines = content.split('\n');
-				const idx = task.lineNumber - 1;
+				const isCRLF = content.includes('\r\n');
+				const lines = isCRLF ? content.split('\r\n') : content.split('\n');
+				let idx = task.lineNumber - 1;
+				if (lines[idx] === undefined || !lines[idx].includes(task.title)) {
+					const cleanSearch = task.title.trim().toLowerCase();
+					const found = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+					if (found !== -1) idx = found;
+				}
 				if (lines[idx] !== undefined) {
 					lines[idx] = mutator(lines[idx]);
 				}
-				return lines.join('\n');
+				return isCRLF ? lines.join('\r\n') : lines.join('\n');
 			});
 		}
 	}
@@ -321,12 +327,18 @@ export class TaskCardWidget {
 		const file = plugin.app.vault.getFileByPath(normalized) || plugin.app.vault.getAbstractFileByPath(normalized);
 		if (file instanceof TFile) {
 			await plugin.app.vault.process(file, (content) => {
-				const lines = content.split('\n');
-				const idx = task.lineNumber - 1;
+				const isCRLF = content.includes('\r\n');
+				const lines = isCRLF ? content.split('\r\n') : content.split('\n');
+				let idx = task.lineNumber - 1;
+				if (lines[idx] === undefined || !lines[idx].includes(task.title)) {
+					const cleanSearch = task.title.trim().toLowerCase();
+					const found = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+					if (found !== -1) idx = found;
+				}
 				if (lines[idx] !== undefined) {
 					lines[idx] = TaskMutator.setCompleted(lines[idx], completed, undefined, plugin.settings);
 				}
-				return lines.join('\n');
+				return isCRLF ? lines.join('\r\n') : lines.join('\n');
 			});
 			task.completed = completed;
 			task.status = completed ? 'done' : 'todo';

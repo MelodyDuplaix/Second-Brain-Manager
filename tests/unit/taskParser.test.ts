@@ -172,5 +172,25 @@ Voici comment écrire une tâche :
 		expect(task?.energy).toBe(3);
 		expect(task?.domainTags).toEqual(['#projet', '#travail']);
 	});
+
+	it('should parse task as paused when tag #pause is present in tag mode', () => {
+		const line = '- [ ] Recontacter le client 📅 2026-08-30 #pause';
+		const task = TaskParser.parseLine(line, 'Clients.md', 1, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'tag', pauseTag: 'pause' });
+
+		expect(task).not.toBeNull();
+		expect(task?.isPaused).toBe(true);
+		expect(task?.status).toBe('paused');
+		expect(task?.completed).toBe(false);
+	});
+
+	it('should parse task as paused when status character is [?] or [p] in status mode', () => {
+		const line = '- [?] Mettre à jour l\'infrastructure 📅 2026-09-01';
+		const task = TaskParser.parseLine(line, 'Infra.md', 1, { ...DEFAULT_SYNTAX_CONFIG, pauseMode: 'status', pauseStatusSymbol: '?' });
+
+		expect(task).not.toBeNull();
+		expect(task?.isPaused).toBe(true);
+		expect(task?.status).toBe('paused');
+		expect(task?.completed).toBe(false);
+	});
 });
 

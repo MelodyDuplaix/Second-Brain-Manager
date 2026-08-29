@@ -47,13 +47,61 @@ export class InlineMetaPopover {
 			});
 		} else {
 			const form = popover.createEl('form', { cls: 'sbm-popover-form' });
-			const input = form.createEl('input', { type: config.type === 'date' ? 'date' : 'number' });
+
+			if (config.type === 'date') {
+				const quickRow = form.createEl('div', { cls: 'sbm-popover-quick-dates' });
+				const todayStr = new Date().toISOString().split('T')[0];
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+				const addQuickBtn = (label: string, val: string) => {
+					const btn = quickRow.createEl('button', {
+						type: 'button',
+						cls: 'sbm-popover-quick-btn',
+						text: label
+					});
+					btn.addEventListener('click', (e) => {
+						e.preventDefault();
+						this.close();
+						config.onSubmit(val);
+					});
+				};
+
+				addQuickBtn('Aujourd\'hui', todayStr);
+				addQuickBtn('Demain', tomorrowStr);
+			}
+
+			const input = form.createEl('input', { 
+				type: config.type === 'date' ? 'date' : 'number',
+				cls: 'sbm-popover-input'
+			});
 			input.value = config.initialValue;
 
 			if (config.min !== undefined) input.min = config.min.toString();
 			if (config.max !== undefined) input.max = config.max.toString();
 
-			form.createEl('button', { type: 'submit', text: 'OK' });
+			const buttonsRow = form.createEl('div', { cls: 'sbm-popover-buttons-row' });
+
+			buttonsRow.createEl('button', {
+				type: 'submit',
+				cls: 'sbm-popover-submit-btn mod-cta',
+				text: 'OK'
+			});
+
+			if (config.type === 'date') {
+				const clearBtn = buttonsRow.createEl('button', {
+					type: 'button',
+					cls: 'sbm-popover-clear-btn',
+					text: '🧹 Sans date'
+				});
+				clearBtn.title = 'Supprimer l\'échéance';
+				clearBtn.addEventListener('click', (e) => {
+					e.preventDefault();
+					this.close();
+					config.onSubmit('');
+				});
+			}
 
 			form.addEventListener('submit', (e) => {
 				e.preventDefault();

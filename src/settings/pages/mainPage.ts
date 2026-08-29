@@ -349,7 +349,63 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		// 5. Matrice Eisenhower
+		// 7. Gestion des Tâches en Pause (On Hold)
+		const pauseGroup = new SettingGroup(this.containerEl).setHeading('Mise en pause des tâches (On Hold)');
+		
+		pauseGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Mode de mise en pause')
+				.setDesc('Choisissez comment marquer une tâche mise en pause dans vos notes Markdown : via un tag dédié (#pause) ou via un symbole de statut de tâche Obsidian Tasks (- [?], - [p]).')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('tag', '🏷️ Tag dédié (ex: #pause)')
+						.addOption('status', '🔣 Symbole de statut Markdown (ex: - [?], - [p])')
+						.setValue(this.plugin.settings.pauseMode || 'tag')
+						.onChange(async (value: 'tag' | 'status') => {
+							this.plugin.settings.pauseMode = value;
+							await this.plugin.saveSettings();
+							this.render();
+						});
+				});
+		});
+
+		if (this.plugin.settings.pauseMode === 'tag') {
+			pauseGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Tag utilisé pour la pause')
+					.setDesc('Nom du tag ajouté aux tâches en pause (ex: pause -> #pause, en-pause -> #en-pause, on-hold -> #on-hold).')
+					.addText((text) => {
+						text
+							.setPlaceholder('pause')
+							.setValue(this.plugin.settings.pauseTag || 'pause')
+							.onChange(async (value) => {
+								this.plugin.settings.pauseTag = value.trim().replace(/^#/, '') || 'pause';
+								await this.plugin.saveSettings();
+							});
+					});
+			});
+		} else {
+			pauseGroup.addSetting((setting: Setting) => {
+				setting
+					.setName('Symbole de statut Markdown pour la pause')
+					.setDesc('Caractère placé entre crochets dans la checkbox pour indiquer la pause (ex: ? pour - [?], p pour - [p]). Compatible avec Obsidian Tasks.')
+					.addText((text) => {
+						text
+							.setPlaceholder('?')
+							.setValue(this.plugin.settings.pauseStatusSymbol || '?')
+							.onChange(async (value) => {
+								const sym = value.trim() || '?';
+								this.plugin.settings.pauseStatusSymbol = sym;
+								if (!this.plugin.settings.statusSymbols.includes(sym)) {
+									this.plugin.settings.statusSymbols.push(sym);
+								}
+								await this.plugin.saveSettings();
+							});
+					});
+			});
+		}
+
+		// 8. Matrice Eisenhower
 		const matrixGroup = new SettingGroup(this.containerEl).setHeading('Matrice Eisenhower');
 		matrixGroup.addSetting((setting: Setting) => {
 			setting
