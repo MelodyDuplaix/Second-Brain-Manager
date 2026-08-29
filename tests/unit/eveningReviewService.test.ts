@@ -62,7 +62,7 @@ describe('EveningReviewService', () => {
 		expect(messages).toHaveLength(2);
 		expect(messages[0].role).toBe('system');
 		expect(messages[0].content).toContain('Revue du Soir');
-		expect(messages[0].content).toContain('Bienveillant');
+		expect(messages[0].content).toContain('Bilan de la Journée');
 
 		expect(messages[1].role).toBe('user');
 		expect(messages[1].content).toContain('Lundi 24 Août 2026');

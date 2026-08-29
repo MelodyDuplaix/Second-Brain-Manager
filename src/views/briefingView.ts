@@ -484,7 +484,7 @@ export class BriefingView extends ItemView {
 				infoBox.createSpan({ cls: 'sbm-clutter-title', text: '🧹 Mode Reprise & Décongestion activé (Tri Large)' });
 				infoBox.createSpan({
 					cls: 'sbm-clutter-desc',
-					text: `${result.data.overdueTasks.length} tâches en retard et ${result.data.inboxNotePreviews.length} notes non classées détectées (${result.data.inactivityText}). Un tri large et déculpabilisant a été préparé ci-dessous.`
+					text: `${result.data.overdueTasks.length} tâches en retard et ${result.data.inboxNotePreviews.length} notes non classées détectées (${result.data.inactivityText}). Un plan de tri et d'organisation complet a été préparé ci-dessous.`
 				});
 			}
 

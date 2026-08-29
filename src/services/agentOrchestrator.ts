@@ -136,8 +136,8 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 
 2. CONSULTATION VS MODIFICATION (RÈGLE IMPORTANTE) :
    - Pour les demandes d'information ou de planning (ex: "Quel est mon planning ?", "Qu'est-ce qui est en retard ?", "Résume mes priorités") :
-     -> Réponds de façon claire, bienveillante et structurée en Markdown.
-     -> Présente les tâches en respectant scrupuleusement le format configuré :
+      -> Réponds de façon claire, sobre, directe et structurée en Markdown.
+      -> Présente les tâches en respectant scrupuleusement le format configuré :
 ${taskSyntaxDocs}
      -> NE PROPOSE PAS de modifications/créations d'actions (\`propose_create_task\`, \`propose_update_task\`) SAUF si l'utilisateur a explicitement demandé de modifier, replanifier ou créer.
    - Ne génère des propositions d'actions d'écriture (\`propose_create_note\`, \`propose_create_task\`, \`propose_update_task\`, \`propose_decompose_task\`, \`propose_link_notes\`) QUE si :
@@ -294,7 +294,7 @@ ${toolDocs}`;
 				readResults.push(`Résultat de ${call.name}(${JSON.stringify(call.arguments)}) :\n${res.output}`);
 			}
 
-			const toolFeedbackMessage = `Résultats des recherches dans le coffre :\n\n${readResults.join('\n\n')}\n\nDonne maintenant ta réponse finale complète et bienveillante en Markdown à l'utilisateur, et ajoute si pertinent les propositions d'actions d'écriture (propose_create_note, propose_create_task...).`;
+			const toolFeedbackMessage = `Résultats des recherches dans le coffre :\n\n${readResults.join('\n\n')}\n\nDonne maintenant ta réponse finale complète, sobre et structurée en Markdown à l'utilisateur, et ajoute si pertinent les propositions d'actions d'écriture (propose_create_note, propose_create_task...).`;
 
 			messages.push({ role: 'user', content: toolFeedbackMessage });
 		}

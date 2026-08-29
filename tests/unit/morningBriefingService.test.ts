@@ -274,8 +274,8 @@ describe('MorningBriefingService', () => {
 		const messages = MorningBriefingService.buildBriefingMessages(data);
 
 		expect(messages).toHaveLength(2);
-		expect(messages[0].content).toContain('Mode Reprise & Décongestion Large');
-		expect(messages[0].content).toContain('TRI LARGE et EXHAUSTIF');
+		expect(messages[0].content).toContain('plan de tri et d\'organisation exhaustif');
+		expect(messages[0].content).toContain('Plan de Tri & d\'Organisation');
 		expect(messages[1].content).toContain('THE ONE THING');
 		expect(messages[1].content).toContain('QUICK WINS DISPONIBLES');
 		expect(messages[1].content).toContain('Reprise après 5 jour(s) de pause');
