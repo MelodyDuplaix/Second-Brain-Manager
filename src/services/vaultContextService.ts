@@ -23,12 +23,15 @@ export interface NoteConnections {
 	tags: string[];
 }
 
+import { TemplateService, TemplateInfo, TemplateDetails } from './templateService';
+
 export interface VaultStructureSummary {
 	folders: string[];
 	projects: string[];
 	contacts: string[];
 	domains: string[];
 	inboxFiles: string[];
+	templates: string[];
 	totalMarkdownFiles: number;
 }
 
@@ -828,12 +831,15 @@ export class VaultContextService {
 			}
 		}
 
+		const templates = TemplateService.listTemplates(this.app, this.settings).map(t => t.name);
+
 		return {
 			folders: folders.sort(),
 			projects: Array.from(new Set(projects)).sort(),
 			contacts: Array.from(new Set(contacts)).sort(),
 			domains: Array.from(new Set(domains)).sort(),
 			inboxFiles: Array.from(new Set(inboxFiles)).sort(),
+			templates: Array.from(new Set(templates)).sort(),
 			totalMarkdownFiles
 		};
 	}
@@ -979,6 +985,20 @@ export class VaultContextService {
 			console.warn('[Second Brain Manager] Erreur lors de l\'exécution de la commande Obsidian:', err);
 			return { success: false, error: String(err) };
 		}
+	}
+
+	/**
+	 * Liste les modèles et templates disponibles dans le coffre.
+	 */
+	public listTemplates(query?: string): TemplateInfo[] {
+		return TemplateService.listTemplates(this.app, this.settings, query);
+	}
+
+	/**
+	 * Lit le contenu d'un modèle et extrait ses placeholders.
+	 */
+	public async readTemplate(templateNameOrPath: string): Promise<TemplateDetails | null> {
+		return TemplateService.readTemplate(this.app, this.settings, templateNameOrPath);
 	}
 }
 

@@ -28,6 +28,8 @@ export interface CreateNoteActionProposal extends BaseActionProposal {
 	folder: string;
 	fileName: string;
 	content: string;
+	templateName?: string;
+	variables?: Record<string, string>;
 	tags?: string[];
 	frontmatter?: Record<string, unknown>;
 }

@@ -513,6 +513,31 @@ scheduled today
 		expect(results[1].success).toBe(true);
 		expect(executedCmd).toBe('app:open-daily-note');
 	});
+
+	it('should execute create_note with template and render placeholders', async () => {
+		createdFiles['Templates/Personne.md'] = '# {{title}}\n- Société : {{societe}}\n- Rôle : {{role}}\n';
+
+		const tplProp: CreateNoteActionProposal = {
+			id: 'act-create-tpl',
+			type: 'create_note',
+			description: 'Créer contact Claire',
+			selected: true,
+			folder: '03 - Contacts',
+			fileName: 'Claire Dupont',
+			content: '',
+			templateName: 'Personne',
+			variables: {
+				societe: 'Initech',
+				role: 'VP Sales'
+			}
+		};
+
+		const results = await executor.executeProposals([tplProp]);
+		expect(results[0].success).toBe(true);
+		expect(createdFiles['03 - Contacts/Claire Dupont.md']).toContain('# Claire Dupont');
+		expect(createdFiles['03 - Contacts/Claire Dupont.md']).toContain('- Société : Initech');
+		expect(createdFiles['03 - Contacts/Claire Dupont.md']).toContain('- Rôle : VP Sales');
+	});
 });
 
 

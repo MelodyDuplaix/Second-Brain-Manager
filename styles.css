@@ -5882,3 +5882,59 @@ textarea.sbm-chat-textarea:focus {
 	box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb, 100, 100, 255), 0.2);
 }
 
+/* ==========================================================================
+   Second Brain Manager - Groupes de Réglages & Organisation Visuelle
+   ========================================================================== */
+.sbm-setting-group {
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l, 10px);
+	padding: 16px 20px 8px 20px;
+	margin-bottom: 24px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+	transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sbm-setting-group:hover {
+	border-color: var(--background-modifier-border-hover, var(--interactive-accent));
+}
+
+.sbm-setting-group .setting-item-heading {
+	padding-top: 0;
+	border-top: none;
+	margin-bottom: 12px;
+}
+
+.sbm-setting-group .setting-item-heading .setting-item-name {
+	font-size: var(--font-ui-medium, 16px);
+	font-weight: 600;
+	color: var(--text-normal);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-group-heading-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--interactive-accent);
+	width: 20px;
+	height: 20px;
+}
+
+.sbm-group-heading-icon svg {
+	width: 18px;
+	height: 18px;
+}
+
+.sbm-setting-group .setting-item {
+	border-top: 1px solid var(--background-modifier-border-focus, rgba(255, 255, 255, 0.05));
+	padding: 14px 0;
+}
+
+.sbm-setting-group .setting-item:first-of-type {
+	border-top: none;
+}
+
+

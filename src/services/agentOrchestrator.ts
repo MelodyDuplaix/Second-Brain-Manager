@@ -125,11 +125,12 @@ CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Format de priorité matrice : ${this.settings.matrixProvider}
 - Projets existants : ${structure.projects.slice(0, 20).join(', ') || 'Aucun'}
 - Contacts existants : ${structure.contacts.slice(0, 20).join(', ') || 'Aucun'}
-- Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}${customInstructionsText}
+- Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}
+- Modèles & Templates disponibles : ${structure.templates?.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}${customInstructionsText}
 
 COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 1. RECHERCHE D'INFORMATIONS :
-   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact, emplacement d'un projet), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`, \`search_calendar_events\`).
+   - Si la question nécessite des données du coffre (planning du jour, tâches en retard, résumé d'une note, profil d'un contact, emplacement d'un projet), émets d'abord un bloc JSON d'outils de lecture (\`search_vault\`, \`search_tasks\`, \`read_note\`, \`get_note_connections\`, \`list_templates\`, \`read_template\`, \`search_calendar_events\`).
    - Pour toute question relative à l'agenda, au planning, aux rendez-vous ou à la journée :
      -> Appelle TOUJOURS \`search_calendar_events\` SANS spécifier de \`calendarId\` (pour interroger automatiquement TOUS les agendas configurés : principal, secondaires, partagés).
      -> ATTENTION CRITIQUE SUR LES ÉVÉNEMENTS MULTI-JOURS : Tout événement étalé sur plusieurs jours dont la période couvre la date demandée (ex: débuté il y a quelques jours et se terminant aujourd'hui ou plus tard) est un événement TOTALEMENT EN COURS ET ACTIF aujourd'hui ! Il ne faut JAMAIS le considérer comme passé sous prétexte que sa date de début est antérieure à aujourd'hui.
@@ -190,6 +191,11 @@ ${taskSyntaxDocs}
    - Si l'utilisateur demande d'exécuter une action Obsidian ou de lancer une commande (ex: "Ouvre la vue graphique", "Bascule la barre latérale", "Active le mode source", "Lance la commande X") :
      -> Si l'identifiant exact de la commande est connu (ex: "app:open-daily-note", "workspace:toggle-left-sidebar", "graph:open", "editor:toggle-source"), appelle directement \`execute_command\`.
      -> Si l'identifiant précis est incertain ou dépend de plugins tiers, appelle \`search_commands\` avec un mot-clé pour obtenir la liste des commandes et leur identifiant exact, puis \`execute_command\`.
+
+12. CRÉATION DE NOTES SELON MODÈLES & TEMPLATES (Obsidian, Templater, QuickAdd) :
+   - Si l'utilisateur demande de créer une note en suivant un modèle ou template (ex: "crée la note de Claire selon le template personne", "crée le projet X avec le modèle projet") :
+     -> Utilise la liste des modèles disponibles ci-dessus ou appelle \`read_template\` pour analyser son format, ses titres et ses placeholders.
+     -> Appelle \`propose_create_note\` en spécifiant le \`templateName\` (ex: "personne", "projet"), le nom de fichier, le dossier cible et le contenu structuré correspondant.
 
 FORMAT DES APPELS D'OUTILS (Ne place AUCUN texte superflu avant le bloc JSON si tu n'as pas encore cherché les infos) :
 \`\`\`json

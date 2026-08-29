@@ -171,17 +171,41 @@ export class ToolRegistry {
 				required: ['commandId']
 			}
 		},
+		{
+			name: 'list_templates',
+			description: 'Liste les modèles et templates disponibles dans le coffre (Obsidian Templates, Templater, QuickAdd) pour créer des notes structurées (fiches personnes, projets, réunions, etc.).',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: { type: 'string', description: 'Terme de recherche optionnel pour filtrer les modèles par nom (ex: "personne", "projet", "reunion").' }
+				},
+				required: []
+			}
+		},
+		{
+			name: 'read_template',
+			description: 'Lit le contenu brut, la structure et les variables/placeholders d\'un modèle ou template spécifique.',
+			parameters: {
+				type: 'object',
+				properties: {
+					templateName: { type: 'string', description: 'Nom ou chemin du modèle à lire (ex: "personne", "fiche contact", "Templates/Projet.md").' }
+				},
+				required: ['templateName']
+			}
+		},
 
 		// 2. Outils de Proposition d'Écriture (soumis à validation utilisateur)
 		{
 			name: 'propose_create_note',
-			description: 'Propose la création d\'une nouvelle note (ex: fiche contact dans "03 - Contacts", compte-rendu, etc.).',
+			description: 'Propose la création d\'une nouvelle note (ex: fiche contact dans "03 - Contacts", compte-rendu, etc.), avec possibilité d\'appliquer un modèle / template (Obsidian, Templater, QuickAdd).',
 			parameters: {
 				type: 'object',
 				properties: {
 					folder: { type: 'string', description: 'Dossier cible (ex: "03 - Contacts", "01 - Projets", "00 - Inbox").' },
 					fileName: { type: 'string', description: 'Nom du fichier sans ou avec extension .md (ex: "Claire Dupont").' },
-					content: { type: 'string', description: 'Contenu Markdown complet de la note.' },
+					content: { type: 'string', description: 'Contenu Markdown complet de la note (peut être structuré selon le template lu).' },
+					templateName: { type: 'string', description: 'Nom ou chemin optionnel d\'un modèle / template à appliquer (ex: "personne", "projet", "Templates/Contact.md").' },
+					variables: { type: 'object', description: 'Variables clé-valeur optionnelles pour compléter les placeholders du template.' },
 					tags: { type: 'array', description: 'Tags à ajouter à la note.', items: { type: 'string' } }
 				},
 				required: ['folder', 'fileName', 'content']
@@ -450,6 +474,31 @@ export class ToolRegistry {
 				return { output: JSON.stringify(res, null, 2) };
 			}
 
+			case 'list_templates': {
+				const query = args.query ? String(args.query) : undefined;
+				const templates = this.vaultContext.listTemplates(query);
+				if (templates.length === 0) {
+					return { output: `Aucun modèle/template trouvé${query ? ` pour "${query}"` : ''} dans le coffre.` };
+				}
+				const lines = templates.map(t => `- **${t.name}** (Chemin: \`${t.path}\`)`);
+				return { output: `Modèles / Templates disponibles (${templates.length}) :\n${lines.join('\n')}` };
+			}
+
+			case 'read_template': {
+				const templateName = String(args.templateName || args.name || '');
+				if (!templateName) return { output: 'Erreur: Veuillez spécifier le nom ou le chemin du modèle à lire.' };
+				const tpl = await this.vaultContext.readTemplate(templateName);
+				if (!tpl) {
+					return { output: `Modèle introuvable pour "${templateName}". Utilisez list_templates pour voir les modèles disponibles.` };
+				}
+				return { output: JSON.stringify({
+					name: tpl.name,
+					path: tpl.path,
+					placeholders: tpl.placeholders,
+					content: tpl.content
+				}, null, 2) };
+			}
+
 			case 'list_calendars': {
 				if (!this.settings || !this.settings.googleRefreshToken) {
 					return {
@@ -618,22 +667,28 @@ export class ToolRegistry {
 				const fileName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
 				const targetPath = normalizePath(`${folder}/${fileName}`);
 				const content = String(args.content || '');
+				const templateName = args.templateName ? String(args.templateName) : undefined;
+				const variables = (args.variables && typeof args.variables === 'object') ? args.variables as Record<string, string> : undefined;
 				const tags = Array.isArray(args.tags) ? args.tags.map(String) : undefined;
+
+				const templateLabel = templateName ? ` (Modèle: ${templateName})` : '';
 
 				const proposal: ActionProposal = {
 					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
 					type: 'create_note',
-					description: `📄 Créer la note "${fileName}" dans "${folder}"`,
+					description: `📄 Créer la note "${fileName}" dans "${folder}"${templateLabel}`,
 					selected: true,
 					targetPath,
 					folder,
 					fileName,
 					content,
+					templateName,
+					variables,
 					tags
 				};
 
 				return {
-					output: `Proposition de création enregistrée pour "${targetPath}".`,
+					output: `Proposition de création enregistrée pour "${targetPath}"${templateLabel}.`,
 					actionProposals: [proposal]
 				};
 			}

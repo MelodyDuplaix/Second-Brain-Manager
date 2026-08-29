@@ -152,6 +152,28 @@ describe('ToolRegistry', () => {
 		expect((cmdPropRes.actionProposals?.[0] as any).commandId).toBe('app:open-daily-note');
 	});
 
+	it('should handle list_templates and read_template via tool registry', async () => {
+		const listRes = await registry.executeTool({
+			name: 'list_templates',
+			arguments: {}
+		});
+		expect(listRes.output).toBeDefined();
+
+		const propRes = await registry.executeTool({
+			name: 'propose_create_note',
+			arguments: {
+				folder: '03 - Contacts',
+				fileName: 'Claire Dupont',
+				content: '# Claire Dupont',
+				templateName: 'Personne',
+				variables: { societe: 'Acme' }
+			}
+		});
+		expect(propRes.actionProposals).toHaveLength(1);
+		expect((propRes.actionProposals?.[0] as any).templateName).toBe('Personne');
+		expect((propRes.actionProposals?.[0] as any).variables?.societe).toBe('Acme');
+	});
+
 	it('should handle list_calendars and search_calendar_events gracefully when disconnected', async () => {
 		const listRes = await registry.executeTool({
 			name: 'list_calendars',

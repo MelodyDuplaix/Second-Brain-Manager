@@ -12,6 +12,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
 import { GoogleCalendarService } from './googleCalendarService';
 import { VaultContextService, normalizeCanonicalKey, isTFile } from './vaultContextService';
+import { TemplateService } from './templateService';
 import { SecondBrainSettings } from '../main';
 
 export class ActionExecutor {
@@ -399,20 +400,50 @@ export class ActionExecutor {
 					targetPath = `${this.settings.inboxFolder || '00 - Boîte de réception'}/${proposal.description || 'Nouvelle note'}`;
 				}
 
-				let fullContent = typeof proposal.content === 'string' ? proposal.content : '';
 				const rawFileName = fileName || targetPath.split('/').pop()?.replace(/\.md$/, '') || 'Nouvelle note';
+				const expectedBase = rawFileName.replace(/[\\:*?"<>|#^[\]]/g, '').replace(/\.md$/, '').trim();
+				const expectedBaseKey = normalizeCanonicalKey(expectedBase);
+				const titleHeading = expectedBase || rawFileName.replace(/\.md$/, '');
+
+				let fullContent = typeof proposal.content === 'string' ? proposal.content : '';
+				let rawTemplate = '';
+
+				// Application d'un modèle / template si spécifié
+				if (proposal.templateName) {
+					const tplDetails = await TemplateService.readTemplate(this.app, this.settings, proposal.templateName);
+					if (tplDetails) {
+						rawTemplate = tplDetails.content;
+						const renderedTpl = TemplateService.renderTemplate(rawTemplate, {
+							title: titleHeading,
+							folder: folder || this.settings.inboxFolder || '00 - Boîte de réception',
+							variables: proposal.variables,
+							frontmatter: proposal.frontmatter
+						}, this.app);
+
+						if (!fullContent.trim()) {
+							fullContent = renderedTpl;
+						} else {
+							// Si l'IA a fourni un contenu spécifique, on s'assure que les placeholders résiduels sont également rendus
+							fullContent = TemplateService.renderTemplate(fullContent, {
+								title: titleHeading,
+								folder: folder || this.settings.inboxFolder || '00 - Boîte de réception',
+								variables: proposal.variables,
+								frontmatter: proposal.frontmatter
+							}, this.app);
+						}
+					}
+				}
+
 				if (!fullContent.trim()) {
-					const titleHeading = rawFileName.replace(/\.md$/, '');
 					fullContent = `# ${titleHeading}\n\n${proposal.description ? `> ${proposal.description}\n\n` : ''}`;
 				}
 
 				if (proposal.tags && proposal.tags.length > 0) {
 					const tagsHeader = proposal.tags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
-					fullContent = `${tagsHeader}\n\n${fullContent}`;
+					if (!fullContent.includes(tagsHeader)) {
+						fullContent = `${tagsHeader}\n\n${fullContent}`;
+					}
 				}
-
-				const expectedBase = rawFileName.replace(/[\\:*?"<>|#^[\]]/g, '').replace(/\.md$/, '').trim();
-				const expectedBaseKey = normalizeCanonicalKey(expectedBase);
 
 				const resolved = await this.resolveTargetFile(targetPath, {
 					createIfMissing: true,
@@ -441,12 +472,19 @@ export class ActionExecutor {
 					}
 					const forcedPath = normalizePath(`${normFolder}/${expectedBase}.md`);
 					const createdNew = await this.app.vault.create(forcedPath, fullContent);
+					if (rawTemplate) {
+						await TemplateService.executeTemplaterIfAvailable(this.app, createdNew, rawTemplate);
+					}
 					return {
 						proposalId: proposal.id,
 						success: true,
 						message: `Note "[[${createdNew.basename}]]" créée avec succès dans "${createdNew.parent?.path || ''}".`,
 						createdOrModifiedPath: forcedPath
 					};
+				}
+
+				if (rawTemplate && file) {
+					await TemplateService.executeTemplaterIfAvailable(this.app, file, rawTemplate);
 				}
 
 				if (!resolved.created) {

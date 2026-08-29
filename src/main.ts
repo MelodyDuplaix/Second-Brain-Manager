@@ -22,6 +22,7 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	matrixProvider: 'focus-first' | 'task-matrix' | 'quad-tasks' | '4d-matrix' | 'custom';
 	customMatrixMapping: CustomMatrixTagMapping;
 	inboxFolder: string;
+	templatesFolder: string;
 	dailyNotesFolder: string;
 	dailyNoteTemplatePath: string;
 	autoOpenDailyNoteOnBriefing: boolean;
@@ -69,6 +70,7 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 		q4Tag: '#q4',
 	},
 	inboxFolder: '00 - Inbox',
+	templatesFolder: 'Templates',
 	dailyNotesFolder: '04 - Journal',
 	dailyNoteTemplatePath: '',
 	autoOpenDailyNoteOnBriefing: true,
