@@ -26,6 +26,8 @@ export class BriefingView extends ItemView {
 	private selectedEnergy = 5;
 	private selectedPriorityFolders: string[] = [];
 	private selectedPriorityFiles: string[] = [];
+	private selectedPriorityTags: string[] = [];
+	private customAdhocPriority = '';
 
 	private contentElWrapper: HTMLElement | null = null;
 	private responseAreaEl: HTMLElement | null = null;
@@ -285,7 +287,7 @@ export class BriefingView extends ItemView {
 		const priorityLeft = priorityHeader.createDiv({ cls: 'sbm-preflight-section-header-left' });
 		const priorityIcon = priorityLeft.createSpan({ cls: 'sbm-preflight-icon' });
 		setIcon(priorityIcon, 'target');
-		priorityLeft.createEl('span', { text: 'Focus & Priorités', cls: 'sbm-preflight-section-title' });
+		priorityLeft.createEl('span', { text: 'Focus & Priorités (Dossiers, Fichiers, Tags)', cls: 'sbm-preflight-section-title' });
 
 		const addContextBtn = priorityHeader.createEl('button', {
 			cls: 'sbm-preflight-add-btn',
@@ -296,6 +298,11 @@ export class BriefingView extends ItemView {
 				if (item.type === 'folder') {
 					if (!this.selectedPriorityFolders.includes(item.path)) {
 						this.selectedPriorityFolders.push(item.path);
+					}
+				} else if (item.type === 'tag') {
+					const cleanTag = item.path.replace(/^#/, '');
+					if (!this.selectedPriorityTags.includes(cleanTag)) {
+						this.selectedPriorityTags.push(cleanTag);
 					}
 				} else {
 					if (!this.selectedPriorityFiles.includes(item.path)) {
@@ -310,8 +317,12 @@ export class BriefingView extends ItemView {
 
 		const renderChips = () => {
 			chipsContainer.empty();
-			if (this.selectedPriorityFolders.length === 0 && this.selectedPriorityFiles.length === 0) {
-				chipsContainer.createSpan({ cls: 'sbm-preflight-empty-chips', text: 'Aucun focus spécifique (analyse globale).' });
+			const hasNoContext = this.selectedPriorityFolders.length === 0 &&
+				this.selectedPriorityFiles.length === 0 &&
+				this.selectedPriorityTags.length === 0;
+
+			if (hasNoContext) {
+				chipsContainer.createSpan({ cls: 'sbm-preflight-empty-chips', text: 'Aucun focus spécifique sélectionné (analyse globale du coffre).' });
 			} else {
 				this.selectedPriorityFolders.forEach((folderPath) => {
 					const chip = chipsContainer.createDiv({ cls: 'sbm-preflight-chip is-folder' });
@@ -338,12 +349,44 @@ export class BriefingView extends ItemView {
 						renderChips();
 					});
 				});
+
+				this.selectedPriorityTags.forEach((tag) => {
+					const chip = chipsContainer.createDiv({ cls: 'sbm-preflight-chip is-tag' });
+					const iconSpan = chip.createSpan({ cls: 'sbm-chip-icon' });
+					setIcon(iconSpan, 'tag');
+					chip.createSpan({ cls: 'sbm-chip-text', text: `#${tag}` });
+					const delBtn = chip.createSpan({ cls: 'sbm-chip-remove', text: '×' });
+					delBtn.title = 'Retirer ce tag';
+					delBtn.addEventListener('click', () => {
+						this.selectedPriorityTags = this.selectedPriorityTags.filter(t => t !== tag);
+						renderChips();
+					});
+				});
 			}
 		};
 
 		renderChips();
 
-		// 4. Bouton Principal de Démarrage
+		// 4. Section Priorité ou Consigne Spécifique (Hors Note)
+		const adhocSection = preflightCard.createDiv({ cls: 'sbm-preflight-section' });
+		const adhocHeader = adhocSection.createDiv({ cls: 'sbm-preflight-section-header' });
+		const adhocLeft = adhocHeader.createDiv({ cls: 'sbm-preflight-section-header-left' });
+		const adhocIcon = adhocLeft.createSpan({ cls: 'sbm-preflight-icon' });
+		setIcon(adhocIcon, 'sparkles');
+		adhocLeft.createEl('span', { text: 'Priorité ou consigne spécifique (hors note)', cls: 'sbm-preflight-section-title' });
+
+		const adhocInputWrapper = adhocSection.createDiv({ cls: 'sbm-preflight-adhoc-wrapper' });
+		const adhocInput = adhocInputWrapper.createEl('textarea', {
+			cls: 'sbm-preflight-adhoc-textarea',
+			placeholder: 'Ex: Préparer l\'intervention de 14h, finaliser la release avant midi, appeler le comptable...'
+		});
+		adhocInput.value = this.customAdhocPriority;
+		adhocInput.rows = 2;
+		adhocInput.addEventListener('input', () => {
+			this.customAdhocPriority = adhocInput.value;
+		});
+
+		// 5. Bouton Principal de Démarrage
 		const startActionSection = preflightCard.createDiv({ cls: 'sbm-preflight-cta-section' });
 		const startBtn = startActionSection.createEl('button', {
 			cls: 'sbm-preflight-start-btn',
@@ -413,6 +456,8 @@ export class BriefingView extends ItemView {
 					focusProject: this.selectedProject,
 					priorityFolders: this.selectedPriorityFolders,
 					priorityFiles: this.selectedPriorityFiles,
+					priorityTags: this.selectedPriorityTags,
+					adhocPriority: this.customAdhocPriority,
 					energy: this.selectedEnergy
 				}
 			);

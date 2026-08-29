@@ -25,6 +25,7 @@ export interface BriefingVaultData {
 	priorityFiles?: string[];
 	priorityTags?: string[];
 	priorityProperties?: string[];
+	adhocPriority?: string;
 	userPrioritizedTasks: ObsidianTask[];
 	inactivityText: string;
 	inactivityDays: number;
@@ -100,6 +101,8 @@ export class MorningBriefingService {
 			focusProject?: string;
 			priorityFolders?: string[];
 			priorityFiles?: string[];
+			priorityTags?: string[];
+			adhocPriority?: string;
 			energy?: number;
 		}
 	): Promise<BriefingVaultData> {
@@ -118,6 +121,8 @@ export class MorningBriefingService {
 		let focusProject: string | undefined;
 		let priorityFolders: string[] = [];
 		let priorityFiles: string[] = [];
+		let selectedPriorityTags: string[] = [];
+		let adhocPriority: string | undefined;
 		let requestedEnergy: number | undefined;
 
 		if (typeof focusProjectOrOptions === 'string') {
@@ -126,6 +131,8 @@ export class MorningBriefingService {
 			focusProject = focusProjectOrOptions.focusProject;
 			priorityFolders = focusProjectOrOptions.priorityFolders || [];
 			priorityFiles = focusProjectOrOptions.priorityFiles || [];
+			selectedPriorityTags = focusProjectOrOptions.priorityTags || [];
+			adhocPriority = focusProjectOrOptions.adhocPriority?.trim() || undefined;
 			requestedEnergy = focusProjectOrOptions.energy;
 		}
 
@@ -172,24 +179,31 @@ export class MorningBriefingService {
 		const results = await Promise.all(
 			files.map(async (file) => {
 				try {
-					const content = (typeof (app.vault as any).cachedRead === 'function')
+					const raw = (typeof (app.vault as any).cachedRead === 'function')
 						? await (app.vault as any).cachedRead(file)
 						: await app.vault.read(file);
-					if (filterService.isFileExcluded(file, content)) {
+					if (filterService.isFileExcluded(file, raw)) {
 						return [];
 					}
-					return TaskParser.parseAllTasks(content, file.path, plugin.settings);
+					return TaskParser.findTasksInVaultText(raw, file.path, plugin.settings);
 				} catch {
 					return [];
 				}
 			})
 		);
-		const allTasks = results.flat();
-		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
-		// Séparation stricte : le LLM et les analyses n'ingèrent pas les tâches en pause
-		const pausedTasks = allOpenTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
+		const allOpenTasks: ObsidianTask[] = [];
+		results.forEach(tasks => {
+			tasks.forEach(t => {
+				if (!t.completed && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'x' && t.status !== '-') {
+					allOpenTasks.push(t);
+				}
+			});
+		});
+
+		// Séparation stricte entre les tâches actives normales et les tâches explicitement en pause (On Hold)
 		const activeOpenTasks = allOpenTasks.filter(t => !t.isPaused && t.status !== 'paused');
+		const pausedTasks = allOpenTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
 
 		// Classification basée exclusivement sur les tâches actives
 		const overdueTasks = activeOpenTasks.filter(t =>
@@ -202,16 +216,23 @@ export class MorningBriefingService {
 			(t.startDate && t.startDate <= dateStr)
 		);
 
-		// Identification des tâches expressément prioritaires (dossiers/fichiers choisis + tags prioritaires + propriétés frontmatter prioritaires)
+		// Identification des tâches expressément prioritaires (dossiers/fichiers choisis + tags choisis + tags configurés + propriétés frontmatter)
 		const normPriorityFolders = priorityFolders.map(f => normalizePath(f).toLowerCase());
 		const normPriorityFiles = priorityFiles.map(f => normalizePath(f).toLowerCase());
+		const normPriorityTags = selectedPriorityTags.map(t => t.toLowerCase().replace(/^#/, ''));
 
 		const userPrioritizedTasks = activeOpenTasks.filter(t => {
 			const normPath = normalizePath(t.filePath || '').toLowerCase();
 			const inPriorityFolder = normPriorityFolders.some(f => normPath === f || normPath.startsWith(f + '/'));
 			const inPriorityFile = normPriorityFiles.some(f => normPath === f || normPath.endsWith('/' + f) || normPath.includes(f));
 			const hasPriorityTagOrProp = filterService.isTaskPrioritized(t);
-			return inPriorityFolder || inPriorityFile || hasPriorityTagOrProp;
+			const hasSelectedPriorityTag = normPriorityTags.some(tag => {
+				const tagWithHash = '#' + tag;
+				return (t.domainTags && t.domainTags.some(dt => dt.toLowerCase() === tagWithHash || dt.toLowerCase().replace(/^#/, '') === tag)) ||
+					(t.rawText && t.rawText.toLowerCase().includes(tagWithHash)) ||
+					(t.rawLine && t.rawLine.toLowerCase().includes(tagWithHash));
+			});
+			return inPriorityFolder || inPriorityFile || hasPriorityTagOrProp || hasSelectedPriorityTag;
 		});
 
 		// Identification des tâches très anciennes (souffrance / obsolescence)
@@ -368,8 +389,11 @@ export class MorningBriefingService {
 			folders: structure.folders,
 			priorityFolders: priorityFolders.length > 0 ? priorityFolders : undefined,
 			priorityFiles: priorityFiles.length > 0 ? priorityFiles : undefined,
-			priorityTags: filterService.getPriorityTags().length > 0 ? filterService.getPriorityTags() : undefined,
+			priorityTags: (selectedPriorityTags.length > 0 || filterService.getPriorityTags().length > 0)
+				? Array.from(new Set([...selectedPriorityTags, ...filterService.getPriorityTags()]))
+				: undefined,
 			priorityProperties: filterService.getPriorityProperties().length > 0 ? filterService.getPriorityProperties().map(p => p.value !== undefined ? `${p.key}: ${p.value}` : p.key) : undefined,
+			adhocPriority,
 			userPrioritizedTasks,
 			isCluttered,
 			projects: structure.projects,
@@ -448,23 +472,31 @@ export class MorningBriefingService {
 			focusDirectives += `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
 		}
 
+		let adhocPrioritySection = '';
+		let adhocPriorityDirective = '';
+		if (data.adhocPriority && data.adhocPriority.trim()) {
+			adhocPrioritySection = `\nOBJECTIF & PRIORITÉ DU JOUR FIXÉE DIRECTEMENT PAR L'UTILISATEUR (PRIORITÉ ABSOLUE) :\n"${data.adhocPriority.trim()}"\n`;
+			adhocPriorityDirective = `\n- **Priorité Spécifique Directe de l'Utilisateur** : L'utilisateur a expressément fixé cette priorité / consigne majeure pour sa journée : "${data.adhocPriority.trim()}". Fais-en l'axe central n°1 de ton Cap du Jour et du plan d'action, et organise ses tâches autour de cet objectif.`;
+		}
+
 		let prioritiesSection = '';
 		const hasPriorityFolders = data.priorityFolders && data.priorityFolders.length > 0;
 		const hasPriorityFiles = data.priorityFiles && data.priorityFiles.length > 0;
-		const hasPriorityRules = (data.priorityTags && data.priorityTags.length > 0) || (data.priorityProperties && data.priorityProperties.length > 0);
+		const hasPriorityTags = data.priorityTags && data.priorityTags.length > 0;
+		const hasPriorityRules = hasPriorityTags || (data.priorityProperties && data.priorityProperties.length > 0);
 		const hasUserPrioritizedTasks = data.userPrioritizedTasks && data.userPrioritizedTasks.length > 0;
 
 		if (hasPriorityFolders || hasPriorityFiles || hasPriorityRules || hasUserPrioritizedTasks) {
 			const lines: string[] = [];
 			if (hasPriorityFolders) lines.push(`- Dossiers prioritaires sélectionnés : ${data.priorityFolders!.join(', ')}`);
 			if (hasPriorityFiles) lines.push(`- Fichiers prioritaires sélectionnés : ${data.priorityFiles!.join(', ')}`);
-			if (data.priorityTags && data.priorityTags.length > 0) lines.push(`- Tags prioritaires configurés : ${data.priorityTags.map(t => '#' + t).join(', ')}`);
+			if (hasPriorityTags) lines.push(`- Tags prioritaires sélectionnés / configurés : ${data.priorityTags!.map(t => '#' + t.replace(/^#/, '')).join(', ')}`);
 			if (data.priorityProperties && data.priorityProperties.length > 0) lines.push(`- Propriétés frontmatter prioritaires : ${data.priorityProperties.join(', ')}`);
 			if (hasUserPrioritizedTasks) {
 				lines.push(`- Tâches hautement prioritaires identifiées :\n${data.userPrioritizedTasks.slice(0, 8).map(t => '  * ' + t.title + (t.filePath ? ` (dans [[${t.filePath}]])` : '')).join('\n')}`);
 			}
-			prioritiesSection = `\nFOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L'UTILISATEUR :\n${lines.join('\n')}\n*(CONSIGNE MAJEURE : Accorde une priorité toute particulière à ces dossiers, fichiers et tâches lors du choix de "The One Thing" et de l'ordonnancement du plan de journée)*\n`;
-			focusDirectives += `\n- **Dossiers/Fichiers/Tâches prioritaires** : Priorise expressément les tâches issues des dossiers, fichiers et tags prioritaires indiqués ci-dessous.`;
+			prioritiesSection = `\nFOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L'UTILISATEUR :\n${lines.join('\n')}\n*(CONSIGNE MAJEURE : Accorde une priorité toute particulière à ces dossiers, fichiers, tags et tâches lors du choix de "The One Thing" et de l'ordonnancement du plan de journée)*\n`;
+			focusDirectives += `\n- **Dossiers/Fichiers/Tags/Tâches prioritaires** : Priorise expressément les tâches issues des dossiers, fichiers et tags prioritaires indiqués ci-dessous.`;
 		}
 
 		let customInstructionsSection = '';
@@ -505,7 +537,7 @@ CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et bienveillant.
 
 CONSIGNES DE REDACTION EN MODE REPRISE :
-1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}${pausedDirectives}
+1. **Ton & Posture** : Chaleureux, constructif, réconfortant et direct. Zéro culpabilisation.${focusDirectives}${adhocPriorityDirective}${pausedDirectives}
 2. **Structure du Briefing de Reprise** :
    - **Accueil & Bilan Déculpabilisant** (2 phrases bienveillantes pour poser un cadre serein)
    - **Les Rendez-vous Fixes & Contraintes Agenda** (Rappel des créneaux incontournables du jour)
@@ -562,6 +594,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${adhocPrioritySection}
 ${prioritiesSection}
 ${calendarSectionText}
 TACHE MAJEURE DETECTEE (THE ONE THING) :
@@ -601,7 +634,7 @@ CONSIGNE DE STYLE STRICTE :
 - N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre, clair, direct et professionnel.
 
 CONSIGNES DE REDACTION :
-1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}${pausedDirectives}
+1. **Ton & Posture** : Chaleureux, constructif, direct et rassurant. Pas de bavardage inutile ni de méta-commentaire.${focusDirectives}${adhocPriorityDirective}${pausedDirectives}
 2. **Structure du Briefing** :
    - **Cap du Jour** (Le focus ou projet n°1 incontournable)
    - **Rendez-vous & Contraintes Fixes de l'Agenda** (Rappel clair des heures de réunions/rendez-vous à honorer en priorité)
@@ -620,6 +653,7 @@ Dossiers disponibles : ${foldersText}
 Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
 Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${focusProjectText}
+${adhocPrioritySection}
 ${prioritiesSection}
 ${calendarSectionText}
 TACHES PLANIFIEES POUR AUJOURD'HUI :

@@ -5845,7 +5845,40 @@ textarea.sbm-chat-textarea:focus {
 	font-weight: 600;
 }
 
+/* Preflight Focus & Priorités : Tag Chips & Adhoc Priority */
+.sbm-preflight-chip.is-tag {
+	background: rgba(138, 43, 226, 0.12);
+	color: var(--text-accent, #9d4edd);
+	border-color: rgba(138, 43, 226, 0.28);
+}
 
+.sbm-preflight-chip.is-tag .sbm-chip-icon {
+	color: var(--text-accent, #9d4edd);
+}
 
+.sbm-preflight-adhoc-wrapper {
+	width: 100%;
+	margin-top: 6px;
+}
 
+.sbm-preflight-adhoc-textarea {
+	width: 100%;
+	min-height: 52px;
+	padding: 8px 12px;
+	border-radius: var(--radius-m, 6px);
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-family: inherit;
+	font-size: var(--font-ui-small, 13px);
+	line-height: 1.4;
+	resize: vertical;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sbm-preflight-adhoc-textarea:focus {
+	outline: none;
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb, 100, 100, 255), 0.2);
+}
 

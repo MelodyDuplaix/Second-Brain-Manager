@@ -3,7 +3,7 @@ import { SecondBrainSettings } from '../main';
 import { VaultFilterService } from '../services/vaultFilterService';
 
 export interface ContextItem {
-	type: 'file' | 'folder' | 'active-note';
+	type: 'file' | 'folder' | 'active-note' | 'tag';
 	path: string;
 	title: string;
 	desc: string;
@@ -19,7 +19,7 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 		if (settings) {
 			this.filterService = new VaultFilterService(app, settings);
 		}
-		this.setPlaceholder('Rechercher une note, un contact, un projet ou un dossier à joindre...');
+		this.setPlaceholder('Rechercher une note, un dossier ou un tag (#)...');
 	}
 
 	getItems(): ContextItem[] {
@@ -68,6 +68,22 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 				});
 			}
 		});
+
+		// 4. Tags du coffre
+		try {
+			const tagCounts = (this.app.metadataCache as any)?.getTags?.() || {};
+			Object.entries(tagCounts).forEach(([rawTag, count]) => {
+				const cleanTag = rawTag.startsWith('#') ? rawTag : `#${rawTag}`;
+				items.push({
+					type: 'tag',
+					path: cleanTag.replace(/^#/, ''),
+					title: `🏷️ Tag : ${cleanTag}`,
+					desc: `${count} occurrence(s) dans le coffre`
+				});
+			});
+		} catch {
+			// Ignore si getTags n'est pas disponible
+		}
 
 		return items;
 	}

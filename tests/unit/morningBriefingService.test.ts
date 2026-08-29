@@ -352,7 +352,7 @@ describe('MorningBriefingService', () => {
 		};
 
 		const messages = MorningBriefingService.buildBriefingMessages(data);
-		expect(messages[0].content).toContain('Dossiers/Fichiers/Tâches prioritaires');
+		expect(messages[0].content).toContain('Dossiers/Fichiers/Tags/Tâches prioritaires');
 		expect(messages[1].content).toContain('FOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L\'UTILISATEUR');
 		expect(messages[1].content).toContain('01 - Projets/Rapport');
 		expect(messages[1].content).toContain('01 - Projets/CahierDesCharges.md');
@@ -428,5 +428,30 @@ describe('MorningBriefingService', () => {
 		expect(messages[0].content).not.toContain('Opportunité - Tâches en Pause');
 		expect(messages[1].content).not.toContain('TACHES EN PAUSE DISPONIBLES');
 		expect(messages[1].content).not.toContain('Refonte du site web');
+	});
+
+	it('should include adhoc priority and priority tags in briefing messages', () => {
+		const dataWithAdhoc: BriefingVaultData = {
+			dateStr: '2026-08-29',
+			formattedDate: 'Samedi 29 Août 2026',
+			energy: 7,
+			modeText: 'Mode Équilibré',
+			overdueTasks: [],
+			todayTasks: [mockTasks[0]],
+			priorityTasks: [mockTasks[0]],
+			inboxTasks: [],
+			projectTasks: [],
+			projects: ['Acme'],
+			contacts: [],
+			priorityTags: ['client-vip', 'urgence'],
+			adhocPriority: 'Préparer la réunion avec le PDG à 14h'
+		};
+
+		const messages = MorningBriefingService.buildBriefingMessages(dataWithAdhoc);
+		expect(messages[0].content).toContain('Priorité Spécifique Directe de l\'Utilisateur');
+		expect(messages[0].content).toContain('Préparer la réunion avec le PDG à 14h');
+		expect(messages[1].content).toContain('OBJECTIF & PRIORITÉ DU JOUR FIXÉE DIRECTEMENT PAR L\'UTILISATEUR (PRIORITÉ ABSOLUE)');
+		expect(messages[1].content).toContain('Préparer la réunion avec le PDG à 14h');
+		expect(messages[1].content).toContain('Tags prioritaires sélectionnés / configurés : #client-vip, #urgence');
 	});
 });
