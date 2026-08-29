@@ -247,24 +247,83 @@ export class ActionExecutor {
 	 * 3. Sinon, si des tâches existent ailleurs dans la note (hors blocs de code), insère après la dernière tâche.
 	 * 4. Sinon, insère avant un éventuel callout de pied de page (navigation/footer) ou à la fin de la note.
 	 */
+	/**
+	 * Extrait le titre textuel brut d'une tâche en retirant toutes métadonnées (dates, champs dataview, tags, emojis).
+	 */
+	public static extractCoreTaskTitle(rawLine: string): string {
+		let title = TaskMutator.cleanTaskPrefix(rawLine);
+		// Supprimer Dataview fields [field:: value]
+		title = title.replace(/\[[a-zA-Z0-9_-]+::[^\]]*\]/g, '');
+		// Supprimer emojis Obsidian Tasks et dates
+		title = title.replace(/[📅⏳🛫➕✅❌]\s*\d{4}-\d{2}-\d{2}/gu, '');
+		title = title.replace(/[🔺⏫🔼🔽⏬]/gu, '');
+		// Supprimer block IDs
+		title = title.replace(/\s+\^[a-zA-Z0-9_-]+$/, '');
+		// Supprimer tags (ex: #tm/q1, #projet, etc.)
+		title = title.replace(/#[a-zA-Z0-9_\u00C0-\u017F/-]+/g, '');
+		// Nettoyer wikilinks vers texte brut : [[Kwarto|Kwarto]] -> Kwarto, [[Kwarto]] -> Kwarto
+		title = title.replace(/\[\[(?:[^|\]]+\|)?([^\]]+)\]\]/g, '$1');
+		return title.replace(/\s+/g, ' ').trim();
+	}
+
 	public static insertTaskIntoNoteContent(content: string, taskLine: string): string {
 		const isCRLF = content.includes('\r\n');
 		const lines = content.replace(/\r\n/g, '\n').split('\n');
 
-		// Garde-fou strict anti-doublon : si une tâche identique existe déjà dans la note
-		const targetCleanTitle = normalizeCanonicalKey(TaskMutator.cleanTaskPrefix(taskLine));
-		if (targetCleanTitle) {
-			const alreadyPresent = lines.some(l => {
-				const trimmed = l.trim();
-				if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
-					const existingClean = normalizeCanonicalKey(TaskMutator.cleanTaskPrefix(trimmed));
-					return existingClean === targetCleanTitle;
-				}
-				return false;
-			});
+		const extractWords = (str: string): string[] => {
+			return str
+				.toLowerCase()
+				.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+				.replace(/[^\w\s]/g, ' ')
+				.split(/\s+/)
+				.filter(w => w.length >= 3);
+		};
 
-			if (alreadyPresent) {
-				return content; // Ne pas ré-insérer de doublon
+		const isSameOrSimilarTask = (lineA: string, lineB: string): boolean => {
+			const coreA = ActionExecutor.extractCoreTaskTitle(lineA);
+			const coreB = ActionExecutor.extractCoreTaskTitle(lineB);
+
+			const keyA = normalizeCanonicalKey(coreA);
+			const keyB = normalizeCanonicalKey(coreB);
+
+			if (!keyA || !keyB) return false;
+
+			// 1. Correspondance exacte
+			if (keyA === keyB) return true;
+
+			// 2. Inclusion / préfixe si longueur significative
+			if ((keyA.includes(keyB) || keyB.includes(keyA)) && Math.min(keyA.length, keyB.length) >= 12) {
+				return true;
+			}
+
+			// 3. Chevauchement de mots-clés (token overlap >= 60%)
+			const wordsA = extractWords(coreA);
+			const wordsB = extractWords(coreB);
+
+			if (wordsA.length >= 2 && wordsB.length >= 2) {
+				const common = wordsA.filter(w => wordsB.includes(w));
+				const overlapRatio = common.length / Math.min(wordsA.length, wordsB.length);
+				if (overlapRatio >= 0.6) {
+					return true;
+				}
+			}
+
+			return false;
+		};
+
+		const joinLines = (arr: string[]) => isCRLF ? arr.join('\r\n') : arr.join('\n');
+
+		// Garde-fou strict anti-doublon & remplacement intelligent en place :
+		// Si une tâche identique ou similaire existe déjà dans la note (ex: draft sans métadonnées),
+		// on la remplace directement par la version complète pour éviter toute duplication
+		for (let i = 0; i < lines.length; i++) {
+			const trimmed = lines[i].trim();
+			if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
+				if (isSameOrSimilarTask(trimmed, taskLine)) {
+					// Remplacement en place
+					lines[i] = taskLine;
+					return joinLines(lines);
+				}
 			}
 		}
 
@@ -285,16 +344,19 @@ export class ActionExecutor {
 		const isActiveTaskSection = (cleaned: string): boolean => {
 			if (isExcludedSection(cleaned)) return false;
 			const activePrefixes = [
+				'prochaines etapes', 'prochaine etape', 'prochaines actions', 'prochaine action',
+				'next steps', 'next step', 'next actions', 'next action', 'action items',
 				'taches a faire', 'taches du jour', 'a faire', 'actions a faire',
-				'to do', 'todo', 'tasks', 'active tasks', 'next actions', 'action items',
-				'programme', 'objectifs', 'goals', 'objectives', 'focus', 'priorites', 'priorities'
+				'to do', 'todo', 'tasks', 'active tasks',
+				'programme', 'objectifs', 'goals', 'objectives', 'focus', 'priorites', 'priorities',
+				'relances', 'relance', 'suivi'
 			];
 			return activePrefixes.some(kw => cleaned === kw || cleaned.startsWith(kw + ' ') || cleaned.includes(kw));
 		};
 
 		const isGenericTaskSection = (cleaned: string): boolean => {
 			if (isExcludedSection(cleaned)) return false;
-			const genericKeywords = ['taches', 'tache', 'tasks', 'task', 'actions', 'action'];
+			const genericKeywords = ['taches', 'tache', 'tasks', 'task', 'actions', 'action', 'etapes', 'etape'];
 			return genericKeywords.some(kw => cleaned === kw || cleaned.startsWith(kw + ' '));
 		};
 
@@ -324,9 +386,6 @@ export class ActionExecutor {
 				}
 			}
 		}
-
-		const joinLines = (arr: string[]) => isCRLF ? arr.join('\r\n') : arr.join('\n');
-
 		// Si un en-tête de section a été trouvé
 		if (targetHeaderIdx !== -1) {
 			let insertIdx = targetHeaderIdx + 1;
@@ -461,6 +520,38 @@ export class ActionExecutor {
 						fullContent = `${tagsHeader}\n\n${fullContent}`;
 					}
 				}
+
+				// Nettoyage anti-doublons de tâches au sein du contenu généré
+				const cleanDuplicateTasksFromContent = (rawText: string): string => {
+					const lns = rawText.replace(/\r\n/g, '\n').split('\n');
+					const seenTasks: string[] = [];
+					const cleanedLns: string[] = [];
+
+					for (const l of lns) {
+						const trimmed = l.trim();
+						if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]')) {
+							const isDuplicate = seenTasks.some(existing => {
+								const cleanA = ActionExecutor.extractCoreTaskTitle(existing);
+								const cleanB = ActionExecutor.extractCoreTaskTitle(trimmed);
+								const keyA = normalizeCanonicalKey(cleanA);
+								const keyB = normalizeCanonicalKey(cleanB);
+								if (keyA === keyB) return true;
+								if ((keyA.includes(keyB) || keyB.includes(keyA)) && Math.min(keyA.length, keyB.length) >= 12) return true;
+								return false;
+							});
+
+							if (isDuplicate) {
+								continue;
+							}
+							seenTasks.push(trimmed);
+						}
+						cleanedLns.push(l);
+					}
+
+					return rawText.includes('\r\n') ? cleanedLns.join('\r\n') : cleanedLns.join('\n');
+				};
+
+				fullContent = cleanDuplicateTasksFromContent(fullContent);
 
 				const resolved = await this.resolveTargetFile(targetPath, {
 					createIfMissing: true,

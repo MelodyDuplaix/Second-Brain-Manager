@@ -561,6 +561,33 @@ scheduled today
 		const occurrences = (finalContent.match(/Recontacter \[\[Kwarto\]\]/g) || []).length;
 		expect(occurrences).toBe(1); // Exactement 1 occurrence, aucun doublon !
 	});
+
+	it('should replace placeholder or draft task with the complete metadated task without creating a duplicate', async () => {
+		const initialContent = `# Kwarto\n\n## Prochaines étapes\n- [ ] Relancer [[Kwarto]] pour faire le point sur la suite\n\n## Notes supplémentaires\n- `;
+		createdFiles['03 - Contacts/Kwarto.md'] = initialContent;
+
+		const taskProp: CreateTaskActionProposal = {
+			id: 'act-kwarto-task-2',
+			type: 'create_task',
+			description: 'Relance Kwarto',
+			selected: true,
+			targetPath: '03 - Contacts/Kwarto.md',
+			taskTitle: 'Relancer [[Kwarto]] pour faire le point sur la suite de l\'entretien',
+			dueDate: '2026-09-05',
+			priority: 'medium',
+			energy: 4,
+			matrixQuadrant: 'q2'
+		};
+
+		const results = await executor.executeProposals([taskProp]);
+		expect(results[0].success).toBe(true);
+
+		const finalContent = processedFiles['03 - Contacts/Kwarto.md'] || createdFiles['03 - Contacts/Kwarto.md'];
+		const taskOccurrences = (finalContent.match(/Relancer \[\[Kwarto\]\]/g) || []).length;
+		expect(taskOccurrences).toBe(1); // Remplacé en place, exactement 1 ligne de tâche !
+		expect(finalContent).toContain("Relancer [[Kwarto]] pour faire le point sur la suite de l'entretien");
+		expect(finalContent).toContain('2026-09-05');
+	});
 });
 
 
