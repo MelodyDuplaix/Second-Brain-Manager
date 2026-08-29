@@ -136,7 +136,7 @@ COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 
 2. CONSULTATION VS MODIFICATION (RÈGLE IMPORTANTE) :
    - Pour les demandes d'information ou de planning (ex: "Quel est mon planning ?", "Qu'est-ce qui est en retard ?", "Résume mes priorités") :
-      -> Réponds de façon claire, sobre, directe et structurée en Markdown.
+      -> Réponds de façon claire, courtoise, structurée et professionnelle en Markdown.
       -> Présente les tâches en respectant scrupuleusement le format configuré :
 ${taskSyntaxDocs}
      -> NE PROPOSE PAS de modifications/créations d'actions (\`propose_create_task\`, \`propose_update_task\`) SAUF si l'utilisateur a explicitement demandé de modifier, replanifier ou créer.
