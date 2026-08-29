@@ -230,7 +230,7 @@ export class ToolRegistry {
 			parameters: {
 				type: 'object',
 				properties: {
-					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche (ex: "04 - Journal/2026-08-27.md" pour la note quotidienne, ou chemin/nom de note de projet).' },
+					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche. Si la tâche concerne un projet, un contact ou un sujet précis, ciblez prioritairement la note correspondante (ex: "01 - Projets/Alpha.md", "03 - Contacts/Claire.md") plutôt que le journal. Réservez le journal quotidien aux tâches généralistes ou aux demandes explicites.' },
 					taskTitle: { type: 'string', description: 'Intitulé brut de la tâche sans puce. Si vous mentionnez une personne, un contact, un projet ou une autre note, utilisez systématiquement un wikilink [[Nom]] (ex: "Appeler [[Claire Dupont]] pour valider le devis").' },
 					dueDate: { type: 'string', description: 'Date d\'échéance (YYYY-MM-DD).' },
 					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },

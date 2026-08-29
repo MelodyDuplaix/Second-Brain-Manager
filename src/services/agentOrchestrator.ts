@@ -145,19 +145,25 @@ ${taskSyntaxDocs}
      a) L'utilisateur le demande expressément (ex: "Reporte ces tâches", "Crée la tâche X", "Rajoute à faire...", "Décompose la tâche Y").
      b) L'utilisateur relate une réunion / prise de note avec des actions et personnes concrètes à enregistrer.
 
-3. RÈGLE CRITIQUE SUR LA NOTE QUOTIDIENNE / JOURNAL :
-   - Si l'utilisateur demande d'ajouter, noter ou planifier quelque chose dans sa "note quotidienne", son "journal", pour "aujourd'hui" ou sans note cible explicite :
-     -> Utilise TOUJOURS le chemin "${dailyNoteTodayPath}" comme \`filePath\` ou \`targetPath\`.
+3. RÈGLE CRITIQUE SUR LE PLACEMENT DES TÂCHES (NOTE DÉDIÉE VS NOTE QUOTIDIENNE) :
+   - PRIORITÉ ABSOLUE À LA NOTE CONCERNÉE / THÉMATIQUE :
+     -> Si une tâche concerne un projet spécifique (ex: [[Projet Alpha]]), une personne / contact (ex: [[Claire Dupont]]), un domaine précis, une note existante ou une NOUVELLE NOTE CRÉÉE lors de l'interaction (ex: fiche contact, nouveau projet, compte-rendu) :
+        * Place TOUJOURS la tâche directement dans la note concernée (soit dans le corps de la note avec \`propose_create_note\` / \`propose_append_to_note\`, soit en spécifiant le chemin \`filePath\` de cette note dans \`propose_create_task\`).
+        * Il est beaucoup plus logique, pérenne et ordonné de regrouper les actions dans leur note de contexte d'origine plutôt que de déverser toutes les tâches dans la note quotidienne.
+   - UTILISATION DE LA NOTE QUOTIDIENNE / JOURNAL :
+     -> Ne cible la note quotidienne ("${dailyNoteTodayPath}") comme \`filePath\` que pour :
+        a) Des micro-tâches purement personnelles, domestiques ou généralistes sans note de projet/contact dédiée (ex: "Acheter des piles", "Prendre RDV contrôle technique").
+        b) Lorsque l'utilisateur demande explicitement d'ajouter ou noter dans son journal, sa note du jour ou pour "aujourd'hui".
 
-4. RÈGLE CRITIQUE SUR LE CHEMIN DES NOTES & LA CRÉATION DE TÂCHES :
-   - Si la note cible est la note actuellement ouverte ou que l'utilisateur dit "dans cette note", "ici", ou nomme la note ouverte :
-     -> Utilise TOUJOURS le chemin canonique de la note ouverte (ex: "${effectiveActive instanceof TFile ? normalizePath(effectiveActive.path) : ''}") comme \`filePath\`.
+4. RÈGLE SUR LA RÉSOLUTION DES CHEMINS DE NOTES & CRÉATION DE TÂCHES :
+   - Si l'action cible la note actuellement ouverte ou que l'utilisateur dit "dans cette note", "ici", ou nomme la note ouverte :
+     -> Utilise le chemin canonique de la note ouverte (ex: "${effectiveActive instanceof TFile ? normalizePath(effectiveActive.path) : ''}") comme \`filePath\`.
    - Si l'utilisateur nomme un projet ou une note existante du coffre :
      -> Utilise le chemin complet retourné par les recherches (ex: "Note rangés/MFRB/Tâche à faire MFRB.md" ou "01 - Projets/Second Brain.md") ou le nom exact de la note.
-   - Si l'utilisateur demande de créer ou d'ajouter une ou plusieurs tâches (ex: "Rajoute à faire...", "Crée la tâche...", "Ajoute dans le projet X : faire Y") :
-     -> Appelle TOUJOURS l'outil \`propose_create_task\` pour chaque tâche demandée.
-     -> N'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
-     -> Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
+   - Si l'utilisateur demande de créer une nouvelle note avec des tâches associées (ex: créer un projet ou une fiche personne avec des actions à mener) :
+     -> Émets \`propose_create_note\` pour créer la note avec sa structure, et place les tâches correspondantes directement dans son \`content\` ou émets \`propose_create_task\` en ciblant le \`filePath\` de cette nouvelle note.
+   - Pour créer des tâches, appelle TOUJOURS \`propose_create_task\` (ou intègre-les dans \`propose_create_note\` / \`propose_append_to_note\`), et n'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
+   - Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
 
 5. RÈGLE ESSENTIELLE SUR LES LIENS & WIKILINKS (ACTIONS MULTIPLES, TÂCHES, PERSONNES, NOTES) :
    - Écris TOUJOURS les wikilinks directs : [[NomNote]] ou [[Dossier/NomNote]].
