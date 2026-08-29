@@ -135,6 +135,42 @@ export class ToolRegistry {
 				required: []
 			}
 		},
+		{
+			name: 'open_note',
+			description: 'Ouvre une note spécifique dans l\'espace de travail Obsidian de l\'utilisateur (affichage direct dans l\'éditeur, avec option de nouvel onglet ou de navigation à une ligne précise).',
+			parameters: {
+				type: 'object',
+				properties: {
+					filePath: { type: 'string', description: 'Chemin relatif du fichier ou nom de la note (ex: "01 - Projets/Alpha.md" ou "Claire Dupont").' },
+					newLeaf: { type: 'boolean', description: 'Ouvrir dans un nouvel onglet séparé (défaut: false).' },
+					lineNumber: { type: 'number', description: 'Numéro de ligne vers laquelle naviguer (1-indexé, optionnel).' }
+				},
+				required: ['filePath']
+			}
+		},
+		{
+			name: 'search_commands',
+			description: 'Recherche les commandes disponibles dans Obsidian (commandes natives et de plugins tiers installés) par mot-clé pour trouver leur identifiant et leur nom exact.',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: { type: 'string', description: 'Mot-clé ou terme de recherche (ex: "daily", "sidebar", "graph", "table", "tasks", "template"). Laissez vide pour lister les principales commandes.' },
+					limit: { type: 'number', description: 'Nombre maximum de commandes à retourner (défaut: 30).' }
+				},
+				required: []
+			}
+		},
+		{
+			name: 'execute_command',
+			description: 'Exécute une commande native d\'Obsidian ou d\'un plugin tiers par son identifiant de commande (ex: "app:open-daily-note", "workspace:toggle-left-sidebar", "graph:open") ou par recherche de son intitulé.',
+			parameters: {
+				type: 'object',
+				properties: {
+					commandId: { type: 'string', description: 'Identifiant unique de la commande Obsidian (ex: "app:open-daily-note", "editor:toggle-source", "graph:open") ou intitulé exact.' }
+				},
+				required: ['commandId']
+			}
+		},
 
 		// 2. Outils de Proposition d'Écriture (soumis à validation utilisateur)
 		{
@@ -278,6 +314,30 @@ export class ToolRegistry {
 					calendarId: { type: 'string', description: 'Identifiant du calendrier Google.' }
 				},
 				required: ['eventId']
+			}
+		},
+		{
+			name: 'propose_open_note',
+			description: 'Propose à l\'utilisateur d\'ouvrir une note spécifique dans l\'éditeur Obsidian.',
+			parameters: {
+				type: 'object',
+				properties: {
+					filePath: { type: 'string', description: 'Chemin relatif du fichier ou nom de la note (ex: "01 - Projets/Alpha.md").' },
+					newLeaf: { type: 'boolean', description: 'Ouvrir dans un nouvel onglet (défaut false).' },
+					lineNumber: { type: 'number', description: 'Numéro de ligne vers laquelle naviguer (optionnel).' }
+				},
+				required: ['filePath']
+			}
+		},
+		{
+			name: 'propose_execute_command',
+			description: 'Propose à l\'utilisateur d\'exécuter une commande Obsidian spécifique.',
+			parameters: {
+				type: 'object',
+				properties: {
+					commandId: { type: 'string', description: 'Identifiant ou nom de la commande Obsidian à exécuter.' }
+				},
+				required: ['commandId']
 			}
 		}
 	];
@@ -787,6 +847,97 @@ export class ToolRegistry {
 
 				return {
 					output: `Proposition de mise à jour de l'événement "${title || eventId}" enregistrée.`,
+					actionProposals: [proposal]
+				};
+			}
+
+			// --- Outils d'Interaction Workspace & Commandes Obsidian ---
+			case 'open_note': {
+				const filePath = String(args.filePath || '');
+				const newLeaf = Boolean(args.newLeaf);
+				const lineNumber = typeof args.lineNumber === 'number' ? args.lineNumber : undefined;
+
+				const opened = await this.vaultContext.openNoteInWorkspace(filePath, { newLeaf, lineNumber });
+				if (opened) {
+					return {
+						output: `Note "${filePath}" ouverte avec succès dans l'espace de travail Obsidian${lineNumber ? ` (ligne ${lineNumber})` : ''}${newLeaf ? ' (nouvel onglet)' : ''}.`
+					};
+				} else {
+					return {
+						output: `Impossible d'ouvrir la note : fichier introuvable ou inaccessible pour "${filePath}".`
+					};
+				}
+			}
+
+			case 'search_commands': {
+				const query = args.query ? String(args.query) : undefined;
+				const limit = typeof args.limit === 'number' ? args.limit : 30;
+
+				const cmds = this.vaultContext.searchObsidianCommands(query, limit);
+				if (cmds.length === 0) {
+					return {
+						output: `Aucune commande Obsidian trouvée${query ? ` pour "${query}"` : ''}.`
+					};
+				}
+				const lines = cmds.map(c => `- **${c.name}** (ID: \`${c.id}\`)`);
+				return {
+					output: `Commandes Obsidian trouvées (${cmds.length}) :\n${lines.join('\n')}`
+				};
+			}
+
+			case 'execute_command': {
+				const commandId = String(args.commandId || '');
+				if (!commandId) {
+					return { output: 'Erreur: Identifiant ou nom de commande non spécifié.' };
+				}
+
+				const res = this.vaultContext.executeObsidianCommand(commandId);
+				if (res.success) {
+					return {
+						output: `Commande "${res.commandName || commandId}" exécutée avec succès dans Obsidian.`
+					};
+				} else {
+					return {
+						output: `Échec de l'exécution de la commande "${commandId}" : ${res.error || 'Commande introuvable ou inactive.'}`
+					};
+				}
+			}
+
+			case 'propose_open_note': {
+				const filePath = String(args.filePath || '');
+				const newLeaf = Boolean(args.newLeaf);
+				const lineNumber = typeof args.lineNumber === 'number' ? args.lineNumber : undefined;
+
+				const proposal: ActionProposal = {
+					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+					type: 'open_note',
+					description: `📖 Ouvrir la note "[[${filePath}]]" dans l'éditeur${newLeaf ? ' (nouvel onglet)' : ''}`,
+					selected: true,
+					targetPath: filePath,
+					newLeaf,
+					lineNumber
+				};
+
+				return {
+					output: `Proposition d'ouverture enregistrée pour "[[${filePath}]]".`,
+					actionProposals: [proposal]
+				};
+			}
+
+			case 'propose_execute_command': {
+				const commandId = String(args.commandId || '');
+
+				const proposal: ActionProposal = {
+					id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+					type: 'execute_command',
+					description: `⚡ Exécuter la commande Obsidian "${commandId}"`,
+					selected: true,
+					targetPath: commandId,
+					commandId
+				};
+
+				return {
+					output: `Proposition d'exécution de commande enregistrée pour "${commandId}".`,
 					actionProposals: [proposal]
 				};
 			}

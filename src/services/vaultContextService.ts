@@ -837,4 +837,148 @@ export class VaultContextService {
 			totalMarkdownFiles
 		};
 	}
+
+	/**
+	 * Ouvre une note dans l'espace de travail Obsidian avec options (nouvel onglet, ligne spécifique).
+	 */
+	public async openNoteInWorkspace(
+		fileOrPath: TFile | string,
+		options?: { newLeaf?: boolean; lineNumber?: number }
+	): Promise<boolean> {
+		try {
+			let tfile: TFile | null = null;
+			if (fileOrPath instanceof TFile) {
+				tfile = fileOrPath;
+			} else {
+				tfile = this.resolveFileCanonically(fileOrPath);
+			}
+
+			if (!tfile || !(tfile instanceof TFile)) {
+				return false;
+			}
+
+			const openInNewLeaf = options?.newLeaf ?? false;
+			const openState = options?.lineNumber
+				? { eState: { line: Math.max(0, options.lineNumber - 1) }, active: true }
+				: { active: true };
+
+			if (openInNewLeaf) {
+				const leaf = this.app.workspace?.getLeaf ? this.app.workspace.getLeaf('tab') : null;
+				if (leaf && typeof leaf.openFile === 'function') {
+					await leaf.openFile(tfile, openState);
+					return true;
+				}
+			} else {
+				// Vérifie si le fichier est déjà ouvert dans un onglet existant
+				const markdownLeaves = this.app.workspace?.getLeavesOfType ? this.app.workspace.getLeavesOfType('markdown') : [];
+				for (const leaf of markdownLeaves) {
+					const view = leaf.view;
+					if (view && (view as any).file && (view as any).file.path === tfile.path) {
+						if (typeof this.app.workspace.setActiveLeaf === 'function') {
+							this.app.workspace.setActiveLeaf(leaf, { focus: true });
+						}
+						if (options?.lineNumber && (leaf.view as any)?.setEphemeralState) {
+							(leaf.view as any).setEphemeralState({ line: Math.max(0, options.lineNumber - 1) });
+						}
+						return true;
+					}
+				}
+
+				let targetLeaf: any = null;
+				const rootMarkdownLeaves = markdownLeaves.filter(l => (l as any).getRoot?.() === this.app.workspace.rootSplit);
+				if (rootMarkdownLeaves.length > 0) {
+					targetLeaf = rootMarkdownLeaves[0];
+				} else if (this.app.workspace?.getLeaf) {
+					targetLeaf = this.app.workspace.getLeaf(false);
+				}
+
+				if (targetLeaf && typeof targetLeaf.openFile === 'function') {
+					await targetLeaf.openFile(tfile, openState);
+					return true;
+				} else if (typeof this.app.workspace?.openLinkText === 'function') {
+					await this.app.workspace.openLinkText(tfile.path, '', openInNewLeaf);
+					return true;
+				}
+			}
+			return true;
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur lors de l\'ouverture de la note:', err);
+			return false;
+		}
+	}
+
+	/**
+	 * Recherche les commandes Obsidian disponibles (core + plugins) par mot-clé.
+	 */
+	public searchObsidianCommands(query?: string, limit = 30): Array<{ id: string; name: string }> {
+		try {
+			const commandsObj = (this.app as any).commands?.commands;
+			if (!commandsObj || typeof commandsObj !== 'object') {
+				return [];
+			}
+			const allCmds = Object.values(commandsObj) as Array<{ id: string; name: string }>;
+			if (!query || !query.trim()) {
+				return allCmds.slice(0, limit);
+			}
+			const cleanQuery = query.toLowerCase().trim();
+			const filtered = allCmds.filter(cmd =>
+				Boolean(cmd && (
+					(cmd.name && cmd.name.toLowerCase().includes(cleanQuery)) ||
+					(cmd.id && cmd.id.toLowerCase().includes(cleanQuery))
+				))
+			);
+			return filtered.slice(0, limit);
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur lors de la recherche de commandes Obsidian:', err);
+			return [];
+		}
+	}
+
+	/**
+	 * Exécute une commande Obsidian par son identifiant ou par recherche de nom.
+	 */
+	public executeObsidianCommand(commandIdOrName: string): { success: boolean; commandName?: string; error?: string } {
+		try {
+			const commandsService = (this.app as any).commands;
+			if (!commandsService) {
+				return { success: false, error: 'Gestionnaire de commandes Obsidian indisponible.' };
+			}
+
+			const commandsObj = commandsService.commands || {};
+			let targetCmd = commandsObj[commandIdOrName];
+
+			// Recherche insensible à la casse ou par intitulé partiel
+			if (!targetCmd) {
+				const query = commandIdOrName.toLowerCase().trim();
+				const matched = Object.values(commandsObj).find((c: any) =>
+					Boolean(c && (
+						c.name?.toLowerCase() === query ||
+						c.id?.toLowerCase() === query ||
+						c.name?.toLowerCase().includes(query)
+					))
+				) as { id: string; name: string } | undefined;
+				if (matched) {
+					targetCmd = matched;
+				}
+			}
+
+			if (!targetCmd) {
+				return { success: false, error: `Commande "${commandIdOrName}" introuvable dans Obsidian.` };
+			}
+
+			if (typeof commandsService.executeCommandById === 'function') {
+				const res = commandsService.executeCommandById(targetCmd.id);
+				return { success: res !== false, commandName: targetCmd.name };
+			} else if (typeof (targetCmd as any).callback === 'function') {
+				(targetCmd as any).callback();
+				return { success: true, commandName: targetCmd.name };
+			}
+
+			return { success: false, error: 'Impossible d\'exécuter la commande demandée.' };
+		} catch (err) {
+			console.warn('[Second Brain Manager] Erreur lors de l\'exécution de la commande Obsidian:', err);
+			return { success: false, error: String(err) };
+		}
+	}
 }
+

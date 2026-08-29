@@ -682,6 +682,42 @@ export class ActionExecutor {
 					};
 				}
 			}
+
+			case 'open_note': {
+				const openProp = proposal as any;
+				const opened = await this.vaultContext.openNoteInWorkspace(openProp.targetPath, {
+					newLeaf: openProp.newLeaf,
+					lineNumber: openProp.lineNumber
+				});
+				if (opened) {
+					return {
+						proposalId: proposal.id,
+						success: true,
+						message: `Note "${openProp.targetPath}" ouverte dans l'espace de travail.`,
+						createdOrModifiedPath: openProp.targetPath
+					};
+				} else {
+					return {
+						proposalId: proposal.id,
+						success: false,
+						message: `Impossible d'ouvrir la note : "${openProp.targetPath}".`,
+						createdOrModifiedPath: openProp.targetPath
+					};
+				}
+			}
+
+			case 'execute_command': {
+				const cmdProp = proposal as any;
+				const res = this.vaultContext.executeObsidianCommand(cmdProp.commandId);
+				return {
+					proposalId: proposal.id,
+					success: res.success,
+					message: res.success
+						? `Commande "${res.commandName || cmdProp.commandId}" exécutée avec succès.`
+						: `Erreur exécution commande "${cmdProp.commandId}" : ${res.error || 'Introuvable.'}`,
+					createdOrModifiedPath: cmdProp.commandId
+				};
+			}
 		}
 	}
 

@@ -456,6 +456,63 @@ scheduled today
 		expect(results[0].success).toBe(true);
 		expect(processedFiles['01 - Projets/PauseTest.md']).toBe('- [ ] Tâche à mettre en pause 📅 2026-08-30 #pause\n');
 	});
+
+	it('should execute open_note and execute_command proposals correctly', async () => {
+		createdFiles['01 - Projets/OpenMe.md'] = '# Open Me\n';
+
+		let openedFile: string | null = null;
+		let executedCmd: string | null = null;
+
+		const customMockApp = {
+			vault: {
+				getMarkdownFiles: () => [createMockTFile('01 - Projets/OpenMe.md')],
+				getFileByPath: (p: string) => (p === '01 - Projets/OpenMe.md' ? createMockTFile(p) : null),
+				getAbstractFileByPath: (p: string) => (p === '01 - Projets/OpenMe.md' ? createMockTFile(p) : null)
+			},
+			workspace: {
+				getLeavesOfType: () => [],
+				getLeaf: () => ({
+					openFile: async (f: TFile) => { openedFile = f.path; }
+				}),
+				openLinkText: async (path: string) => { openedFile = path; }
+			},
+			commands: {
+				commands: {
+					'app:open-daily-note': { id: 'app:open-daily-note', name: "Daily notes: Open today's daily note" }
+				},
+				executeCommandById: (id: string) => {
+					executedCmd = id;
+					return true;
+				}
+			}
+		} as unknown as App;
+
+		const customExecutor = new ActionExecutor(customMockApp, DEFAULT_SETTINGS);
+
+		const openProp = {
+			id: 'act-open-note',
+			type: 'open_note' as const,
+			description: 'Ouvrir OpenMe',
+			selected: true,
+			targetPath: '01 - Projets/OpenMe.md',
+			newLeaf: true
+		};
+
+		const cmdProp = {
+			id: 'act-exec-cmd',
+			type: 'execute_command' as const,
+			description: 'Ouvrir note quotidienne',
+			selected: true,
+			targetPath: 'app:open-daily-note',
+			commandId: 'app:open-daily-note'
+		};
+
+		const results = await customExecutor.executeProposals([openProp, cmdProp]);
+		expect(results[0].success).toBe(true);
+		expect(openedFile).toBe('01 - Projets/OpenMe.md');
+		expect(results[1].success).toBe(true);
+		expect(executedCmd).toBe('app:open-daily-note');
+	});
 });
 
 

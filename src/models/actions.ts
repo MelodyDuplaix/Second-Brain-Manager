@@ -11,7 +11,9 @@ export type ActionType =
 	| 'move_note'
 	| 'rename_note'
 	| 'create_calendar_event'
-	| 'update_calendar_event';
+	| 'update_calendar_event'
+	| 'open_note'
+	| 'execute_command';
 
 export interface BaseActionProposal {
 	id: string;
@@ -148,6 +150,18 @@ export interface UpdateCalendarEventActionProposal extends BaseActionProposal {
 	calendarId?: string;
 }
 
+export interface OpenNoteActionProposal extends BaseActionProposal {
+	type: 'open_note';
+	newLeaf?: boolean;
+	lineNumber?: number;
+}
+
+export interface ExecuteCommandActionProposal extends BaseActionProposal {
+	type: 'execute_command';
+	commandId: string;
+	commandName?: string;
+}
+
 export type ActionProposal =
 	| CreateNoteActionProposal
 	| AppendToNoteActionProposal
@@ -158,7 +172,9 @@ export type ActionProposal =
 	| MoveNoteActionProposal
 	| RenameNoteActionProposal
 	| CreateCalendarEventActionProposal
-	| UpdateCalendarEventActionProposal;
+	| UpdateCalendarEventActionProposal
+	| OpenNoteActionProposal
+	| ExecuteCommandActionProposal;
 
 export interface ActionResult {
 	proposalId: string;
