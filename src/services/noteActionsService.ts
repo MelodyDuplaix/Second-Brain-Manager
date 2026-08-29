@@ -48,9 +48,9 @@ ${taskSyntaxDesc}
    - Date due : date mentionnée dans le texte ou date d'aujourd'hui (${todayStr}) si urgent.
    - Matrice : #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4 (ou équivalent dataview/tag selon configuration).
    - Énergie : 1 à 10 (1 = très rapide, 10 = tâche complexe).
-   - Toujours inclure le lien vers la note source [[${noteBasename}]].
-4. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches.
-5. Si aucune action n'est identifiable, renvoie exactement: "Aucune action concrète identifiée."`;
+4. Liens & Références : Si une personne, un contact, un projet ou une autre note est mentionné dans l'intitulé de la tâche, entoure-le systématiquement d'un wikilink [[...]] (ex: "Appeler [[Claire Dupont]]", "Envoyer le compte-rendu à [[Sophie]]").
+5. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches.
+6. Si aucune action n'est identifiable, renvoie exactement: "Aucune action concrète identifiée."`;
 
 		const userPrompt = `Texte à analyser :\n\n${text}`;
 
@@ -119,7 +119,8 @@ TON OBJECTIF : Décomposer la tâche complexe suivante en 3 à 5 sous-étapes si
 
 CONSIGNES STRICTES :
 1. Chaque sous-étape doit commencer par un verbe d'action clair à l'infinitif (ex: "Appeler...", "Rédiger...", "Vérifier...", "Envoyer...").
-2. Renvoie UNIQUEMENT les 3 à 5 lignes d'intitulés des sous-tâches, sans texte d'introduction ni de conclusion, sans bloc de code markdown.`;
+2. Si une personne, un contact, un projet ou une autre note est mentionné dans une sous-étape, utilise systématiquement un wikilink [[...]] (ex: "Contacter [[Claire]]", "Rédiger pour [[Projet Alpha]]").
+3. Renvoie UNIQUEMENT les 3 à 5 lignes d'intitulés des sous-tâches, sans texte d'introduction ni de conclusion, sans bloc de code markdown.`;
 
 		const userPrompt = `Tâche à décomposer : "${cleanTitle}" (provenant de [[${noteBasename}]])`;
 

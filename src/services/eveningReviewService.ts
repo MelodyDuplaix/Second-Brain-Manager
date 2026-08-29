@@ -211,6 +211,7 @@ CONSIGNES DE TON ET DE STYLE :
 - **Ton Équilibré, Chaleureux et Professionnel** : Adopte un ton constructif, courtois et mature. Sois encourageant sans en faire trop, en reconnaissant les efforts et en apportant des conseils d'organisation pratiques.
 - **Clarté et Rythme** : Présente les faits avec fluidité et structure sans lourdeur.
 - **Sobriété Visuelle** : N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre et élégant.
+- **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact, utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`). Ne mets jamais de backticks autour des wikilinks.
 
 CONSIGNES DE REDACTION :
 1. **Bilan de la Journée** : Synthèse équilibrée des tâches accomplies (${data.completedTodayTasks.length} tâche(s)), des pièces gagnées (+${data.coinsEarnedToday} pièces) et du temps consacré aux rendez-vous d'agenda.

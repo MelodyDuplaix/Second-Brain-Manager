@@ -203,7 +203,7 @@ export class ToolRegistry {
 				properties: {
 					folder: { type: 'string', description: 'Dossier cible (ex: "03 - Contacts", "01 - Projets", "00 - Inbox").' },
 					fileName: { type: 'string', description: 'Nom du fichier sans ou avec extension .md (ex: "Claire Dupont").' },
-					content: { type: 'string', description: 'Contenu Markdown complet de la note (peut être structuré selon le template lu).' },
+					content: { type: 'string', description: 'Contenu Markdown complet de la note. Utilisez systématiquement des wikilinks [[Nom]] pour toute personne, contact, projet ou note référencée.' },
 					templateName: { type: 'string', description: 'Nom ou chemin optionnel d\'un modèle / template à appliquer (ex: "personne", "projet", "Templates/Contact.md").' },
 					variables: { type: 'object', description: 'Variables clé-valeur optionnelles pour compléter les placeholders du template.' },
 					tags: { type: 'array', description: 'Tags à ajouter à la note.', items: { type: 'string' } }
@@ -218,7 +218,7 @@ export class ToolRegistry {
 				type: 'object',
 				properties: {
 					filePath: { type: 'string', description: 'Chemin relatif du fichier cible (ex: "04 - Journal/2026-08-27.md" ou "01 - Projets/Projet.md").' },
-					entryText: { type: 'string', description: 'Texte formaté à ajouter.' },
+					entryText: { type: 'string', description: 'Texte formaté à ajouter. Utilisez des wikilinks [[Nom]] pour toute personne, contact, projet ou note mentionnée.' },
 					section: { type: 'string', description: 'Titre de la section sous laquelle insérer (optionnel).' }
 				},
 				required: ['filePath', 'entryText']
@@ -231,7 +231,7 @@ export class ToolRegistry {
 				type: 'object',
 				properties: {
 					filePath: { type: 'string', description: 'Fichier cible où insérer la tâche (ex: "04 - Journal/2026-08-27.md" pour la note quotidienne, ou chemin/nom de note de projet).' },
-					taskTitle: { type: 'string', description: 'Intitulé brut de la tâche, sans case à cocher ni puce de liste (ex: "Rédiger le rapport").' },
+					taskTitle: { type: 'string', description: 'Intitulé brut de la tâche sans puce. Si vous mentionnez une personne, un contact, un projet ou une autre note, utilisez systématiquement un wikilink [[Nom]] (ex: "Appeler [[Claire Dupont]] pour valider le devis").' },
 					dueDate: { type: 'string', description: 'Date d\'échéance (YYYY-MM-DD).' },
 					startDate: { type: 'string', description: 'Date de début (YYYY-MM-DD).' },
 					priority: { type: 'string', description: 'Priorité', enum: ['highest', 'high', 'medium', 'normal', 'low', 'lowest'] },
@@ -246,12 +246,13 @@ export class ToolRegistry {
 		},
 		{
 			name: 'propose_update_task',
-			description: 'Propose la modification d\'une tâche existante (date, statut, quadrant, énergie, priorité). NE PAS UTILISER pour créer de nouvelles tâches.',
+			description: 'Propose la modification d\'une tâche existante (date, statut, quadrant, énergie, priorité, intitulé). NE PAS UTILISER pour créer de nouvelles tâches.',
 			parameters: {
 				type: 'object',
 				properties: {
 					filePath: { type: 'string', description: 'Fichier contenant la tâche.' },
 					lineNumber: { type: 'number', description: 'Numéro de ligne de la tâche (1-indexé).' },
+					taskTitle: { type: 'string', description: 'Nouvel intitulé de la tâche si modifié. Utilisez systématiquement des wikilinks [[Nom]] pour toute personne, contact ou note mentionnée.' },
 					newStatus: { type: 'string', description: 'Nouveau statut (todo, in-progress, done, cancelled).' },
 					newDueDate: { type: 'string', description: 'Nouvelle date d\'échéance (YYYY-MM-DD ou "null" pour retirer).' },
 					newPriority: { type: 'string', description: 'Nouvelle priorité', enum: ['highest', 'high', 'medium', 'normal', 'low', 'lowest'] },
@@ -271,7 +272,7 @@ export class ToolRegistry {
 					parentLineNumber: { type: 'number', description: 'Ligne de la tâche parente.' },
 					subtasks: {
 						type: 'array',
-						description: 'Liste des intitulés bruts des sous-tâches décomposées, sans cases à cocher "- [ ]" ni puces (ex: ["Étape 1", "Étape 2"]).',
+						description: 'Liste des intitulés bruts des sous-tâches décomposées, sans cases à cocher "- [ ]" ni puces. Utilisez systématiquement des wikilinks [[Nom]] pour toute personne, contact ou note mentionnée (ex: ["Appeler [[Claire]]", "Finaliser pour [[Projet Alpha]]"]).',
 						items: { type: 'string' }
 					}
 				},

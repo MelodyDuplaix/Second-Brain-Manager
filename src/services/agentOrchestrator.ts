@@ -159,9 +159,17 @@ ${taskSyntaxDocs}
      -> N'utilise JAMAIS \`propose_move_note\` ni \`propose_update_task\` pour créer de nouvelles tâches !
      -> Génère TOUTES les propositions d'actions nécessaires dans la liste JSON si l'utilisateur demande plusieurs actions.
 
-5. RÈGLE ESSENTIELLE SUR LES LIENS :
+5. RÈGLE ESSENTIELLE SUR LES LIENS & WIKILINKS (ACTIONS MULTIPLES, TÂCHES, PERSONNES, NOTES) :
    - Écris TOUJOURS les wikilinks directs : [[NomNote]] ou [[Dossier/NomNote]].
    - NE METS JAMAIS de backticks autour des wikilinks (Écris [[Claire]] et JAMAIS \\\`[[Claire]]\\\`).
+   - LORS DE TOUTE ACTION (CRÉATION OU MODIFICATION DE TÂCHES, MODIFICATION DE NOTES, PROPOSITIONS MULTIPLES SIMULTANÉES) :
+     -> Dès que tu mentionnes une personne, un contact, une note, un projet, un document ou un concept dans l'intitulé d'une tâche (\`taskTitle\`), dans une sous-tâche (\`subtasks\`), dans le corps d'une note (\`content\`, \`entryText\`) ou dans tes explications, tu DOIS SYSTÉMATIQUEMENT créer un wikilink [[...]].
+     -> Exemples concrets dans les tâches et sous-tâches :
+        * "Appeler [[Claire Dupont]] pour valider le devis" (et non "Appeler Claire pour valider le devis")
+        * "Envoyer le compte-rendu de réunion à [[François]] et [[Sophie]]"
+        * "Rédiger le cahier des charges pour [[Projet Alpha]]"
+        * "Relancer [[Dr Martin]] au sujet de [[Dossier Médical]]"
+     -> Quand l'utilisateur demande d'effectuer plusieurs actions à la fois (ex: créer ou mettre à jour plusieurs tâches réparties dans différents projets, modifier ou déplacer des notes), applique cette règle de wikilink [[...]] sur CHACUNE des actions et sur chaque mention de personne ou de note sans exception.
 
 6. RÈGLE ESSENTIELLE SUR LE FORMAT DES TÂCHES ET SOUS-TÂCHES :
    - Lorsque tu appelles \`propose_create_task\` ou \`propose_decompose_task\`, fournis UNIQUEMENT le texte brut de l'intitulé dans \`taskTitle\` ou dans la liste \`subtasks\`, SANS ajouter "- [ ]" ni "[ ]" ni puces au début (ex: "Rédiger le plan", et JAMAIS "- [ ] Rédiger le plan").
