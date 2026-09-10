@@ -191,7 +191,12 @@ ${taskSyntaxDocs}
    - PRISE EN COMPTE DES AGENDAS :
      1. "Mon Agenda Principal & Secondaires" ("${this.settings.defaultCalendarId || 'primary'}") : Rendez-vous personnels de l'utilisateur (incluant les formations ou événements multi-jours en cours). Le principal bloque son temps de travail en priorité n°1. Planifie et ordonne toujours les tâches dans les plages horaires libres disponibles.
      2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre purement informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de faux conflit d'agenda.
-   - Pour toute création ou proposition d'événement Google Calendar (\`propose_create_calendar_event\`), utilise le calendrier de référence configuré ("${this.settings.defaultCalendarId || 'primary'}").
+    - Pour toute création ou proposition d'événement Google Calendar (\`propose_create_calendar_event\`), utilise le calendrier de référence configuré ("${this.settings.defaultCalendarId || 'primary'}").
+   - TRANSFORMATION DES RENDEZ-VOUS EN TÂCHES DANS LA NOTE QUOTIDIENNE :
+     - Si l'utilisateur demande d'importer ses rendez-vous, de transformer son agenda en tâches, ou d'inscrire ses rendez-vous dans sa note quotidienne pour pouvoir les cocher :
+       -> Appelle directement l'outil \`import_calendar_events_as_tasks\` (avec \`date: "${today}"\`),
+       -> OU consulte l'agenda via \`get_calendar_events\` puis émets \`propose_create_task\` pour chaque rendez-vous en ciblant la note quotidienne du jour (\`filePath: "${dailyNoteTodayPath}"\`), avec l'horaire et le titre du RDV dans \`taskTitle\` (ex: "10:00 - 11:00 Point d'équipe"), \`scheduledDate: "${today}"\` et \`domainTags: ["#rdv"]\`.
+       -> Applique systématiquement les wikilinks [[...]] si une personne, un contact ou une note est mentionné dans le rendez-vous.
 
 9. GARDE-FOU CRITIQUE SUR LES CRÉATIONS DE NOTES ET DE TÂCHES :
    - INTERDICTION ABSOLUE D'AFFIRMER QU'UNE NOTE OU UNE TÂCHE EST CRÉÉE dans ton texte (ex: "Fiche créée avec succès", "J'ai créé la note X...") si tu n'as pas émis le bloc JSON d'appel d'outil (\`propose_create_note\`, \`propose_create_task\`) dans ta réponse !

@@ -15,6 +15,7 @@ import { EnergyLevelModal } from './modals/energyLevelModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
 import { VaultContextService } from './services/vaultContextService';
+import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings {
 	energyLevel: number;
@@ -323,6 +324,29 @@ export default class SecondBrainPlugin extends Plugin {
 					count += tasks.length;
 				}
 				new Notice(`Analyse terminée : ${count} tâches trouvées dans le coffre.`);
+			}
+		});
+
+		this.addCommand({
+			id: 'importer-rdv-note-quotidienne',
+			name: 'Importer les RDV de l\'agenda en tâches dans la note quotidienne',
+			callback: async () => {
+				const res = await CalendarTaskSyncService.syncCalendarEventsToDailyNote(this.app, this, { openDailyNote: true });
+				if (!res.success) {
+					new Notice(`[Second Brain] ${res.error || 'Erreur lors de l\'importation de l\'agenda.'}`);
+					return;
+				}
+				if (res.eventsFound === 0) {
+					new Notice(`[Second Brain] Aucun rendez-vous trouvé dans votre agenda pour aujourd'hui (${res.date}).`);
+					return;
+				}
+				if (res.tasksCreated === 0) {
+					new Notice(`[Second Brain] Tous les rendez-vous (${res.eventsFound}) sont déjà présents dans votre note quotidienne.`);
+					return;
+				}
+				const plural = res.tasksCreated > 1 ? 's' : '';
+				const alreadyText = res.tasksAlreadyExisting > 0 ? ` (${res.tasksAlreadyExisting} déjà présent${res.tasksAlreadyExisting > 1 ? 's' : ''})` : '';
+				new Notice(`📅 ${res.tasksCreated} rendez-vous importé${plural} en tâche${plural} dans votre note quotidienne${alreadyText} !`);
 			}
 		});
 

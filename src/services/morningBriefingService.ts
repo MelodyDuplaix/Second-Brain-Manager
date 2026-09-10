@@ -44,6 +44,7 @@ export interface BriefingVaultData {
 	isCluttered: boolean;
 	projects: string[];
 	contacts: string[];
+	dailyNotePath?: string;
 	dailyNoteContent?: string;
 	calendarEvents?: GoogleCalendarEvent[];
 	calendarEventsText?: string;
@@ -398,6 +399,7 @@ export class MorningBriefingService {
 			isCluttered,
 			projects: structure.projects,
 			contacts: structure.contacts,
+			dailyNotePath: dailyRes.path,
 			dailyNoteContent,
 			calendarEvents,
 			calendarEventsText,
@@ -505,8 +507,11 @@ export class MorningBriefingService {
 		}
 
 		let calendarSectionText = '';
+		let calendarDirectives = '';
+		const dailyTargetPath = data.dailyNotePath || `Note quotidienne/${data.dateStr}.md`;
 		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
 			calendarSectionText = `\nAGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE) :\n${data.calendarEventsText}\nATTENTION : Ces rendez-vous sont des contraintes fermes prioritaires sur toutes les tâches. Tu dois impérativement articuler le plan d'action et les tâches dans les temps libres restants entre ces créneaux.\n`;
+			calendarDirectives = `\n- **Rendez-vous Agenda & Tâches Daily Note** : Des rendez-vous personnels sont prévus à l'agenda. Propose expressément à l'utilisateur de les inscrire en tâches dans sa note quotidienne ("${dailyTargetPath}") afin de pouvoir les cocher au fil de la journée. Dans le bloc JSON d'actions (\`\`\`json:actions), inclus une proposition "create_task" pour chaque rendez-vous personnel (targetPath: "${dailyTargetPath}", taskTitle: horaire + titre du RDV, scheduledDate: "${data.dateStr}", domainTags: ["#rdv"]).`;
 		}
 
 		let pausedSectionText = '';
@@ -540,7 +545,7 @@ CONSIGNES DE TON ET DE STYLE :
 - **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact (dans le texte du briefing, dans les One Thing / Quick Wins, et dans les intitulés des tâches du bloc JSON), utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`, \`Appeler [[Claire]] pour valider [[Devis]]\`). Ne mets jamais de backticks autour des wikilinks.
 
 CONSIGNES DE REDACTION :
-1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}
+1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}${calendarDirectives}
    - **Accueil & Synthèse** (Salutation cordiale et résumé clair de l'état du coffre)
    - **Rendez-vous Fixes & Contraintes Agenda** (Rappel clair des créneaux incontournables du jour)
    - **Action Prioritaire (The One Thing)** (La tâche majeure et stratégique du jour selon l'énergie ${data.energy}/10, calée hors des rendez-vous)
@@ -554,7 +559,7 @@ CONSIGNES DE REDACTION :
 2. **Format des Tâches Recommandées** :
 ${taskSyntaxDesc}
 3. **Bloc d'Actions Structurées (OBLIGATOIRE - Bloc \`\`\`json:actions)** :
-Termine TOUJOURS ta réponse par un bloc de code JSON \`\`\`json:actions exhaustif contenant TOUTES les propositions d'actions (reports, annulations, rangements et renommages) afin que l'utilisateur puisse appliquer l'ensemble du plan en 1 clic :
+Termine TOUJOURS ta réponse par un bloc de code JSON \`\`\`json:actions exhaustif contenant TOUTES les propositions d'actions (reports, annulations, rangements, renommages et ajout des rendez-vous de l'agenda en tâches dans la note quotidienne "${dailyTargetPath}") afin que l'utilisateur puisse appliquer l'ensemble du plan en 1 clic :
 \`\`\`json:actions
 [
   {
@@ -639,7 +644,7 @@ CONSIGNES DE TON ET DE STYLE :
 - **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact (dans le texte du briefing, dans les One Thing / Quick Wins, et dans les intitulés des tâches du bloc JSON), utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`, \`Appeler [[Claire]] pour valider [[Devis]]\`). Ne mets jamais de backticks autour des wikilinks.
 
 CONSIGNES DE REDACTION :
-1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}
+1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}${calendarDirectives}
    - **Cap du Jour** (Salutation courtoise et focus ou projet n°1 incontournable)
    - **Rendez-vous & Contraintes Fixes de l'Agenda** (Rappel clair des heures de réunions/rendez-vous à honorer en priorité)
    - **Plan de Journée Recommandé** (Les tâches sélectionnées et positionnées de façon réaliste dans les créneaux disponibles selon l'énergie)
@@ -647,7 +652,7 @@ CONSIGNES DE REDACTION :
 2. **Format des Tâches Recommandées** :
 ${taskSyntaxDesc}
 3. **Actions Exécutables (Bloc JSON \`\`\`json:actions)** :
-Si des actions concrètes sont proposées, inclus le bloc JSON \`\`\`json:actions afin que l'utilisateur puisse les approuver en 1 clic.`;
+Si des actions concrètes sont proposées (notamment l'inscription en tâches dans la note quotidienne "${dailyTargetPath}" des rendez-vous de l'agenda détectés avec type: "create_task", targetPath: "${dailyTargetPath}", scheduledDate: "${data.dateStr}", domainTags: ["#rdv"]), inclus le bloc JSON \`\`\`json:actions afin que l'utilisateur puisse les approuver en 1 clic.`;
 
 			userMessage = `Voici l'état actuel de mon coffre pour ce ${data.formattedDate} :
 

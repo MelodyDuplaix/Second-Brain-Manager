@@ -2,6 +2,7 @@ import { VaultContextService } from './vaultContextService';
 import { ToolDefinition, ActionProposal } from '../models/actions';
 import { TaskMutator } from '../mutators/taskMutator';
 import { GoogleCalendarService } from './googleCalendarService';
+import { CalendarTaskSyncService } from './calendarTaskSyncService';
 import { normalizePath } from 'obsidian';
 
 export interface ToolCallRequest {
@@ -364,6 +365,20 @@ export class ToolRegistry {
 				},
 				required: ['commandId']
 			}
+		},
+		{
+			name: 'import_calendar_events_as_tasks',
+			description: 'Transforme et importe les rendez-vous / événements de l\'agenda Google Calendar en tâches Markdown dans la note quotidienne (Journal) pour pouvoir les cocher au fil de la journée. Détecte et ignore automatiquement les doublons si déjà présents.',
+			parameters: {
+				type: 'object',
+				properties: {
+					date: { type: 'string', description: 'Date cible au format YYYY-MM-DD (optionnel, défaut aujourd\'hui).' },
+					calendarId: { type: 'string', description: 'ID d\'un calendrier spécifique ou "primary" (optionnel, défaut agendas personnels).' },
+					tag: { type: 'string', description: 'Tag à ajouter aux tâches (optionnel, défaut "#rdv").' },
+					includeOtherCalendars: { type: 'boolean', description: 'Inclure ou non les calendriers tiers partagés d\'autres personnes (défaut false).' }
+				},
+				required: []
+			}
 		}
 	];
 
@@ -659,6 +674,46 @@ export class ToolRegistry {
 						output: `Erreur lors de la récupération des événements Google Calendar : ${errorMsg}`
 					};
 				}
+			}
+
+			case 'import_calendar_events_as_tasks': {
+				const app = this.vaultContext.getApp();
+				const settings = this.settings || this.vaultContext.getSettings();
+				if (!settings || !settings.googleRefreshToken) {
+					return {
+						output: 'Google Calendar n\'est pas encore connecté. Vous pouvez renseigner vos identifiants dans les paramètres du plugin Second Brain.'
+					};
+				}
+
+				const date = args.date ? String(args.date) : undefined;
+				const calendarId = args.calendarId ? String(args.calendarId) : undefined;
+				const tag = args.tag !== undefined ? String(args.tag) : undefined;
+				const includeOtherCalendars = typeof args.includeOtherCalendars === 'boolean' ? args.includeOtherCalendars : undefined;
+
+				const res = await CalendarTaskSyncService.syncCalendarEventsToDailyNote(app, settings, {
+					targetDate: date,
+					calendarId,
+					tag,
+					includeOtherCalendars
+				});
+
+				if (!res.success) {
+					return { output: `Échec de la transformation de l'agenda en tâches : ${res.error || 'Erreur inconnue'}` };
+				}
+				if (res.eventsFound === 0) {
+					return { output: `Aucun événement ou rendez-vous trouvé dans l'agenda pour le ${res.date}.` };
+				}
+				if (res.tasksCreated === 0) {
+					return {
+						output: `Tous les rendez-vous (${res.eventsFound}) du ${res.date} sont déjà présents sous forme de tâches dans votre note quotidienne "${res.dailyNotePath}". Aucun doublon créé.`
+					};
+				}
+
+				const lines = res.createdTasks.map(t => `  * ${t}`);
+				const skippedInfo = res.skippedTasks.length > 0 ? `\n(Rendez-vous déjà présents ignorés : ${res.skippedTasks.join(', ')})` : '';
+				return {
+					output: `Succès : ${res.tasksCreated} rendez-vous transformé(s) en tâche(s) dans votre note quotidienne "${res.dailyNotePath}" pour le ${res.date} :\n${lines.join('\n')}${skippedInfo}`
+				};
 			}
 
 			// --- Outils d'Écriture (Propositions) ---

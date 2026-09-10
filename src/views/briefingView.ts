@@ -9,6 +9,7 @@ import { MorningBriefingService, BriefingVaultData } from '../services/morningBr
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { VaultContextService } from '../services/vaultContextService';
+import { CalendarTaskSyncService } from '../services/calendarTaskSyncService';
 import { ChatMessage } from '../models/llm';
 import SecondBrainPlugin from '../main';
 
@@ -539,6 +540,32 @@ export class BriefingView extends ItemView {
 				);
 				new Notice(`${count} tâche(s) planifiée(s) pour aujourd'hui !`);
 			});
+
+			if (result.data.calendarEvents && result.data.calendarEvents.length > 0) {
+				const syncRdvBtn = briefingActionBar.createEl('button', {
+					cls: 'sbm-doc-action-btn',
+					text: '⏰ Importer les RDV dans ma Daily Note'
+				});
+				syncRdvBtn.title = 'Transformer les rendez-vous d\'agenda en tâches dans la note quotidienne pour pouvoir les cocher';
+				syncRdvBtn.addEventListener('click', async () => {
+					const syncRes = await CalendarTaskSyncService.syncCalendarEventsToDailyNote(
+						this.app,
+						this.plugin,
+						{ targetDate: result.data.dateStr }
+					);
+					if (!syncRes.success) {
+						new Notice(`[Second Brain] ${syncRes.error || 'Erreur importation agenda.'}`);
+						return;
+					}
+					if (syncRes.tasksCreated === 0) {
+						new Notice(`Tous les rendez-vous (${syncRes.eventsFound}) sont déjà présents dans votre note quotidienne.`);
+					} else {
+						new Notice(`📅 ${syncRes.tasksCreated} rendez-vous importé(s) en tâche(s) dans votre note quotidienne !`);
+					}
+					syncRdvBtn.setText('✅ RDV importés');
+					syncRdvBtn.addClass('is-saved');
+				});
+			}
 
 			// 2. Widget interactif des propositions d'actions avec boutons Approuver / Rejeter
 			if (proposals.length > 0) {

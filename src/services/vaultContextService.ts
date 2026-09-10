@@ -85,6 +85,14 @@ export class VaultContextService {
 		return this.filterService;
 	}
 
+	public getApp(): App {
+		return this.app;
+	}
+
+	public getSettings(): SecondBrainSettings {
+		return this.settings;
+	}
+
 	/**
 	 * Résolution canonique déterministe d'un fichier dans le coffre (sans devinette ni sensibilité aux accents/casse/chemins relatifs).
 	 */
