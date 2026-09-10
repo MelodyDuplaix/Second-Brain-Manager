@@ -6,7 +6,7 @@ import { TaskParser } from '../parsers/taskParser';
 import { VaultFilterService } from './vaultFilterService';
 import SecondBrainPlugin from '../main';
 
-export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase';
+export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase' | 'correct';
 
 export class NoteActionsService {
 	/**
@@ -145,11 +145,11 @@ CONSIGNES STRICTES :
 	}
 
 	/**
-	 * Résume ou reformule le texte fourni.
+	 * Résume, reformule ou corrige le texte fourni.
 	 */
 	public static async summarizeOrRephrase(
 		text: string,
-		mode: 'summary' | 'rephrase' | 'key_points',
+		mode: 'summary' | 'rephrase' | 'key_points' | 'correct',
 		plugin: SecondBrainPlugin
 	): Promise<string> {
 		const config = await this.getLLMConfig(plugin);
@@ -159,6 +159,12 @@ CONSIGNES STRICTES :
 			instruction = 'Fais un résumé synthétique, clair et percutant du texte suivant. Mets en valeur les conclusions principales.';
 		} else if (mode === 'rephrase') {
 			instruction = 'Reformule le texte suivant pour améliorer sa clarté, son professionnalisme et sa fluidité tout en conservant scrupuleusement son sens.';
+		} else if (mode === 'correct') {
+			instruction = `Corrige rigoureusement les fautes d'orthographe, de grammaire, de conjugaison, d'accords, de ponctuation et de typographie du texte suivant.
+CONSIGNES STRICTES :
+1. NE REFORMULE PAS : ne modifie ni la structure des phrases, ni le style, ni le vocabulaire de l'auteur. Conserve scrupuleusement chaque mot, ton et registre de langue.
+2. Respecte fidèlement la mise en page, les retours à la ligne, les indentations et les balises Markdown (titres #, listes -, cases à cocher - [ ], liens [[...]], mise en forme gras/italique, etc.).
+3. Rends UNIQUEMENT le texte corrigé, sans introduction, sans conclusion, sans méta-commentaire et sans bloc de code markdown englobant.`;
 		} else {
 			instruction = 'Extrais les points clés essentiels sous forme de liste à puces percutante.';
 		}
@@ -172,7 +178,11 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		];
 
 		const response = await LLMService.generateResponse(messages, config);
-		return response.content.trim();
+		let content = response.content.trim();
+		if (content.startsWith('```') && content.endsWith('```')) {
+			content = content.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
+		}
+		return content.trim();
 	}
 
 	/**
@@ -376,6 +386,53 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			notice.hide();
 			const msg = err instanceof Error ? err.message : String(err);
 			new Notice(`❌ Erreur : ${msg}`);
+		}
+	}
+
+	/**
+	 * Exécute la correction orthographique et grammaticale sans reformulation.
+	 */
+	public static async handleCorrectCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
+		const targetEditor = editor || targetView?.editor;
+		const activeFile = targetView?.file;
+
+		if (!targetEditor) {
+			new Notice('Veuillez ouvrir une note Markdown.');
+			return;
+		}
+
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (activeFile && filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
+			return;
+		}
+
+		const selectedText = targetEditor.getSelection();
+		const hasSelection = Boolean(selectedText.trim());
+		const textToCorrect = hasSelection ? selectedText : targetEditor.getValue();
+
+		if (!textToCorrect.trim()) {
+			new Notice(hasSelection ? 'Veuillez sélectionner du texte à corriger.' : 'La note est vide.');
+			return;
+		}
+
+		const notice = new Notice('🔤 Correction sans reformulation en cours...', 0);
+
+		try {
+			const corrected = await this.summarizeOrRephrase(textToCorrect, 'correct', plugin);
+			notice.hide();
+
+			if (hasSelection) {
+				targetEditor.replaceSelection(corrected);
+			} else {
+				targetEditor.setValue(corrected);
+			}
+			new Notice('✅ Texte corrigé sans reformulation !');
+		} catch (err: unknown) {
+			notice.hide();
+			const msg = err instanceof Error ? err.message : String(err);
+			new Notice(`❌ Erreur lors de la correction : ${msg}`);
 		}
 	}
 }

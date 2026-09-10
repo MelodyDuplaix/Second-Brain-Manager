@@ -23,7 +23,8 @@ export class TFolder extends TAbstractFile {
 }
 
 export class Notice {
-	constructor(public message: string) {}
+	constructor(public message: string, public duration?: number) {}
+	hide() {}
 }
 
 export class Modal {

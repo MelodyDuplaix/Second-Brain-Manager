@@ -359,6 +359,14 @@ export default class SecondBrainPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'corriger-sans-reformuler',
+			name: 'Corriger sans reformuler (orthographe et grammaire)',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				NoteActionsService.handleCorrectCommand(this.app, this, editor, view);
+			}
+		});
+
 		// Intégration dans le menu contextuel clic-droit de l'éditeur Markdown
 		this.registerEvent(
 			this.app.workspace.on('editor-menu', (menu, editor, view) => {
@@ -383,6 +391,14 @@ export default class SecondBrainPlugin extends Plugin {
 						.setIcon('check-square')
 						.onClick(() => {
 							NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view as MarkdownView);
+						});
+				});
+
+				menu.addItem((item) => {
+					item.setTitle('🔤 Second Brain: Corriger sans reformuler')
+						.setIcon('check-check')
+						.onClick(() => {
+							NoteActionsService.handleCorrectCommand(this.app, this, editor, view as MarkdownView);
 						});
 				});
 

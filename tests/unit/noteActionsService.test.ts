@@ -101,4 +101,93 @@ describe('NoteActionsService', () => {
 
 		expect(rephrased).toContain('livrables pour la fin du mois');
 	});
+
+	it('should correct spelling and grammar without rephrasing in correct mode', async () => {
+		const mockResponse = {
+			content: 'Voici le texte corrigé avec une orthographe impeccable.'
+		};
+		const spy = vi.spyOn(LLMService, 'generateResponse').mockResolvedValue(mockResponse as any);
+
+		const corrected = await NoteActionsService.summarizeOrRephrase(
+			'Voici le texte corriger avec une hortographe impecable.',
+			'correct',
+			mockPlugin as any
+		);
+
+		expect(corrected).toBe('Voici le texte corrigé avec une orthographe impeccable.');
+		expect(spy).toHaveBeenCalled();
+		const promptCall = spy.mock.calls[0][0];
+		const systemMessage = promptCall.find((m: any) => m.role === 'system');
+		expect(systemMessage?.content).toContain('NE REFORMULE PAS');
+		expect(systemMessage?.content).toContain('orthographe, de grammaire');
+	});
+
+	it('should clean enclosing markdown backticks from LLM output in correct mode', async () => {
+		const mockResponse = {
+			content: '```markdown\nLigne 1 corrigée\nLigne 2 corrigée\n```'
+		};
+		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue(mockResponse as any);
+
+		const corrected = await NoteActionsService.summarizeOrRephrase(
+			'Ligne 1 a corriger\nLigne 2 a corriger',
+			'correct',
+			mockPlugin as any
+		);
+
+		expect(corrected).toBe('Ligne 1 corrigée\nLigne 2 corrigée');
+	});
+
+	it('should replace selection when text is selected in handleCorrectCommand', async () => {
+		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({ content: 'Texte sélectionné corrigé' } as any);
+
+		const mockEditor = {
+			getSelection: vi.fn().mockReturnValue('Texte sélectioné a corriger'),
+			getValue: vi.fn().mockReturnValue('Tout le document'),
+			replaceSelection: vi.fn(),
+			setValue: vi.fn()
+		};
+
+		const mockView = {
+			editor: mockEditor,
+			file: { basename: 'Note 1', path: 'Note 1.md' }
+		};
+
+		const mockApp = {
+			workspace: {
+				getActiveViewOfType: vi.fn().mockReturnValue(mockView)
+			}
+		};
+
+		await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+
+		expect(mockEditor.replaceSelection).toHaveBeenCalledWith('Texte sélectionné corrigé');
+		expect(mockEditor.setValue).not.toHaveBeenCalled();
+	});
+
+	it('should replace full note when no text is selected in handleCorrectCommand', async () => {
+		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({ content: 'Document entier corrigé' } as any);
+
+		const mockEditor = {
+			getSelection: vi.fn().mockReturnValue(''),
+			getValue: vi.fn().mockReturnValue('Document entier avec fôtes'),
+			replaceSelection: vi.fn(),
+			setValue: vi.fn()
+		};
+
+		const mockView = {
+			editor: mockEditor,
+			file: { basename: 'Note 2', path: 'Note 2.md' }
+		};
+
+		const mockApp = {
+			workspace: {
+				getActiveViewOfType: vi.fn().mockReturnValue(mockView)
+			}
+		};
+
+		await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+
+		expect(mockEditor.setValue).toHaveBeenCalledWith('Document entier corrigé');
+		expect(mockEditor.replaceSelection).not.toHaveBeenCalled();
+	});
 });
