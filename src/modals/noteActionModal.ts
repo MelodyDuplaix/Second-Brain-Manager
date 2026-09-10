@@ -60,6 +60,7 @@ export class NoteActionModal extends Modal {
 		this.loadingEl.createSpan({ text: 'Génération en cours...' });
 
 		this.errorEl = contentBox.createDiv({ cls: 'sbm-note-action-error sbm-hidden' });
+		this.errorEl.style.display = 'none';
 
 		this.resultTextareaEl = contentBox.createEl('textarea', {
 			cls: 'sbm-note-action-textarea sbm-hidden',
@@ -68,6 +69,7 @@ export class NoteActionModal extends Modal {
 				spellcheck: 'false'
 			}
 		});
+		this.resultTextareaEl.style.display = 'none';
 
 		this.resultTextareaEl.addEventListener('input', () => {
 			this.currentResult = this.resultTextareaEl.value;
@@ -166,25 +168,79 @@ export class NoteActionModal extends Modal {
 		if (this.followupInputEl) this.followupInputEl.disabled = disabled;
 	}
 
+	private showLoadingState(): void {
+		this.setButtonsDisabled(true);
+		if (this.loadingEl) {
+			this.loadingEl.removeClass('sbm-hidden');
+			this.loadingEl.style.display = 'flex';
+		}
+		if (this.resultTextareaEl) {
+			this.resultTextareaEl.addClass('sbm-hidden');
+			this.resultTextareaEl.style.display = 'none';
+		}
+		if (this.errorEl) {
+			this.errorEl.addClass('sbm-hidden');
+			this.errorEl.style.display = 'none';
+		}
+	}
+
+	private showResultState(): void {
+		this.setButtonsDisabled(false);
+		if (this.loadingEl) {
+			this.loadingEl.addClass('sbm-hidden');
+			this.loadingEl.style.display = 'none';
+		}
+		if (this.resultTextareaEl) {
+			this.resultTextareaEl.removeClass('sbm-hidden');
+			this.resultTextareaEl.style.display = 'block';
+		}
+		if (this.errorEl) {
+			this.errorEl.addClass('sbm-hidden');
+			this.errorEl.style.display = 'none';
+		}
+	}
+
+	private showErrorState(message: string, onRetry: () => void): void {
+		this.setButtonsDisabled(false);
+		if (this.loadingEl) {
+			this.loadingEl.addClass('sbm-hidden');
+			this.loadingEl.style.display = 'none';
+		}
+		if (this.resultTextareaEl) {
+			this.resultTextareaEl.addClass('sbm-hidden');
+			this.resultTextareaEl.style.display = 'none';
+		}
+		if (this.errorEl) {
+			this.errorEl.empty();
+			this.errorEl.removeClass('sbm-hidden');
+			this.errorEl.style.display = 'flex';
+
+			const msgRow = this.errorEl.createDiv({ cls: 'sbm-note-action-error-msg' });
+			const warnIcon = msgRow.createSpan();
+			setIcon(warnIcon, 'alert-triangle');
+			msgRow.createSpan({ text: `Erreur : ${message}` });
+
+			const retryBtn = this.errorEl.createEl('button', {
+				cls: 'sbm-note-action-btn',
+				text: 'Réessayer'
+			});
+			retryBtn.addEventListener('click', onRetry);
+		}
+	}
+
 	public async executeInitialGeneration(): Promise<void> {
 		this.isLoading = true;
-		this.setButtonsDisabled(true);
-		this.loadingEl?.removeClass('sbm-hidden');
-		this.resultTextareaEl?.addClass('sbm-hidden');
-		this.errorEl?.addClass('sbm-hidden');
+		this.showLoadingState();
 
 		try {
 			const result = await this.options.generateInitial();
 			this.currentResult = result;
 			if (this.resultTextareaEl) this.resultTextareaEl.value = result;
 
-			this.loadingEl?.addClass('sbm-hidden');
-			this.resultTextareaEl?.removeClass('sbm-hidden');
-			this.setButtonsDisabled(false);
+			this.showResultState();
 			this.followupInputEl?.focus();
 		} catch (err: unknown) {
-			this.loadingEl?.addClass('sbm-hidden');
-			this.showError(err instanceof Error ? err.message : String(err), () => this.executeInitialGeneration());
+			this.showErrorState(err instanceof Error ? err.message : String(err), () => this.executeInitialGeneration());
 		} finally {
 			this.isLoading = false;
 		}
@@ -192,10 +248,7 @@ export class NoteActionModal extends Modal {
 
 	public async executeFollowUp(instruction: string): Promise<void> {
 		this.isLoading = true;
-		this.setButtonsDisabled(true);
-		this.loadingEl?.removeClass('sbm-hidden');
-		this.resultTextareaEl?.addClass('sbm-hidden');
-		this.errorEl?.addClass('sbm-hidden');
+		this.showLoadingState();
 
 		try {
 			const refined = await NoteActionsService.refineResult(
@@ -209,33 +262,13 @@ export class NoteActionModal extends Modal {
 			if (this.resultTextareaEl) this.resultTextareaEl.value = refined;
 			if (this.followupInputEl) this.followupInputEl.value = '';
 
-			this.loadingEl?.addClass('sbm-hidden');
-			this.resultTextareaEl?.removeClass('sbm-hidden');
-			this.setButtonsDisabled(false);
+			this.showResultState();
 			this.resultTextareaEl?.focus();
 		} catch (err: unknown) {
-			this.loadingEl?.addClass('sbm-hidden');
-			this.showError(err instanceof Error ? err.message : String(err), () => this.executeFollowUp(instruction));
+			this.showErrorState(err instanceof Error ? err.message : String(err), () => this.executeFollowUp(instruction));
 		} finally {
 			this.isLoading = false;
 		}
-	}
-
-	private showError(message: string, onRetry: () => void): void {
-		this.errorEl.empty();
-		this.errorEl.removeClass('sbm-hidden');
-
-		const msgRow = this.errorEl.createDiv({ cls: 'sbm-note-action-error-msg' });
-		const warnIcon = msgRow.createSpan();
-		setIcon(warnIcon, 'alert-triangle');
-		msgRow.createSpan({ text: `Erreur : ${message}` });
-
-		const retryBtn = this.errorEl.createEl('button', {
-			cls: 'sbm-note-action-btn',
-			text: 'Réessayer'
-		});
-		retryBtn.addEventListener('click', onRetry);
-		this.setButtonsDisabled(false);
 	}
 
 	public async handleCopy(): Promise<void> {

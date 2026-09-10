@@ -6037,6 +6037,16 @@ textarea.sbm-chat-textarea:focus {
 	outline: none !important;
 }
 
+.sbm-hidden {
+	display: none !important;
+}
+
+.sbm-note-action-loading.sbm-hidden,
+.sbm-note-action-textarea.sbm-hidden,
+.sbm-note-action-error.sbm-hidden {
+	display: none !important;
+}
+
 /* Loading state */
 .sbm-note-action-loading {
 	display: flex;
