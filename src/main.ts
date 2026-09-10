@@ -361,7 +361,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'corriger-sans-reformuler',
-			name: 'Corriger sans reformuler (orthographe et grammaire)',
+			name: 'Corriger sans reformuler',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				NoteActionsService.handleCorrectCommand(this.app, this, editor, view);
 			}
