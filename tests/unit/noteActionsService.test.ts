@@ -137,7 +137,7 @@ describe('NoteActionsService', () => {
 		expect(corrected).toBe('Ligne 1 corrigée\nLigne 2 corrigée');
 	});
 
-	it('should replace selection when text is selected in handleCorrectCommand', async () => {
+	it('should replace selection when text is selected in handleCorrectCommand after modal validation', async () => {
 		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({ content: 'Texte sélectionné corrigé' } as any);
 
 		const mockEditor = {
@@ -158,20 +158,24 @@ describe('NoteActionsService', () => {
 			}
 		};
 
-		await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+		const modal = await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+		expect(modal).toBeDefined();
+		await modal!.readyPromise;
+		modal!.handleReplace();
 
 		expect(mockEditor.replaceSelection).toHaveBeenCalledWith('Texte sélectionné corrigé');
 		expect(mockEditor.setValue).not.toHaveBeenCalled();
 	});
 
-	it('should replace full note when no text is selected in handleCorrectCommand', async () => {
+	it('should replace full note when no text is selected in handleCorrectCommand after modal validation', async () => {
 		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({ content: 'Document entier corrigé' } as any);
 
 		const mockEditor = {
 			getSelection: vi.fn().mockReturnValue(''),
 			getValue: vi.fn().mockReturnValue('Document entier avec fôtes'),
 			replaceSelection: vi.fn(),
-			setValue: vi.fn()
+			setValue: vi.fn(),
+			lineCount: vi.fn().mockReturnValue(1)
 		};
 
 		const mockView = {
@@ -185,9 +189,29 @@ describe('NoteActionsService', () => {
 			}
 		};
 
-		await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+		const modal = await NoteActionsService.handleCorrectCommand(mockApp as any, mockPlugin as any, mockEditor as any, mockView as any);
+		expect(modal).toBeDefined();
+		await modal!.readyPromise;
+		modal!.handleReplace();
 
 		expect(mockEditor.setValue).toHaveBeenCalledWith('Document entier corrigé');
 		expect(mockEditor.replaceSelection).not.toHaveBeenCalled();
+	});
+
+	it('should refine result with follow-up instructions in refineResult', async () => {
+		const mockResponse = {
+			content: 'Texte raccourci et concis.'
+		};
+		vi.spyOn(LLMService, 'generateResponse').mockResolvedValue(mockResponse as any);
+
+		const refined = await NoteActionsService.refineResult(
+			'Texte source long',
+			'Texte initialement généré',
+			'Rends-le plus concis',
+			'correct',
+			mockPlugin as any
+		);
+
+		expect(refined).toBe('Texte raccourci et concis.');
 	});
 });

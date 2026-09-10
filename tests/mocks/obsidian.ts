@@ -27,10 +27,40 @@ export class Notice {
 	hide() {}
 }
 
+function createMockElement(): any {
+	const el: any = {
+		empty: () => {},
+		createEl: () => createMockElement(),
+		createDiv: () => createMockElement(),
+		createSpan: () => createMockElement(),
+		addClass: () => {},
+		removeClass: () => {},
+		toggleClass: () => {},
+		addEventListener: () => {},
+		setAttribute: () => {},
+		focus: () => {},
+		style: {},
+		classList: { add: () => {}, remove: () => {}, contains: () => false },
+		value: ''
+	};
+	return el;
+}
+
 export class Modal {
-	contentEl = { empty: () => {}, createEl: () => ({}) };
-	open() {}
-	close() {}
+	contentEl: any = createMockElement();
+	modalEl: any = createMockElement();
+	scope = { register: () => {} };
+	constructor(public app?: any) {}
+	open() {
+		if (typeof (this as any).onOpen === 'function') {
+			(this as any).onOpen();
+		}
+	}
+	close() {
+		if (typeof (this as any).onClose === 'function') {
+			(this as any).onClose();
+		}
+	}
 }
 
 export class MenuItem {

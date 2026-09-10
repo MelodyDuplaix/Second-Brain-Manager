@@ -4,6 +4,7 @@ import { LLMConfig, ChatMessage } from '../models/llm';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskParser } from '../parsers/taskParser';
 import { VaultFilterService } from './vaultFilterService';
+import { NoteActionModal } from '../modals/noteActionModal';
 import SecondBrainPlugin from '../main';
 
 export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase' | 'correct';
@@ -186,9 +187,63 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 	}
 
 	/**
-	 * Exécute l'extraction des tâches depuis la note ou sélection active dans l'éditeur.
+	 * Révise et affine un résultat existant en appliquant une consigne de suivi (Follow-up instruction).
 	 */
-	public static async handleExtractTasksCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+	public static async refineResult(
+		originalText: string,
+		currentResult: string,
+		followUpInstruction: string,
+		actionType: NoteActionType,
+		plugin: SecondBrainPlugin
+	): Promise<string> {
+		const config = await this.getLLMConfig(plugin);
+
+		const actionLabels: Record<NoteActionType, string> = {
+			extract_tasks: 'Extraction de tâches Markdown',
+			breakdown_task: 'Décomposition de tâche',
+			summarize: 'Résumé exécutif',
+			rephrase: 'Reformulation de texte',
+			correct: 'Correction orthographique et grammaticale sans reformulation'
+		};
+
+		const systemPrompt = `Tu es l'assistant "Second Brain Manager".
+L'utilisateur a généré un résultat pour l'action "${actionLabels[actionType] || actionType}", et souhaite l'ajuster via une consigne de suivi.
+
+Texte d'origine :
+"""
+${originalText}
+"""
+
+Résultat actuel à adapter :
+"""
+${currentResult}
+"""
+
+CONSIGNE D'AJUSTEMENT :
+"${followUpInstruction}"
+
+CONSIGNES STRICTES :
+1. Applique scrupuleusement la consigne d'ajustement au résultat actuel.
+2. Si l'action est une correction sans reformulation, veille à préserver le ton, la mise en page et le vocabulaire de l'auteur sauf demande expresse contraire.
+3. Ne renvoie AUCUN commentaire, préambule, conclusion ou bloc markdown englobant \`\`\` : renvoie UNIQUEMENT le texte final révisé.`;
+
+		const messages: ChatMessage[] = [
+			{ role: 'system', content: systemPrompt },
+			{ role: 'user', content: followUpInstruction }
+		];
+
+		const response = await LLMService.generateResponse(messages, config);
+		let content = response.content.trim();
+		if (content.startsWith('```') && content.endsWith('```')) {
+			content = content.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
+		}
+		return content.trim();
+	}
+
+	/**
+	 * Exécute l'extraction des tâches depuis la note ou sélection active dans l'éditeur avec prévisualisation et validation.
+	 */
+	public static async handleExtractTasksCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<NoteActionModal | void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
 		const activeFile = targetView?.file;
@@ -205,49 +260,51 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		}
 
 		const selectedText = targetEditor.getSelection();
-		const textToAnalyze = selectedText.trim() ? selectedText : targetEditor.getValue();
+		const hasSelection = Boolean(selectedText.trim());
+		const textToAnalyze = hasSelection ? selectedText : targetEditor.getValue();
 
 		if (!textToAnalyze.trim()) {
 			new Notice('La note est vide.');
 			return;
 		}
 
-		const notice = new Notice('🧠 Extraction des tâches en cours...', 0);
-
-		try {
-			const result = await this.extractTasks(textToAnalyze, activeFile.basename, plugin);
-			notice.hide();
-
-			if (result.includes('Aucune action')) {
-				new Notice('ℹ️ Aucune action concrète identifiée dans ce texte.');
-				return;
+		const modal = new NoteActionModal(app, plugin, {
+			title: 'Extraire les tâches',
+			icon: 'check-square',
+			actionType: 'extract_tasks',
+			sourceText: textToAnalyze,
+			generateInitial: () => this.extractTasks(textToAnalyze, activeFile.basename, plugin),
+			onApplyReplace: (result) => {
+				if (hasSelection) {
+					targetEditor.replaceSelection(`### 📋 Actions Extraites\n${result}\n`);
+				} else {
+					const docLength = targetEditor.lineCount();
+					const lastLineContent = targetEditor.getLine(docLength - 1);
+					const prefix = lastLineContent.trim() ? '\n\n' : '\n';
+					targetEditor.replaceRange(`${prefix}## 📋 Actions Extraites\n${result}\n`, { line: docLength, ch: 0 });
+				}
+			},
+			onApplyInsert: (result) => {
+				if (hasSelection) {
+					const cursor = targetEditor.getCursor('to');
+					targetEditor.replaceRange(`\n\n### 📋 Actions Extraites\n${result}\n`, cursor);
+				} else {
+					const docLength = targetEditor.lineCount();
+					const lastLineContent = targetEditor.getLine(docLength - 1);
+					const prefix = lastLineContent.trim() ? '\n\n' : '\n';
+					targetEditor.replaceRange(`${prefix}## 📋 Actions Extraites\n${result}\n`, { line: docLength, ch: 0 });
+				}
 			}
+		});
 
-			// Insertion des tâches extraites
-			if (selectedText.trim()) {
-				// Insère directement après la sélection
-				const cursor = targetEditor.getCursor('to');
-				targetEditor.replaceRange(`\n\n### 📋 Actions Extraites\n${result}\n`, cursor);
-			} else {
-				// Insère à la fin du document
-				const docLength = targetEditor.lineCount();
-				const lastLineContent = targetEditor.getLine(docLength - 1);
-				const prefix = lastLineContent.trim() ? '\n\n' : '\n';
-				targetEditor.replaceRange(`${prefix}## 📋 Actions Extraites\n${result}\n`, { line: docLength, ch: 0 });
-			}
-
-			new Notice('✅ Tâches extraites et insérées avec succès !');
-		} catch (err: unknown) {
-			notice.hide();
-			const msg = err instanceof Error ? err.message : String(err);
-			new Notice(`❌ Erreur lors de l'extraction : ${msg}`);
-		}
+		modal.open();
+		return modal;
 	}
 
 	/**
-	 * Exécute la décomposition de la tâche sous la ligne du curseur.
+	 * Exécute la décomposition de la tâche sous la ligne du curseur avec prévisualisation et validation.
 	 */
-	public static async handleBreakdownTaskCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+	public static async handleBreakdownTaskCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<NoteActionModal | void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
 		const activeFile = targetView?.file;
@@ -271,38 +328,36 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			return;
 		}
 
-		const notice = new Notice('🧩 Décomposition de la tâche en cours...', 0);
+		const indentMatch = currentLine.match(/^(\s*)/);
+		const parentIndent = indentMatch ? indentMatch[1] : '';
+		const indentStep = parentIndent.includes('\t') ? '\t' : (parentIndent.length > 0 ? '  ' : '\t');
+		const childIndent = parentIndent + indentStep;
 
-		try {
-			// Déterminer l'indentation appropriée par rapport à la ligne parente
-			const indentMatch = currentLine.match(/^(\s*)/);
-			const parentIndent = indentMatch ? indentMatch[1] : '';
-			const indentStep = parentIndent.includes('\t') ? '\t' : (parentIndent.length > 0 ? '  ' : '\t');
-			const childIndent = parentIndent + indentStep;
-
-			const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin, childIndent);
-			notice.hide();
-
-			if (subtasks.length === 0) {
-				new Notice('Impossible de décomposer cette tâche.');
-				return;
+		const modal = new NoteActionModal(app, plugin, {
+			title: 'Décomposer cette tâche',
+			icon: 'list-tree',
+			actionType: 'breakdown_task',
+			sourceText: currentLine,
+			generateInitial: async () => {
+				const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin, childIndent);
+				return subtasks.join('\n');
+			},
+			onApplyReplace: (result) => {
+				targetEditor.replaceRange(result, { line: cursor.line, ch: 0 }, { line: cursor.line, ch: currentLine.length });
+			},
+			onApplyInsert: (result) => {
+				targetEditor.replaceRange('\n' + result, { line: cursor.line, ch: currentLine.length });
 			}
+		});
 
-			const insertText = '\n' + subtasks.join('\n');
-			targetEditor.replaceRange(insertText, { line: cursor.line, ch: currentLine.length });
-
-			new Notice(`✅ Tâche décomposée en ${subtasks.length} sous-étapes !`);
-		} catch (err: unknown) {
-			notice.hide();
-			const msg = err instanceof Error ? err.message : String(err);
-			new Notice(`❌ Erreur lors de la décomposition : ${msg}`);
-		}
+		modal.open();
+		return modal;
 	}
 
 	/**
-	 * Exécute le résumé de la sélection ou de la note courante.
+	 * Exécute le résumé de la sélection ou de la note courante avec prévisualisation et validation.
 	 */
-	public static async handleSummarizeCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+	public static async handleSummarizeCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<NoteActionModal | void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
 		const activeFile = targetView?.file;
@@ -319,40 +374,48 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		}
 
 		const selectedText = targetEditor.getSelection();
-		const textToAnalyze = selectedText.trim() ? selectedText : targetEditor.getValue();
+		const hasSelection = Boolean(selectedText.trim());
+		const textToAnalyze = hasSelection ? selectedText : targetEditor.getValue();
 
 		if (!textToAnalyze.trim()) {
 			new Notice('La note est vide.');
 			return;
 		}
 
-		const notice = new Notice('📝 Génération du résumé...', 0);
-
-		try {
-			const summary = await this.summarizeOrRephrase(textToAnalyze, 'summary', plugin);
-			notice.hide();
-
-			const callout = `> [!SUMMARY] Résumé Exécutif\n> ${summary.split('\n').join('\n> ')}\n\n`;
-
-			if (selectedText.trim()) {
-				const from = targetEditor.getCursor('from');
-				targetEditor.replaceRange(`${callout}${selectedText}`, from, targetEditor.getCursor('to'));
-			} else {
-				targetEditor.replaceRange(callout, { line: 0, ch: 0 });
+		const modal = new NoteActionModal(app, plugin, {
+			title: 'Résumer',
+			icon: 'file-text',
+			actionType: 'summarize',
+			sourceText: textToAnalyze,
+			generateInitial: async () => {
+				const summary = await this.summarizeOrRephrase(textToAnalyze, 'summary', plugin);
+				return `> [!SUMMARY] Résumé Exécutif\n> ${summary.split('\n').join('\n> ')}`;
+			},
+			onApplyReplace: (result) => {
+				if (hasSelection) {
+					targetEditor.replaceSelection(result + '\n\n');
+				} else {
+					targetEditor.setValue(result + '\n\n' + targetEditor.getValue());
+				}
+			},
+			onApplyInsert: (result) => {
+				if (hasSelection) {
+					const from = targetEditor.getCursor('from');
+					targetEditor.replaceRange(`${result}\n\n`, from);
+				} else {
+					targetEditor.replaceRange(`${result}\n\n`, { line: 0, ch: 0 });
+				}
 			}
+		});
 
-			new Notice('✅ Résumé généré et inséré !');
-		} catch (err: unknown) {
-			notice.hide();
-			const msg = err instanceof Error ? err.message : String(err);
-			new Notice(`❌ Erreur : ${msg}`);
-		}
+		modal.open();
+		return modal;
 	}
 
 	/**
-	 * Exécute la reformulation de la sélection active.
+	 * Exécute la reformulation de la sélection active avec prévisualisation et validation.
 	 */
-	public static async handleRephraseCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+	public static async handleRephraseCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<NoteActionModal | void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
 		const activeFile = targetView?.file;
@@ -374,25 +437,29 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			return;
 		}
 
-		const notice = new Notice('✨ Reformulation en cours...', 0);
+		const modal = new NoteActionModal(app, plugin, {
+			title: 'Reformuler la sélection',
+			icon: 'sparkles',
+			actionType: 'rephrase',
+			sourceText: selectedText,
+			generateInitial: () => this.summarizeOrRephrase(selectedText, 'rephrase', plugin),
+			onApplyReplace: (result) => {
+				targetEditor.replaceSelection(result);
+			},
+			onApplyInsert: (result) => {
+				const to = targetEditor.getCursor('to');
+				targetEditor.replaceRange(`\n\n${result}`, to);
+			}
+		});
 
-		try {
-			const rephrased = await this.summarizeOrRephrase(selectedText, 'rephrase', plugin);
-			notice.hide();
-
-			targetEditor.replaceSelection(rephrased);
-			new Notice('✅ Texte reformulé avec succès !');
-		} catch (err: unknown) {
-			notice.hide();
-			const msg = err instanceof Error ? err.message : String(err);
-			new Notice(`❌ Erreur : ${msg}`);
-		}
+		modal.open();
+		return modal;
 	}
 
 	/**
-	 * Exécute la correction orthographique et grammaticale sans reformulation.
+	 * Exécute la correction orthographique et grammaticale sans reformulation avec prévisualisation et validation.
 	 */
-	public static async handleCorrectCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<void> {
+	public static async handleCorrectCommand(app: App, plugin: SecondBrainPlugin, editor?: Editor, view?: MarkdownView): Promise<NoteActionModal | void> {
 		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
 		const targetEditor = editor || targetView?.editor;
 		const activeFile = targetView?.file;
@@ -417,22 +484,31 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 			return;
 		}
 
-		const notice = new Notice('🔤 Correction sans reformulation en cours...', 0);
-
-		try {
-			const corrected = await this.summarizeOrRephrase(textToCorrect, 'correct', plugin);
-			notice.hide();
-
-			if (hasSelection) {
-				targetEditor.replaceSelection(corrected);
-			} else {
-				targetEditor.setValue(corrected);
+		const modal = new NoteActionModal(app, plugin, {
+			title: 'Corriger sans reformuler',
+			icon: 'check-check',
+			actionType: 'correct',
+			sourceText: textToCorrect,
+			generateInitial: () => this.summarizeOrRephrase(textToCorrect, 'correct', plugin),
+			onApplyReplace: (result) => {
+				if (hasSelection) {
+					targetEditor.replaceSelection(result);
+				} else {
+					targetEditor.setValue(result);
+				}
+			},
+			onApplyInsert: (result) => {
+				if (hasSelection) {
+					const to = targetEditor.getCursor('to');
+					targetEditor.replaceRange(`\n\n${result}`, to);
+				} else {
+					const docLength = targetEditor.lineCount();
+					targetEditor.replaceRange(`\n\n${result}`, { line: docLength, ch: 0 });
+				}
 			}
-			new Notice('✅ Texte corrigé sans reformulation !');
-		} catch (err: unknown) {
-			notice.hide();
-			const msg = err instanceof Error ? err.message : String(err);
-			new Notice(`❌ Erreur lors de la correction : ${msg}`);
-		}
+		});
+
+		modal.open();
+		return modal;
 	}
 }

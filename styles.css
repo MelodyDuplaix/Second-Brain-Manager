@@ -5937,4 +5937,275 @@ textarea.sbm-chat-textarea:focus {
 	border-top: none;
 }
 
+/* ==========================================================================
+   Popup Copilot d'Actions sur Notes (Modal de validation)
+   ========================================================================== */
+
+.modal.sbm-note-action-modal {
+	width: 660px;
+	max-width: 92vw;
+	max-height: 88vh;
+	border-radius: 14px;
+	background-color: var(--background-secondary, #1e1e24);
+	border: 1px solid var(--background-modifier-border, #333);
+	box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+	padding: 16px 20px 18px 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	overflow: hidden;
+}
+
+.sbm-note-action-modal .modal-close-button {
+	display: none;
+}
+
+.sbm-note-action-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sbm-note-action-title-group {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 0.95em;
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-note-action-title-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--interactive-accent);
+}
+
+.sbm-note-action-close-btn {
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	color: var(--text-muted);
+	padding: 4px;
+	border-radius: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.sbm-note-action-close-btn:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+/* Zone de résultat / Prévisualisation */
+.sbm-note-action-content-box {
+	position: relative;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	background-color: var(--background-primary);
+	padding: 12px;
+	min-height: 140px;
+	max-height: 320px;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.sbm-note-action-textarea {
+	width: 100%;
+	height: 100%;
+	min-height: 120px;
+	max-height: 300px;
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	color: var(--text-normal);
+	font-family: var(--font-text);
+	font-size: 0.9em;
+	line-height: 1.5;
+	resize: vertical;
+	padding: 0;
+	margin: 0;
+}
+
+.sbm-note-action-textarea:focus {
+	outline: none !important;
+}
+
+/* Loading state */
+.sbm-note-action-loading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	height: 140px;
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
+.sbm-note-action-spinner {
+	width: 24px;
+	height: 24px;
+	border: 3px solid var(--background-modifier-border);
+	border-top-color: var(--interactive-accent);
+	border-radius: 50%;
+	animation: sbm-spin 0.8s linear infinite;
+}
+
+@keyframes sbm-spin {
+	to { transform: rotate(360deg); }
+}
+
+.sbm-note-action-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 16px;
+	color: var(--text-error, #f87171);
+	font-size: 0.88em;
+}
+
+.sbm-note-action-error-msg {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* Zone d'instruction de suivi (Follow-up) */
+.sbm-note-action-followup-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background-color: var(--background-primary);
+	padding: 4px 8px 4px 12px;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sbm-note-action-followup-row:focus-within {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
+}
+
+.sbm-note-action-followup-input {
+	flex: 1;
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	color: var(--text-normal);
+	font-size: 0.88em;
+	padding: 6px 0;
+}
+
+.sbm-note-action-followup-input:focus {
+	outline: none !important;
+}
+
+.sbm-note-action-followup-btn {
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	color: var(--text-muted);
+	cursor: pointer;
+	padding: 4px 6px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.sbm-note-action-followup-btn:hover:not(:disabled) {
+	color: var(--interactive-accent);
+	background-color: var(--background-modifier-hover);
+}
+
+.sbm-note-action-followup-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Barre d'actions en bas */
+.sbm-note-action-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-top: 4px;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.sbm-note-action-model-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.82em;
+	color: var(--text-muted);
+	padding: 4px 8px;
+	border-radius: 6px;
+	background-color: var(--background-modifier-hover);
+	cursor: default;
+}
+
+.sbm-note-action-buttons-group {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-note-action-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 0.85em;
+	font-weight: 500;
+	cursor: pointer;
+	border: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+
+.sbm-note-action-btn:hover:not(:disabled) {
+	background-color: var(--background-modifier-hover);
+}
+
+.sbm-note-action-btn:active:not(:disabled) {
+	transform: scale(0.98);
+}
+
+.sbm-note-action-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.sbm-note-action-btn.primary {
+	background-color: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent, #ffffff);
+	font-weight: 600;
+}
+
+.sbm-note-action-btn.primary:hover:not(:disabled) {
+	background-color: var(--interactive-accent-hover, var(--interactive-accent));
+	filter: brightness(1.1);
+}
+
+.sbm-note-action-shortcut-hint {
+	font-size: 0.8em;
+	opacity: 0.7;
+	margin-left: 2px;
+	letter-spacing: 0.5px;
+}
+
+
 
