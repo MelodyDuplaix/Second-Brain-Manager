@@ -1,6 +1,8 @@
 import { App, Modal, Notice, setIcon } from 'obsidian';
 import SecondBrainPlugin from '../main';
 import { NoteActionType, NoteActionsService } from '../services/noteActionsService';
+import { ModelPickerModal } from './modelPickerModal';
+import { LLMProvider } from '../models/llm';
 
 export interface NoteActionModalOptions {
 	title: string;
@@ -18,7 +20,11 @@ export class NoteActionModal extends Modal {
 	private options: NoteActionModalOptions;
 	private currentResult = '';
 	private isLoading = false;
+	private currentModel: string;
+	private currentProvider?: LLMProvider;
 
+	private headerModelBadgeEl?: HTMLElement;
+	private modelBtnEl?: HTMLButtonElement;
 	private resultTextareaEl!: HTMLTextAreaElement;
 	private loadingEl!: HTMLElement;
 	private followupInputEl!: HTMLInputElement;
@@ -32,6 +38,10 @@ export class NoteActionModal extends Modal {
 		super(app);
 		this.plugin = plugin;
 		this.options = options;
+		this.currentModel = (options.overrideModel && options.overrideModel.trim())
+			? options.overrideModel.trim()
+			: (plugin.settings.llmModel || 'LLM');
+		this.currentProvider = plugin.settings.llmProvider;
 	}
 
 	onOpen(): void {
@@ -46,12 +56,10 @@ export class NoteActionModal extends Modal {
 		setIcon(iconSpan, this.options.icon || 'sparkles');
 		titleGroup.createSpan({ text: this.options.title, cls: 'sbm-note-action-title-text' });
 
-		if (this.options.overrideModel) {
-			titleGroup.createSpan({
-				text: `⚡ ${this.options.overrideModel}`,
-				cls: 'sbm-note-action-model-badge'
-			});
-		}
+		this.headerModelBadgeEl = titleGroup.createSpan({
+			cls: 'sbm-note-action-model-header-badge'
+		});
+		this.updateHeaderModelBadge();
 
 		const closeBtn = header.createEl('button', {
 			cls: 'sbm-note-action-close-btn',
@@ -116,11 +124,18 @@ export class NoteActionModal extends Modal {
 		// 4. Barre d'action inférieure (Modèle à gauche, boutons à droite)
 		const footer = contentEl.createDiv({ cls: 'sbm-note-action-footer' });
 
-		const modelBadge = footer.createDiv({ cls: 'sbm-note-action-model-badge' });
-		const modelIcon = modelBadge.createSpan({ cls: 'sbm-model-badge-icon' });
-		setIcon(modelIcon, 'bot');
-		const activeModel = this.plugin.settings.llmModel || 'LLM';
-		modelBadge.createSpan({ text: activeModel });
+		this.modelBtnEl = footer.createEl('button', {
+			cls: 'sbm-note-action-model-btn',
+			attr: {
+				type: 'button',
+				title: 'Cliquer pour changer de modèle IA pour la réponse'
+			}
+		});
+		this.updateModelBtn();
+		this.modelBtnEl.addEventListener('click', (e) => {
+			e.preventDefault();
+			this.openModelPicker();
+		});
 
 		const buttonsGroup = footer.createDiv({ cls: 'sbm-note-action-buttons-group' });
 
@@ -265,7 +280,8 @@ export class NoteActionModal extends Modal {
 				instruction,
 				this.options.actionType,
 				this.plugin,
-				this.options.overrideModel
+				this.currentModel,
+				this.currentProvider
 			);
 			this.currentResult = refined;
 			if (this.resultTextareaEl) this.resultTextareaEl.value = refined;
@@ -307,4 +323,34 @@ export class NoteActionModal extends Modal {
 		this.close();
 		new Notice('✅ Inséré avec succès !');
 	}
+	private updateModelBtn(): void {
+		if (!this.modelBtnEl) return;
+		this.modelBtnEl.empty();
+		const modelIcon = this.modelBtnEl.createSpan({ cls: 'sbm-model-badge-icon' });
+		setIcon(modelIcon, 'bot');
+		const nameSpan = this.modelBtnEl.createSpan({ cls: 'sbm-model-btn-name' });
+		nameSpan.textContent = this.currentModel;
+		const chevronSpan = this.modelBtnEl.createSpan({ cls: 'sbm-model-btn-chevron' });
+		chevronSpan.textContent = ' ▾';
+	}
+
+	private updateHeaderModelBadge(): void {
+		if (!this.headerModelBadgeEl) return;
+		this.headerModelBadgeEl.textContent = `⚡ ${this.currentModel}`;
+	}
+
+	private openModelPicker(): void {
+		new ModelPickerModal(
+			this.app,
+			this.plugin,
+			(selected) => {
+				this.currentModel = selected.name;
+				this.currentProvider = selected.provider;
+				this.updateModelBtn();
+				this.updateHeaderModelBadge();
+			},
+			false
+		).open();
+	}
+
 }

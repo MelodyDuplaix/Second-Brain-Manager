@@ -6230,16 +6230,41 @@ textarea.sbm-chat-textarea:focus {
 	flex-wrap: wrap;
 }
 
-.sbm-note-action-model-badge {
+.sbm-note-action-model-btn {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 0.82em;
-	color: var(--text-muted);
-	padding: 4px 8px;
+	font-size: 0.80em;
+	padding: 3px 8px;
 	border-radius: 6px;
+	background-color: var(--background-secondary);
+	color: var(--text-normal);
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+	user-select: none;
+	transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sbm-note-action-model-btn:hover {
 	background-color: var(--background-modifier-hover);
-	cursor: default;
+	border-color: var(--interactive-accent);
+	color: var(--text-accent);
+}
+
+.sbm-note-action-model-btn .sbm-model-badge-icon {
+	color: var(--interactive-accent);
+	display: flex;
+	align-items: center;
+}
+
+.sbm-note-action-model-btn .sbm-model-btn-name {
+	font-weight: 500;
+}
+
+.sbm-note-action-model-btn .sbm-model-btn-chevron {
+	font-size: 0.75em;
+	opacity: 0.7;
+	margin-left: 2px;
 }
 
 .sbm-note-action-buttons-group {
@@ -6513,8 +6538,8 @@ textarea.sbm-chat-textarea:focus {
 	background-color: rgba(220, 38, 38, 0.2);
 }
 
-.sbm-note-action-model-badge {
-	font-size: 0.70em;
+.sbm-note-action-model-header-badge {
+	font-size: 0.72em;
 	padding: 1px 6px;
 	border-radius: 4px;
 	background-color: rgba(66, 184, 131, 0.15);

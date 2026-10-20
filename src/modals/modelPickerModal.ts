@@ -7,11 +7,13 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 	private plugin: SecondBrainPlugin;
 	private onModelSelected: (model: ModelOption) => void;
 	private loadedModels: ModelOption[] = [];
+	private saveToSettings: boolean;
 
-	constructor(app: App, plugin: SecondBrainPlugin, onModelSelected: (model: ModelOption) => void) {
+	constructor(app: App, plugin: SecondBrainPlugin, onModelSelected: (model: ModelOption) => void, saveToSettings = true) {
 		super(app);
 		this.plugin = plugin;
 		this.onModelSelected = onModelSelected;
+		this.saveToSettings = saveToSettings;
 		this.loadedModels = [];
 		this.setPlaceholder('Rechercher un modèle IA parmi vos fournisseurs configurés...');
 	}
@@ -108,21 +110,26 @@ export class ModelPickerModal extends FuzzySuggestModal<ModelOption> {
 			return;
 		}
 
-		this.plugin.settings.llmProvider = item.provider;
-		this.plugin.settings.llmModel = item.name;
+		if (this.saveToSettings) {
+			this.plugin.settings.llmProvider = item.provider;
+			this.plugin.settings.llmModel = item.name;
 
-		if (item.provider === 'infomaniak' && !this.plugin.settings.llmEndpoint) {
-			this.plugin.settings.llmEndpoint = 'https://api.infomaniak.com';
-		} else if (item.provider === 'openrouter' && !this.plugin.settings.llmEndpoint) {
-			this.plugin.settings.llmEndpoint = 'https://openrouter.ai/api/v1';
-		} else if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
-			this.plugin.settings.llmEndpoint = 'http://localhost:11434';
-		} else if (item.provider === 'lmstudio' && !this.plugin.settings.llmEndpoint) {
-			this.plugin.settings.llmEndpoint = 'http://localhost:1234';
+			if (item.provider === 'infomaniak' && !this.plugin.settings.llmEndpoint) {
+				this.plugin.settings.llmEndpoint = 'https://api.infomaniak.com';
+			} else if (item.provider === 'openrouter' && !this.plugin.settings.llmEndpoint) {
+				this.plugin.settings.llmEndpoint = 'https://openrouter.ai/api/v1';
+			} else if (item.provider === 'ollama' && !this.plugin.settings.llmEndpoint) {
+				this.plugin.settings.llmEndpoint = 'http://localhost:11434';
+			} else if (item.provider === 'lmstudio' && !this.plugin.settings.llmEndpoint) {
+				this.plugin.settings.llmEndpoint = 'http://localhost:1234';
+			}
+
+			await this.plugin.saveSettings();
+			new Notice(`Modèle sélectionné : ${item.name} (${item.providerName})`);
+		} else {
+			new Notice(`Modèle actif pour la réponse : ${item.name}`);
 		}
 
-		await this.plugin.saveSettings();
-		new Notice(`Modèle sélectionné : ${item.name} (${item.providerName})`);
 		this.onModelSelected(item);
 	}
 }

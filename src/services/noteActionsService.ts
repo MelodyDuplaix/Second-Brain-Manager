@@ -1,6 +1,6 @@
 import { App, Editor, MarkdownView, Notice } from 'obsidian';
 import { LLMService } from './llmService';
-import { LLMConfig, ChatMessage } from '../models/llm';
+import { LLMConfig, ChatMessage, LLMProvider } from '../models/llm';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskParser } from '../parsers/taskParser';
 import { VaultFilterService } from './vaultFilterService';
@@ -14,12 +14,34 @@ export class NoteActionsService {
 	/**
 	 * Récupère la configuration LLM active pour exécuter l'action.
 	 */
-	private static async getLLMConfig(plugin: SecondBrainPlugin, modelOverride?: string, signal?: AbortSignal): Promise<LLMConfig> {
-		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
+	private static async getLLMConfig(
+		plugin: SecondBrainPlugin,
+		modelOverride?: string,
+		providerOverride?: LLMProvider,
+		signal?: AbortSignal
+	): Promise<LLMConfig> {
+		const provider = providerOverride || plugin.settings.llmProvider;
+		const apiKey = await plugin.getSecretApiKey(provider);
 		const chosenModel = (modelOverride && modelOverride.trim()) ? modelOverride.trim() : plugin.settings.llmModel;
+		let endpoint = plugin.settings.llmEndpoint;
+		if (providerOverride && providerOverride !== plugin.settings.llmProvider) {
+			if (provider === 'openai') {
+				endpoint = 'https://api.openai.com/v1';
+			} else if (provider === 'gemini') {
+				endpoint = 'https://generativelanguage.googleapis.com';
+			} else if (provider === 'openrouter') {
+				endpoint = 'https://openrouter.ai/api/v1';
+			} else if (provider === 'infomaniak') {
+				endpoint = 'https://api.infomaniak.com';
+			} else if (provider === 'ollama') {
+				endpoint = 'http://localhost:11434';
+			} else if (provider === 'lmstudio') {
+				endpoint = 'http://localhost:1234';
+			}
+		}
 		return {
-			provider: plugin.settings.llmProvider,
-			endpoint: plugin.settings.llmEndpoint,
+			provider,
+			endpoint,
 			model: chosenModel,
 			productId: plugin.settings.infomaniakProductId,
 			apiKey,
@@ -205,9 +227,10 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		followUpInstruction: string,
 		actionType: NoteActionType | string,
 		plugin: SecondBrainPlugin,
-		overrideModel?: string
+		overrideModel?: string,
+		overrideProvider?: LLMProvider
 	): Promise<string> {
-		const config = await this.getLLMConfig(plugin, overrideModel);
+		const config = await this.getLLMConfig(plugin, overrideModel, overrideProvider);
 
 		const actionLabels: Record<NoteActionType, string> = {
 			extract_tasks: 'Extraction de tâches Markdown',

@@ -7,7 +7,7 @@ describe('NoteActionModal', () => {
 	const mockPlugin = {
 		settings: {
 			...DEFAULT_SETTINGS,
-			llmModel: 'gemini-2.5-flash',
+			llmModel: 'gemini-2.5-pro',
 			llmProvider: 'gemini'
 		},
 		getSecretApiKey: vi.fn().mockResolvedValue('test-key')
@@ -88,5 +88,65 @@ describe('NoteActionModal', () => {
 
 		modal.handleReplace();
 		expect(onApplyReplace).toHaveBeenCalledWith('Texte encore plus concis');
+	});
+
+	it('should use overrideModel consistently for both header and footer and follow-up requests', async () => {
+		const spy = vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({
+			content: 'Texte raffiné avec le modèle léger'
+		} as any);
+
+		const modal = new NoteActionModal(mockApp as any, mockPlugin as any, {
+			title: 'Corriger sans reformuler',
+			icon: 'check-check',
+			actionType: 'correct',
+			sourceText: 'Texte source',
+			overrideModel: 'gemini-1.5-flash', // Lighter model
+			generateInitial: vi.fn().mockResolvedValue('Texte corrigé initial'),
+			onApplyReplace: vi.fn(),
+			onApplyInsert: vi.fn()
+		});
+
+		modal.open();
+		await modal.readyPromise;
+
+		// Verify model is gemini-1.5-flash and not the default gemini-2.5-pro
+		expect((modal as any).currentModel).toBe('gemini-1.5-flash');
+
+		await modal.executeFollowUp('Ajoute une majuscule');
+
+		expect(spy).toHaveBeenCalled();
+		const config = spy.mock.calls[0][1];
+		expect(config.model).toBe('gemini-1.5-flash');
+	});
+
+	it('should allow modifying currentModel for follow-up responses', async () => {
+		const spy = vi.spyOn(LLMService, 'generateResponse').mockResolvedValue({
+			content: 'Texte raffiné avec le modèle modifié'
+		} as any);
+
+		const modal = new NoteActionModal(mockApp as any, mockPlugin as any, {
+			title: 'Corriger sans reformuler',
+			icon: 'check-check',
+			actionType: 'correct',
+			sourceText: 'Texte source',
+			overrideModel: 'gemini-1.5-flash',
+			generateInitial: vi.fn().mockResolvedValue('Texte corrigé'),
+			onApplyReplace: vi.fn(),
+			onApplyInsert: vi.fn()
+		});
+
+		modal.open();
+		await modal.readyPromise;
+
+		// User changes model to gpt-4o-mini
+		(modal as any).currentModel = 'gpt-4o-mini';
+		(modal as any).updateModelBtn();
+		(modal as any).updateHeaderModelBadge();
+
+		await modal.executeFollowUp('Rends plus formel');
+
+		expect(spy).toHaveBeenCalled();
+		const config = spy.mock.calls[0][1];
+		expect(config.model).toBe('gpt-4o-mini');
 	});
 });
