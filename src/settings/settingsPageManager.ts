@@ -2,12 +2,14 @@ import SecondBrainPlugin from '../main';
 import { BaseSettingsPage } from './baseSettingsPage';
 import { MainPage } from './pages/mainPage';
 import { RewardsPage } from './pages/rewardsPage';
+import { PromptsPage } from './pages/promptsPage';
 
-export type SettingsPageType = 'main-page' | 'rewards-page';
+export type SettingsPageType = 'main-page' | 'rewards-page' | 'prompts-page';
 
 export const SettingsPageTypesArray: ReadonlyArray<SettingsPageType> = [
 	'main-page',
-	'rewards-page'
+	'rewards-page',
+	'prompts-page'
 ];
 
 export function getPageName(pageType: SettingsPageType): string {
@@ -16,6 +18,8 @@ export function getPageName(pageType: SettingsPageType): string {
 			return 'Paramètres généraux';
 		case 'rewards-page':
 			return 'Récompenses de boutique';
+		case 'prompts-page':
+			return 'Prompts & Actions IA';
 	}
 }
 
@@ -25,6 +29,8 @@ export function getPageIcon(pageType: SettingsPageType): string {
 			return 'settings';
 		case 'rewards-page':
 			return 'gift';
+		case 'prompts-page':
+			return 'sparkles';
 	}
 }
 
@@ -78,6 +84,15 @@ export class SettingsPageManager {
 					break;
 				case 'rewards-page':
 					page = new RewardsPage(
+						pageContainerEl,
+						this.plugin,
+						pageType,
+						this.display,
+						this.openPage.bind(this)
+					);
+					break;
+				case 'prompts-page':
+					page = new PromptsPage(
 						pageContainerEl,
 						this.plugin,
 						pageType,

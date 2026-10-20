@@ -5,8 +5,9 @@ import { NoteActionType, NoteActionsService } from '../services/noteActionsServi
 export interface NoteActionModalOptions {
 	title: string;
 	icon: string;
-	actionType: NoteActionType;
+	actionType: NoteActionType | string;
 	sourceText: string;
+	overrideModel?: string;
 	generateInitial: () => Promise<string>;
 	onApplyReplace: (result: string) => void;
 	onApplyInsert: (result: string) => void;
@@ -44,6 +45,13 @@ export class NoteActionModal extends Modal {
 		const iconSpan = titleGroup.createSpan({ cls: 'sbm-note-action-title-icon' });
 		setIcon(iconSpan, this.options.icon || 'sparkles');
 		titleGroup.createSpan({ text: this.options.title, cls: 'sbm-note-action-title-text' });
+
+		if (this.options.overrideModel) {
+			titleGroup.createSpan({
+				text: `⚡ ${this.options.overrideModel}`,
+				cls: 'sbm-note-action-model-badge'
+			});
+		}
 
 		const closeBtn = header.createEl('button', {
 			cls: 'sbm-note-action-close-btn',
@@ -256,7 +264,8 @@ export class NoteActionModal extends Modal {
 				this.currentResult,
 				instruction,
 				this.options.actionType,
-				this.plugin
+				this.plugin,
+				this.options.overrideModel
 			);
 			this.currentResult = refined;
 			if (this.resultTextareaEl) this.resultTextareaEl.value = refined;

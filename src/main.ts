@@ -14,6 +14,7 @@ import { SettingsPageManager, SettingsPageType } from './settings/settingsPageMa
 import { EnergyLevelModal } from './modals/energyLevelModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
+import { ConfiguredPrompt, DEFAULT_CONFIGURED_PROMPTS } from './models/prompt';
 import { VaultContextService } from './services/vaultContextService';
 import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
 
@@ -56,6 +57,8 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	openrouterSecretId?: string;
 	infomaniakSecretId?: string;
 	infomaniakProductId?: string;
+
+	configuredPrompts?: ConfiguredPrompt[];
 }
 
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
@@ -100,6 +103,7 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	openrouterSecretId: undefined,
 	infomaniakSecretId: undefined,
 	infomaniakProductId: undefined,
+	configuredPrompts: [],
 };
 
 interface StoredData {
@@ -140,10 +144,75 @@ export default class SecondBrainPlugin extends Plugin {
 	private lastUserEditorChangeTime = 0;
 	private lastUserEditorFilePath: string | null = null;
 	public isPluginPerformingTaskAction = false;
+	private registeredPromptCommandIds = new Set<string>();
+
+	public getPrompts(): ConfiguredPrompt[] {
+		if (!this.settings.configuredPrompts || this.settings.configuredPrompts.length === 0) {
+			this.settings.configuredPrompts = JSON.parse(JSON.stringify(DEFAULT_CONFIGURED_PROMPTS));
+		} else {
+			for (const def of DEFAULT_CONFIGURED_PROMPTS) {
+				if (!this.settings.configuredPrompts.some(p => p.id === def.id)) {
+					this.settings.configuredPrompts.push(JSON.parse(JSON.stringify(def)));
+				}
+			}
+		}
+		return this.settings.configuredPrompts;
+	}
+
+	public getPrompt(id: string): ConfiguredPrompt | undefined {
+		return this.getPrompts().find(p => p.id === id);
+	}
+
+	public registerCustomPromptCommands(): void {
+		const prompts = this.getPrompts();
+		for (const prompt of prompts) {
+			if (prompt.actionType === 'custom' && prompt.enabled && prompt.showInCommandPalette) {
+				const commandId = `custom-prompt-${prompt.id}`;
+				if (!this.registeredPromptCommandIds.has(commandId)) {
+					this.registeredPromptCommandIds.add(commandId);
+					this.addCommand({
+						id: commandId,
+						name: prompt.name,
+						editorCallback: (editor: Editor, view: MarkdownView) => {
+							const currentPrompt = this.getPrompt(prompt.id);
+							if (currentPrompt && currentPrompt.enabled) {
+								NoteActionsService.handleCustomPromptCommand(this.app, this, currentPrompt, editor, view);
+							}
+						}
+					});
+				}
+			}
+		}
+	}
+
+	public executePromptAction(prompt: ConfiguredPrompt, editor: Editor, view: MarkdownView): void {
+		if (prompt.actionType === 'builtin') {
+			switch (prompt.builtinType) {
+				case 'correct':
+					NoteActionsService.handleCorrectCommand(this.app, this, editor, view);
+					break;
+				case 'summarize':
+					NoteActionsService.handleSummarizeCommand(this.app, this, editor, view);
+					break;
+				case 'rephrase':
+					NoteActionsService.handleRephraseCommand(this.app, this, editor, view);
+					break;
+				case 'extract_tasks':
+					NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view);
+					break;
+				case 'breakdown_task':
+					NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view);
+					break;
+			}
+		} else {
+			NoteActionsService.handleCustomPromptCommand(this.app, this, prompt, editor, view);
+		}
+	}
 
 	async onload() {
 		await this.loadPluginData();
 		this.touchActiveSession();
+		this.registerCustomPromptCommands();
 
 		// Enregistrement des vues
 		this.registerView(
@@ -403,59 +472,44 @@ export default class SecondBrainPlugin extends Plugin {
 			}
 		});
 
-		// Intégration dans le menu contextuel clic-droit de l'éditeur Markdown
+		// Intégration dynamique des Prompts & Actions IA dans le menu contextuel clic-droit
 		this.registerEvent(
 			this.app.workspace.on('editor-menu', (menu, editor, view) => {
-				menu.addSeparator();
-
+				const prompts = this.getPrompts();
 				const cursor = editor.getCursor();
 				const line = editor.getLine(cursor.line);
 				const isTaskLine = /^[-*0-9.]*\s*\[[ xX/]\]/.test(line.trim());
-
-				if (isTaskLine) {
-					menu.addItem((item) => {
-						item.setTitle('🧩 Second Brain: Décomposer cette tâche')
-							.setIcon('list-tree')
-							.onClick(() => {
-								NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view as MarkdownView);
-							});
-					});
-				}
-
-				menu.addItem((item) => {
-					item.setTitle('🧠 Second Brain: Extraire les tâches')
-						.setIcon('check-square')
-						.onClick(() => {
-							NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view as MarkdownView);
-						});
-				});
-
-				menu.addItem((item) => {
-					item.setTitle('🔤 Second Brain: Corriger sans reformuler')
-						.setIcon('check-check')
-						.onClick(() => {
-							NoteActionsService.handleCorrectCommand(this.app, this, editor, view as MarkdownView);
-						});
-				});
-
 				const selection = editor.getSelection();
-				if (selection.trim()) {
+				const hasSelection = Boolean(selection.trim());
+
+				let hasAddedSeparator = false;
+
+				for (const prompt of prompts) {
+					if (!prompt.enabled || !prompt.showInContextMenu) continue;
+
+					if (prompt.builtinType === 'breakdown_task' && !isTaskLine) {
+						continue;
+					}
+					if (prompt.requiresSelection && !hasSelection) {
+						continue;
+					}
+
+					if (!hasAddedSeparator) {
+						menu.addSeparator();
+						hasAddedSeparator = true;
+					}
+
 					menu.addItem((item) => {
-						item.setTitle('✨ Second Brain: Reformuler la sélection')
-							.setIcon('sparkles')
+						const title = prompt.name.startsWith('Second Brain')
+							? prompt.name
+							: `Second Brain: ${prompt.name}`;
+						item.setTitle(title)
+							.setIcon(prompt.icon || 'sparkles')
 							.onClick(() => {
-								NoteActionsService.handleRephraseCommand(this.app, this, editor, view as MarkdownView);
+								this.executePromptAction(prompt, editor, view as MarkdownView);
 							});
 					});
 				}
-
-				menu.addItem((item) => {
-					item.setTitle('📝 Second Brain: Résumer')
-						.setIcon('file-text')
-						.onClick(() => {
-							NoteActionsService.handleSummarizeCommand(this.app, this, editor, view as MarkdownView);
-						});
-				});
 			})
 		);
 
@@ -720,6 +774,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 		GamificationService.ensureDataStructures(this.pluginData);
 		GamificationService.checkAndUnlockBadges(this.pluginData);
+		this.getPrompts();
 	}
 
 	async savePluginData() {

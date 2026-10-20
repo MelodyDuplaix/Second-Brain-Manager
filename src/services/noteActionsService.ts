@@ -5,6 +5,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { TaskParser } from '../parsers/taskParser';
 import { VaultFilterService } from './vaultFilterService';
 import { NoteActionModal } from '../modals/noteActionModal';
+import { ConfiguredPrompt } from '../models/prompt';
 import SecondBrainPlugin from '../main';
 
 export type NoteActionType = 'extract_tasks' | 'breakdown_task' | 'summarize' | 'rephrase' | 'correct';
@@ -13,12 +14,13 @@ export class NoteActionsService {
 	/**
 	 * Récupère la configuration LLM active pour exécuter l'action.
 	 */
-	private static async getLLMConfig(plugin: SecondBrainPlugin, signal?: AbortSignal): Promise<LLMConfig> {
+	private static async getLLMConfig(plugin: SecondBrainPlugin, modelOverride?: string, signal?: AbortSignal): Promise<LLMConfig> {
 		const apiKey = await plugin.getSecretApiKey(plugin.settings.llmProvider);
+		const chosenModel = (modelOverride && modelOverride.trim()) ? modelOverride.trim() : plugin.settings.llmModel;
 		return {
 			provider: plugin.settings.llmProvider,
 			endpoint: plugin.settings.llmEndpoint,
-			model: plugin.settings.llmModel,
+			model: chosenModel,
 			productId: plugin.settings.infomaniakProductId,
 			apiKey,
 			signal
@@ -31,14 +33,16 @@ export class NoteActionsService {
 	public static async extractTasks(
 		text: string,
 		noteBasename: string,
-		plugin: SecondBrainPlugin
+		plugin: SecondBrainPlugin,
+		customInstruction?: string,
+		overrideModel?: string
 	): Promise<string> {
 		const todayStr = new Date().toISOString().split('T')[0];
-		const config = await this.getLLMConfig(plugin);
+		const config = await this.getLLMConfig(plugin, overrideModel);
 
 		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(plugin.settings);
 
-		const systemPrompt = `Tu es l'assistant de productivité "Second Brain Manager".
+		const systemPrompt = customInstruction || `Tu es l'assistant de productivité "Second Brain Manager".
 TON OBJECTIF : Analyser le texte fourni (compte-rendu de réunion, notes brutes, email, document) et en extraire toutes les actions concrètes et réalisables.
 
 CONSIGNES STRICTES DE FORMATAGE :
@@ -109,13 +113,15 @@ ${taskSyntaxDesc}
 		taskLine: string,
 		noteBasename: string,
 		plugin: SecondBrainPlugin,
-		indent = '\t'
+		indent = '\t',
+		customInstruction?: string,
+		overrideModel?: string
 	): Promise<string[]> {
 		const parsed = TaskParser.parseLine(taskLine, '', 1, plugin.settings);
 		const cleanTitle = parsed?.title || TaskMutator.cleanTaskPrefix(taskLine);
-		const config = await this.getLLMConfig(plugin);
+		const config = await this.getLLMConfig(plugin, overrideModel);
 
-		const systemPrompt = `Tu es un expert GTD de l'assistant "Second Brain Manager".
+		const systemPrompt = customInstruction || `Tu es un expert GTD de l'assistant "Second Brain Manager".
 TON OBJECTIF : Décomposer la tâche complexe suivante en 3 à 5 sous-étapes simples, chronologiques et immédiatement actionnables ("Next Actions").
 
 CONSIGNES STRICTES :
@@ -150,24 +156,28 @@ CONSIGNES STRICTES :
 	 */
 	public static async summarizeOrRephrase(
 		text: string,
-		mode: 'summary' | 'rephrase' | 'key_points' | 'correct',
-		plugin: SecondBrainPlugin
+		mode: 'summary' | 'rephrase' | 'key_points' | 'correct' | 'custom',
+		plugin: SecondBrainPlugin,
+		customInstruction?: string,
+		overrideModel?: string
 	): Promise<string> {
-		const config = await this.getLLMConfig(plugin);
+		const config = await this.getLLMConfig(plugin, overrideModel);
 
-		let instruction = '';
-		if (mode === 'summary') {
-			instruction = 'Fais un résumé synthétique, clair et percutant du texte suivant. Mets en valeur les conclusions principales.';
-		} else if (mode === 'rephrase') {
-			instruction = 'Reformule le texte suivant pour améliorer sa clarté, son professionnalisme et sa fluidité tout en conservant scrupuleusement son sens.';
-		} else if (mode === 'correct') {
-			instruction = `Corrige rigoureusement les fautes d'orthographe, de grammaire, de conjugaison, d'accords, de ponctuation et de typographie du texte suivant.
+		let instruction = customInstruction || '';
+		if (!instruction) {
+			if (mode === 'summary') {
+				instruction = 'Fais un résumé synthétique, clair et percutant du texte suivant. Mets en valeur les conclusions principales.';
+			} else if (mode === 'rephrase') {
+				instruction = 'Reformule le texte suivant pour améliorer sa clarté, son professionnalisme et sa fluidité tout en conservant scrupuleusement son sens.';
+			} else if (mode === 'correct') {
+				instruction = `Corrige rigoureusement les fautes d'orthographe, de grammaire, de conjugaison, d'accords, de ponctuation et de typographie du texte suivant.
 CONSIGNES STRICTES :
 1. NE REFORMULE PAS : ne modifie ni la structure des phrases, ni le style, ni le vocabulaire de l'auteur. Conserve scrupuleusement chaque mot, ton et registre de langue.
 2. Respecte fidèlement la mise en page, les retours à la ligne, les indentations et les balises Markdown (titres #, listes -, cases à cocher - [ ], liens [[...]], mise en forme gras/italique, etc.).
 3. Rends UNIQUEMENT le texte corrigé, sans introduction, sans conclusion, sans méta-commentaire et sans bloc de code markdown englobant.`;
-		} else {
-			instruction = 'Extrais les points clés essentiels sous forme de liste à puces percutante.';
+			} else {
+				instruction = 'Extrais les points clés essentiels sous forme de liste à puces percutante.';
+			}
 		}
 
 		const systemPrompt = `Tu es l'assistant de rédaction "Second Brain Manager". ${instruction}
@@ -193,10 +203,11 @@ Renvoie directement le texte résultant sans méta-commentaire.`;
 		originalText: string,
 		currentResult: string,
 		followUpInstruction: string,
-		actionType: NoteActionType,
-		plugin: SecondBrainPlugin
+		actionType: NoteActionType | string,
+		plugin: SecondBrainPlugin,
+		overrideModel?: string
 	): Promise<string> {
-		const config = await this.getLLMConfig(plugin);
+		const config = await this.getLLMConfig(plugin, overrideModel);
 
 		const actionLabels: Record<NoteActionType, string> = {
 			extract_tasks: 'Extraction de tâches Markdown',
@@ -268,12 +279,17 @@ CONSIGNES STRICTES :
 			return;
 		}
 
+		const promptConfig = plugin.getPrompt ? plugin.getPrompt('extract_tasks') : undefined;
+		const overrideModel = promptConfig?.model || undefined;
+		const customInstruction = promptConfig?.systemInstruction;
+
 		const modal = new NoteActionModal(app, plugin, {
-			title: 'Extraire les tâches',
-			icon: 'check-square',
+			title: promptConfig?.name || 'Extraire les tâches',
+			icon: promptConfig?.icon || 'check-square',
 			actionType: 'extract_tasks',
 			sourceText: textToAnalyze,
-			generateInitial: () => this.extractTasks(textToAnalyze, activeFile.basename, plugin),
+			overrideModel,
+			generateInitial: () => this.extractTasks(textToAnalyze, activeFile.basename, plugin, customInstruction, overrideModel),
 			onApplyReplace: (result) => {
 				if (hasSelection) {
 					targetEditor.replaceSelection(`### 📋 Actions Extraites\n${result}\n`);
@@ -333,13 +349,18 @@ CONSIGNES STRICTES :
 		const indentStep = parentIndent.includes('\t') ? '\t' : (parentIndent.length > 0 ? '  ' : '\t');
 		const childIndent = parentIndent + indentStep;
 
+		const promptConfig = plugin.getPrompt ? plugin.getPrompt('breakdown_task') : undefined;
+		const overrideModel = promptConfig?.model || undefined;
+		const customInstruction = promptConfig?.systemInstruction;
+
 		const modal = new NoteActionModal(app, plugin, {
-			title: 'Décomposer cette tâche',
-			icon: 'list-tree',
+			title: promptConfig?.name || 'Décomposer cette tâche',
+			icon: promptConfig?.icon || 'list-tree',
 			actionType: 'breakdown_task',
 			sourceText: currentLine,
+			overrideModel,
 			generateInitial: async () => {
-				const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin, childIndent);
+				const subtasks = await this.breakdownTask(currentLine, activeFile.basename, plugin, childIndent, customInstruction, overrideModel);
 				return subtasks.join('\n');
 			},
 			onApplyReplace: (result) => {
@@ -382,13 +403,18 @@ CONSIGNES STRICTES :
 			return;
 		}
 
+		const promptConfig = plugin.getPrompt ? plugin.getPrompt('summarize') : undefined;
+		const overrideModel = promptConfig?.model || undefined;
+		const customInstruction = promptConfig?.systemInstruction;
+
 		const modal = new NoteActionModal(app, plugin, {
-			title: 'Résumer',
-			icon: 'file-text',
+			title: promptConfig?.name || 'Résumer',
+			icon: promptConfig?.icon || 'file-text',
 			actionType: 'summarize',
 			sourceText: textToAnalyze,
+			overrideModel,
 			generateInitial: async () => {
-				const summary = await this.summarizeOrRephrase(textToAnalyze, 'summary', plugin);
+				const summary = await this.summarizeOrRephrase(textToAnalyze, 'summary', plugin, customInstruction, overrideModel);
 				return `> [!SUMMARY] Résumé Exécutif\n> ${summary.split('\n').join('\n> ')}`;
 			},
 			onApplyReplace: (result) => {
@@ -437,12 +463,17 @@ CONSIGNES STRICTES :
 			return;
 		}
 
+		const promptConfig = plugin.getPrompt ? plugin.getPrompt('rephrase') : undefined;
+		const overrideModel = promptConfig?.model || undefined;
+		const customInstruction = promptConfig?.systemInstruction;
+
 		const modal = new NoteActionModal(app, plugin, {
-			title: 'Reformuler la sélection',
-			icon: 'sparkles',
+			title: promptConfig?.name || 'Reformuler la sélection',
+			icon: promptConfig?.icon || 'sparkles',
 			actionType: 'rephrase',
 			sourceText: selectedText,
-			generateInitial: () => this.summarizeOrRephrase(selectedText, 'rephrase', plugin),
+			overrideModel,
+			generateInitial: () => this.summarizeOrRephrase(selectedText, 'rephrase', plugin, customInstruction, overrideModel),
 			onApplyReplace: (result) => {
 				targetEditor.replaceSelection(result);
 			},
@@ -484,12 +515,110 @@ CONSIGNES STRICTES :
 			return;
 		}
 
+		const promptConfig = plugin.getPrompt ? plugin.getPrompt('correct') : undefined;
+		const overrideModel = promptConfig?.model || undefined;
+		const customInstruction = promptConfig?.systemInstruction;
+
 		const modal = new NoteActionModal(app, plugin, {
-			title: 'Corriger sans reformuler',
-			icon: 'check-check',
+			title: promptConfig?.name || 'Corriger sans reformuler',
+			icon: promptConfig?.icon || 'check-check',
 			actionType: 'correct',
 			sourceText: textToCorrect,
-			generateInitial: () => this.summarizeOrRephrase(textToCorrect, 'correct', plugin),
+			overrideModel,
+			generateInitial: () => this.summarizeOrRephrase(textToCorrect, 'correct', plugin, customInstruction, overrideModel),
+			onApplyReplace: (result) => {
+				if (hasSelection) {
+					targetEditor.replaceSelection(result);
+				} else {
+					targetEditor.setValue(result);
+				}
+			},
+			onApplyInsert: (result) => {
+				if (hasSelection) {
+					const to = targetEditor.getCursor('to');
+					targetEditor.replaceRange(`\n\n${result}`, to);
+				} else {
+					const docLength = targetEditor.lineCount();
+					targetEditor.replaceRange(`\n\n${result}`, { line: docLength, ch: 0 });
+				}
+			}
+		});
+
+		modal.open();
+		return modal;
+	}
+	/**
+	 * Exécute un prompt personnalisé configuré par l'utilisateur.
+	 */
+	public static async executeCustomPrompt(
+		text: string,
+		prompt: ConfiguredPrompt,
+		plugin: SecondBrainPlugin
+	): Promise<string> {
+		const config = await this.getLLMConfig(plugin, prompt.model);
+		const systemPrompt = `Tu es l'assistant de rédaction "Second Brain Manager".
+${prompt.systemInstruction}
+Renvoie directement le texte résultant sans méta-commentaire, sans introduction, sans conclusion et sans bloc markdown englobant.`;
+
+		const messages: ChatMessage[] = [
+			{ role: 'system', content: systemPrompt },
+			{ role: 'user', content: text }
+		];
+
+		const response = await LLMService.generateResponse(messages, config);
+		let content = response.content.trim();
+		if (content.startsWith('```') && content.endsWith('```')) {
+			content = content.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
+		}
+		return content.trim();
+	}
+
+	/**
+	 * Commande universelle d'exécution d'un prompt configuré dans l'éditeur.
+	 */
+	public static async handleCustomPromptCommand(
+		app: App,
+		plugin: SecondBrainPlugin,
+		prompt: ConfiguredPrompt,
+		editor?: Editor,
+		view?: MarkdownView
+	): Promise<NoteActionModal | void> {
+		const targetView = view || app.workspace.getActiveViewOfType(MarkdownView);
+		const targetEditor = editor || targetView?.editor;
+		const activeFile = targetView?.file;
+
+		if (!targetEditor) {
+			new Notice('Veuillez ouvrir une note Markdown.');
+			return;
+		}
+
+		const filterService = new VaultFilterService(app, plugin.settings);
+		if (activeFile && filterService.isFileExcluded(activeFile)) {
+			new Notice('🔒 Cette note est protégée par vos filtres de confidentialité (exclusion IA).');
+			return;
+		}
+
+		const selectedText = targetEditor.getSelection();
+		const hasSelection = Boolean(selectedText.trim());
+
+		if (prompt.requiresSelection && !hasSelection) {
+			new Notice(`Veuillez sélectionner du texte pour exécuter "${prompt.name}".`);
+			return;
+		}
+
+		const textToAnalyze = hasSelection ? selectedText : targetEditor.getValue();
+		if (!textToAnalyze.trim()) {
+			new Notice(hasSelection ? 'Veuillez sélectionner du texte.' : 'La note est vide.');
+			return;
+		}
+
+		const modal = new NoteActionModal(app, plugin, {
+			title: prompt.name,
+			icon: prompt.icon || 'sparkles',
+			actionType: prompt.id,
+			sourceText: textToAnalyze,
+			overrideModel: prompt.model || undefined,
+			generateInitial: () => this.executeCustomPrompt(textToAnalyze, prompt, plugin),
 			onApplyReplace: (result) => {
 				if (hasSelection) {
 					targetEditor.replaceSelection(result);

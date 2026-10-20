@@ -210,6 +210,38 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
+		// 1.9 Configuration des Prompts & Actions IA (Sous-page)
+		aiGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Prompts & Actions IA personnalisés')
+				.setDesc('Personnaliser les prompts de l\'éditeur, assigner un modèle léger dédié (ex: correction d\'orthographe) et configurer leur visibilité')
+				.addButton((button: ButtonComponent) => {
+					button.setIcon('chevron-right').onClick(() => {
+						this.openPage('prompts-page');
+					});
+					button.buttonEl.addClass('clickable-icon');
+				});
+
+			const iconEl = activeDocument.createElement('div');
+			setIcon(iconEl, 'sparkles');
+			setting.settingEl.prepend(iconEl);
+			setting.settingEl.addClass('sbm-settings-page-title-setting');
+			setting.settingEl.setAttribute('tabindex', '0');
+			setting.settingEl.setAttribute('role', 'button');
+
+			const handleOpen = () => {
+				this.openPage('prompts-page');
+			};
+
+			setting.settingEl.addEventListener('click', handleOpen);
+			setting.settingEl.addEventListener('keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					handleOpen();
+				}
+			});
+		});
+
 		// =========================================================================
 		// 2. Structure du Coffre & Modèles de Notes (Templates)
 		// =========================================================================
