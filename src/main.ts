@@ -313,6 +313,18 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'inclure-dossier-exclu-chat',
+			name: 'Inclure temporairement un dossier exclu dans le chat',
+			callback: async () => {
+				await this.activateChatView();
+				const chatLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+				if (chatLeaf && chatLeaf.view instanceof ChatView) {
+					chatLeaf.view.openIncludeExcludedFolderModal();
+				}
+			}
+		});
+
+		this.addCommand({
 			id: 'analyser-taches',
 			name: 'Analyser les tâches du coffre',
 			callback: async () => {

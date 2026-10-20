@@ -39,6 +39,26 @@ export class AgentOrchestrator {
 		return this.vaultContext;
 	}
 
+	public setTemporaryIncludedFolders(folders: string[]): void {
+		this.vaultContext.setTemporaryIncludedFolders(folders);
+	}
+
+	public addTemporaryIncludedFolder(folder: string): void {
+		this.vaultContext.addTemporaryIncludedFolder(folder);
+	}
+
+	public removeTemporaryIncludedFolder(folder: string): void {
+		this.vaultContext.removeTemporaryIncludedFolder(folder);
+	}
+
+	public getTemporaryIncludedFolders(): string[] {
+		return this.vaultContext.getTemporaryIncludedFolders();
+	}
+
+	public clearTemporaryIncludedFolders(): void {
+		this.vaultContext.clearTemporaryIncludedFolders();
+	}
+
 	public getToolRegistry(): ToolRegistry {
 		return this.toolRegistry;
 	}
@@ -108,6 +128,15 @@ export class AgentOrchestrator {
 
 		const dailyNoteTodayPath = `${dailyNotesFolder}/${chosenName}.md`;
 
+		const tempFolders = this.vaultContext.getTemporaryIncludedFolders();
+		let tempFoldersText = '';
+		if (tempFolders.length > 0) {
+			tempFoldersText = `\n\nDOSSIERS EXCLUS TEMPORAIREMENT INCLUS POUR CE CHAT :
+L'utilisateur a explicitement débloqué l'accès aux dossiers suivants (normalement exclus de la recherche) pour cette conversation :
+${tempFolders.map(f => `- "${f}"`).join('\n')}
+Tu es pleinement autorisé et encouragé à utiliser tes outils de lecture (search_vault, search_tasks, read_note) pour chercher et analyser les documents et tâches situés dans ces dossiers.\n`;
+		}
+
 		let customInstructionsText = '';
 		if (this.settings.customPromptInstructions && this.settings.customPromptInstructions.trim()) {
 			customInstructionsText = `\n\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${this.settings.customPromptInstructions.trim()}\n`;
@@ -126,7 +155,7 @@ CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Projets existants : ${structure.projects.slice(0, 20).join(', ') || 'Aucun'}
 - Contacts existants : ${structure.contacts.slice(0, 20).join(', ') || 'Aucun'}
 - Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}
-- Modèles & Templates disponibles : ${structure.templates?.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}${customInstructionsText}
+- Modèles & Templates disponibles : ${structure.templates?.slice(0, 20).join(', ') || 'Aucun'}${attachedContextText}${tempFoldersText}${customInstructionsText}
 
 COMPORTEMENT & FLUX D'EXÉCUTION (ReAct Loop) :
 1. RECHERCHE D'INFORMATIONS :

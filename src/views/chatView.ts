@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, MarkdownView, normalizePath, TFile, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, MarkdownView, normalizePath, TFile, TFolder, setIcon } from 'obsidian';
 import { ChatMessage, LLMConfig } from '../models/llm';
 import { AgentOrchestrator } from '../services/agentOrchestrator';
 import { ActionExecutor } from '../services/actionExecutor';
@@ -8,6 +8,7 @@ import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { VaultContextService } from '../services/vaultContextService';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
+import { IncludeExcludedFolderModal } from '../modals/includeExcludedFolderModal';
 import { ModelPickerModal } from '../modals/modelPickerModal';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import { AudioRecorderService } from '../services/audioRecorderService';
@@ -35,6 +36,7 @@ export class ChatView extends ItemView {
 	private recordingSeconds = 0;
 
 	private attachedContexts: ContextItem[] = [];
+	private temporaryIncludedFolders: Set<string> = new Set();
 	private editingMessageIndex: number | null = null;
 	private lastActiveFile: TFile | null = null;
 	private voiceStatusPillEl: HTMLElement | null = null;
@@ -138,6 +140,9 @@ export class ChatView extends ItemView {
 				}
 			];
 			this.attachedContexts = [];
+			this.temporaryIncludedFolders.clear();
+			this.orchestrator.clearTemporaryIncludedFolders();
+
 			this.editingMessageIndex = null;
 			this.renderFullMessages();
 			this.renderContextInsideCard();
@@ -231,6 +236,16 @@ export class ChatView extends ItemView {
 
 		this.textareaEl.addEventListener('keydown', (e: KeyboardEvent) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
+				const val = this.textareaEl?.value?.trim() || '';
+				if (val === '/include' || val === '/inclure') {
+					e.preventDefault();
+					if (this.textareaEl) {
+						this.textareaEl.value = '';
+						this.adjustTextareaHeight();
+					}
+					this.openIncludeExcludedFolderModal();
+					return;
+				}
 				e.preventDefault();
 				this.handleSendMessage();
 			} else if (e.key === '@') {
@@ -274,6 +289,7 @@ export class ChatView extends ItemView {
 			}, this.plugin.settings).open();
 		});
 
+
 		// Recherche de la note active ou de la dernière note ouverte
 		let activeFile: TFile | null = this.lastActiveFile || this.app.workspace.getActiveFile();
 		if (!activeFile) {
@@ -313,6 +329,35 @@ export class ChatView extends ItemView {
 			}
 		}
 
+		// Bouton discret "📂 + Dossier exclu" (placé après le bouton de note active)
+		const hasExcludedFolders = filterService.getParsedFilters().excludedFolders.length > 0;
+		if (hasExcludedFolders) {
+			const includeExcludedBtn = leftPills.createEl('button', {
+				cls: 'sbm-card-include-folder-btn',
+				text: '📂 + Dossier exclu'
+			});
+			includeExcludedBtn.title = 'Inclure temporairement un dossier exclu dans la recherche de ce chat (/include)';
+			includeExcludedBtn.addEventListener('click', () => {
+				this.openIncludeExcludedFolderModal();
+			});
+		}
+
+		// Rendu des pilules des dossiers temporairement inclus
+		this.temporaryIncludedFolders.forEach((folder) => {
+			const pill = leftPills.createEl('span', { cls: 'sbm-context-pill sbm-context-pill-temp-included' });
+			const folderName = folder.split('/').pop() || folder;
+			pill.title = `Dossier exclu temporairement inclus dans la recherche : "${folder}" (Cliquer sur ✕ pour révoquer l'accès)`;
+			pill.createEl('span', { text: `📂 [Inclus] ${folderName}`, cls: 'sbm-pill-text' });
+
+			const removeBtn = pill.createEl('span', { cls: 'sbm-pill-remove' });
+			setIcon(removeBtn, 'x');
+			removeBtn.title = 'Exclure à nouveau ce dossier';
+			removeBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this.removeTemporaryIncludedFolder(folder);
+			});
+		});
+
 		// Rendu des pilules de contexte sélectionnées
 		this.attachedContexts.forEach((ctx, index) => {
 			const pill = leftPills.createEl('span', { cls: 'sbm-context-pill' });
@@ -330,7 +375,51 @@ export class ChatView extends ItemView {
 		});
 	}
 
+	public openIncludeExcludedFolderModal(): void {
+		new IncludeExcludedFolderModal(
+			this.app,
+			this.plugin.settings,
+			Array.from(this.temporaryIncludedFolders),
+			(chosenFolder) => {
+				this.toggleTemporaryIncludedFolder(chosenFolder);
+			}
+		).open();
+	}
+
+	public toggleTemporaryIncludedFolder(folder: string): void {
+		const norm = normalizePath(folder);
+		if (this.temporaryIncludedFolders.has(norm)) {
+			this.removeTemporaryIncludedFolder(norm);
+		} else {
+			this.addTemporaryIncludedFolder(norm);
+		}
+	}
+
+	public addTemporaryIncludedFolder(folder: string): void {
+		const norm = normalizePath(folder);
+		if (!this.temporaryIncludedFolders.has(norm)) {
+			this.temporaryIncludedFolders.add(norm);
+			this.orchestrator.setTemporaryIncludedFolders(Array.from(this.temporaryIncludedFolders));
+			this.renderContextInsideCard();
+			new Notice(`Dossier "${norm}" temporairement inclus dans la recherche du chat`);
+		}
+	}
+
+	public removeTemporaryIncludedFolder(folder: string): void {
+		const norm = normalizePath(folder);
+		if (this.temporaryIncludedFolders.has(norm)) {
+			this.temporaryIncludedFolders.delete(norm);
+			this.orchestrator.setTemporaryIncludedFolders(Array.from(this.temporaryIncludedFolders));
+			this.attachedContexts = this.attachedContexts.filter(c => normalizePath(c.path).toLowerCase() !== norm.toLowerCase());
+			this.renderContextInsideCard();
+			new Notice(`Dossier "${norm}" retiré des inclusions temporaires`);
+		}
+	}
+
 	private addContextItem(item: ContextItem): void {
+		if (item.type === 'folder') {
+			this.addTemporaryIncludedFolder(item.path);
+		}
 		if (!this.attachedContexts.some(c => c.path === item.path)) {
 			this.attachedContexts.push(item);
 			this.renderContextInsideCard();
@@ -434,7 +523,9 @@ export class ChatView extends ItemView {
 				this.messages[msgIndex].content = newText;
 				// Tronque l'historique après ce message pour regénérer la suite
 				this.messages.splice(msgIndex + 1);
-				this.editingMessageIndex = null;
+
+
+			this.editingMessageIndex = null;
 				this.renderFullMessages();
 
 				// Relance la génération de l'assistant à partir de cette modification
@@ -442,7 +533,9 @@ export class ChatView extends ItemView {
 			});
 
 			cancelBtn.addEventListener('click', () => {
-				this.editingMessageIndex = null;
+
+
+			this.editingMessageIndex = null;
 				this.renderFullMessages();
 			});
 
@@ -833,6 +926,16 @@ export class ChatView extends ItemView {
 			const attachedNotesData: Array<{ path: string; title: string; content: string }> = [];
 			for (const ctx of this.attachedContexts) {
 				const file = this.app.vault.getFileByPath(ctx.path) || this.app.vault.getAbstractFileByPath(ctx.path);
+				if (file instanceof TFolder) {
+					const mdFiles = this.app.vault.getMarkdownFiles().filter(f => f.path.startsWith(file.path + '/'));
+					const fileListStr = mdFiles.slice(0, 15).map(f => `- [[${f.basename}]] (${f.path})`).join('\n');
+					attachedNotesData.push({
+						path: ctx.path,
+						title: `Dossier : ${file.name}`,
+						content: `Dossier "${ctx.path}" (${mdFiles.length} note(s) Markdown) :\n${fileListStr}${mdFiles.length > 15 ? '\n... [autres fichiers du dossier consultables via search_vault]' : ''}`
+					});
+					continue;
+				}
 				if (file instanceof TFile) {
 					const content = await this.app.vault.read(file);
 					attachedNotesData.push({

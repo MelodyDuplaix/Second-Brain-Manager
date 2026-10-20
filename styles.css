@@ -1931,6 +1931,26 @@
 	transition: background-color 0.15s ease;
 }
 
+.sbm-card-include-folder-btn {
+	font-size: 0.70em;
+	padding: 1px 6px;
+	border-radius: 6px;
+	background-color: transparent;
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0.75;
+	user-select: none;
+	transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.sbm-card-include-folder-btn:hover {
+	opacity: 1;
+	background-color: var(--background-modifier-hover);
+	color: var(--text-normal);
+	border-color: var(--text-muted);
+}
+
 .sbm-card-active-note-pill:hover {
 	background-color: rgba(var(--interactive-accent-rgb), 0.15);
 }
@@ -1956,6 +1976,64 @@
 
 .sbm-pill-remove:hover {
 	opacity: 1;
+}
+
+.sbm-context-pill-temp-included {
+	background-color: rgba(229, 153, 53, 0.15) !important;
+	border: 1px solid var(--color-orange, #e59935);
+	color: var(--color-orange, #e59935) !important;
+	font-weight: 600;
+}
+
+.sbm-context-pill-temp-included .sbm-pill-remove {
+	color: var(--color-orange, #e59935);
+}
+
+.sbm-context-modal-excluded-title {
+	color: var(--color-orange, #e59935);
+}
+
+.sbm-context-modal-excluded-desc {
+	opacity: 0.9;
+	color: var(--text-muted);
+}
+
+.sbm-include-modal-title-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sbm-include-modal-folder-name {
+	font-weight: 600;
+	font-size: 1.05em;
+}
+
+.sbm-badge-included-status {
+	font-size: 0.78em;
+	padding: 2px 7px;
+	border-radius: 6px;
+	background-color: rgba(46, 160, 67, 0.15);
+	border: 1px solid var(--color-green, #2ea043);
+	color: var(--color-green, #2ea043);
+	font-weight: 600;
+}
+
+.sbm-badge-excluded-status {
+	font-size: 0.78em;
+	padding: 2px 7px;
+	border-radius: 6px;
+	background-color: rgba(229, 153, 53, 0.15);
+	border: 1px solid var(--color-orange, #e59935);
+	color: var(--color-orange, #e59935);
+	font-weight: 500;
+}
+
+.sbm-include-modal-desc {
+	font-size: 0.85em;
+	color: var(--text-muted);
+	margin-top: 2px;
 }
 
 /* Zone de texte fluide et transparente (aucun cadre parasite) */

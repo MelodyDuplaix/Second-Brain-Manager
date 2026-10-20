@@ -81,6 +81,30 @@ export class VaultContextService {
 		this.filterService = new VaultFilterService(app, settings);
 	}
 
+	public setTemporaryIncludedFolders(folders: string[]): void {
+		this.filterService.setTemporaryIncludedFolders(folders);
+	}
+
+	public addTemporaryIncludedFolder(folder: string): void {
+		this.filterService.addTemporaryIncludedFolder(folder);
+	}
+
+	public removeTemporaryIncludedFolder(folder: string): void {
+		this.filterService.removeTemporaryIncludedFolder(folder);
+	}
+
+	public getTemporaryIncludedFolders(): string[] {
+		return this.filterService.getTemporaryIncludedFolders();
+	}
+
+	public clearTemporaryIncludedFolders(): void {
+		this.filterService.clearTemporaryIncludedFolders();
+	}
+
+	public isFolderTemporarilyIncluded(folder: string): boolean {
+		return this.filterService.isFolderTemporarilyIncluded(folder);
+	}
+
 	public getFilterService(): VaultFilterService {
 		return this.filterService;
 	}

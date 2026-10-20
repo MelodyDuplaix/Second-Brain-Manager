@@ -12,10 +12,12 @@ export interface ContextItem {
 export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 	private onChoose: (item: ContextItem) => void;
 	private filterService?: VaultFilterService;
+	private settings?: SecondBrainSettings;
 
 	constructor(app: App, onChoose: (item: ContextItem) => void, settings?: SecondBrainSettings) {
 		super(app);
 		this.onChoose = onChoose;
+		this.settings = settings;
 		if (settings) {
 			this.filterService = new VaultFilterService(app, settings);
 		}
@@ -52,22 +54,59 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 			});
 		});
 
-		// 3. Dossiers du coffre
+		// 3. Dossiers du coffre (dossiers normaux et dossiers exclus pour inclusion temporaire)
+		const configuredExcluded = new Set(
+			VaultFilterService.parseList(this.settings?.excludedFolders).map(f => normalizePath(f).toLowerCase())
+		);
+		const seenFolders = new Set<string>();
 		const allLoaded = this.app.vault.getAllLoadedFiles();
 		allLoaded.forEach(f => {
 			if (f instanceof TFolder && f.path && f.path !== '/') {
 				const normFolder = normalizePath(f.path);
-				if (this.filterService && this.filterService.isFolderExcluded(normFolder)) {
+				const normFolderLower = normFolder.toLowerCase();
+				if (seenFolders.has(normFolderLower)) return;
+				seenFolders.add(normFolderLower);
+
+				const isExplicitlyExcluded = configuredExcluded.has(normFolderLower) || configuredExcluded.has(f.name.toLowerCase());
+				if (isExplicitlyExcluded) {
+					items.push({
+						type: 'folder',
+						path: normFolder,
+						title: `📂 [Exclu] Dossier : ${f.name}`,
+						desc: `⚠️ ${f.path} • Actuellement exclu — cliquer pour l'inclure temporairement dans ce chat`
+					});
+				} else if (this.filterService && this.filterService.isFolderExcluded(normFolder)) {
+					// Le dossier est un sous-dossier d'un dossier exclu : on ne le propose pas séparément
 					return;
+				} else {
+					items.push({
+						type: 'folder',
+						path: normFolder,
+						title: `📁 Dossier : ${f.name}`,
+						desc: f.path
+					});
 				}
-				items.push({
-					type: 'folder',
-					path: normFolder,
-					title: `📁 Dossier : ${f.name}`,
-					desc: f.path
-				});
 			}
 		});
+
+		// 3b. S'assurer que les dossiers déclarés dans les paramètres d'exclusion sont présents dans les options même s'ils n'ont pas été chargés via getAllLoadedFiles
+		if (this.settings?.excludedFolders) {
+			const excludedFromSettings = VaultFilterService.parseList(this.settings.excludedFolders);
+			excludedFromSettings.forEach(folderPath => {
+				const norm = normalizePath(folderPath);
+				const normLower = norm.toLowerCase();
+				if (!seenFolders.has(normLower)) {
+					seenFolders.add(normLower);
+					const folderName = norm.split('/').pop() || norm;
+					items.push({
+						type: 'folder',
+						path: norm,
+						title: `📂 [Exclu] Dossier : ${folderName}`,
+						desc: `⚠️ ${norm} • Configuré comme exclu — cliquer pour l'inclure temporairement dans ce chat`
+					});
+				}
+			});
+		}
 
 		// 4. Tags du coffre
 		try {
@@ -93,8 +132,15 @@ export class ContextPickerModal extends FuzzySuggestModal<ContextItem> {
 	}
 
 	renderSuggestion(item: { item: ContextItem }, el: HTMLElement): void {
-		el.createDiv({ text: item.item.title, cls: 'sbm-context-modal-title' });
-		el.createDiv({ text: item.item.desc, cls: 'sbm-context-modal-desc' });
+		const isExcluded = item.item.title.includes('[Exclu]');
+		el.createDiv({
+			text: item.item.title,
+			cls: isExcluded ? 'sbm-context-modal-title sbm-context-modal-excluded-title' : 'sbm-context-modal-title'
+		});
+		el.createDiv({
+			text: item.item.desc,
+			cls: isExcluded ? 'sbm-context-modal-desc sbm-context-modal-excluded-desc' : 'sbm-context-modal-desc'
+		});
 	}
 
 	onChooseItem(item: ContextItem): void {

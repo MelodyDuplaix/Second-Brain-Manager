@@ -12,6 +12,7 @@ export interface ParsedFilters {
 export class VaultFilterService {
 	private app: App;
 	private settings: SecondBrainSettings;
+	private temporaryIncludedFolders: Set<string> = new Set();
 
 	constructor(app: App, settings: SecondBrainSettings) {
 		this.app = app;
@@ -21,6 +22,64 @@ export class VaultFilterService {
 	/**
 	 * Découpe une chaîne en liste d'éléments nettoyés (séparateurs: virgules, points-virgules, retours à la ligne).
 	 */
+	/**
+	 * Configure les dossiers exclus à inclure temporairement (ex: dans une session de chat).
+	 */
+	public setTemporaryIncludedFolders(folders: string[]): void {
+		this.temporaryIncludedFolders = new Set(
+			folders.map(f => normalizePath(f).toLowerCase())
+		);
+	}
+
+	/**
+	 * Ajoute un dossier exclu à la liste des inclusions temporaires.
+	 */
+	public addTemporaryIncludedFolder(folder: string): void {
+		if (!folder) return;
+		this.temporaryIncludedFolders.add(normalizePath(folder).toLowerCase());
+	}
+
+	/**
+	 * Retire un dossier exclu des inclusions temporaires.
+	 */
+	public removeTemporaryIncludedFolder(folder: string): void {
+		if (!folder) return;
+		this.temporaryIncludedFolders.delete(normalizePath(folder).toLowerCase());
+	}
+
+	/**
+	 * Retourne la liste des dossiers exclus temporairement inclus.
+	 */
+	public getTemporaryIncludedFolders(): string[] {
+		return Array.from(this.temporaryIncludedFolders);
+	}
+
+	/**
+	 * Réinitialise la liste des dossiers temporairement inclus.
+	 */
+	public clearTemporaryIncludedFolders(): void {
+		this.temporaryIncludedFolders.clear();
+	}
+
+	/**
+	 * Vérifie si un chemin de dossier ou fichier fait partie des dossiers temporairement inclus.
+	 */
+	public isFolderTemporarilyIncluded(folderOrFilePath: string): boolean {
+		if (!folderOrFilePath || this.temporaryIncludedFolders.size === 0) return false;
+		const norm = normalizePath(folderOrFilePath).toLowerCase();
+		for (const included of this.temporaryIncludedFolders) {
+			if (!included) continue;
+			if (norm === included || norm.startsWith(included + '/') || norm.startsWith(included + '\\')) {
+				return true;
+			}
+			const segments = norm.split('/');
+			if (segments.some(seg => seg === included)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static parseList(raw?: string): string[] {
 		if (!raw || typeof raw !== 'string') return [];
 		return raw
@@ -75,6 +134,7 @@ export class VaultFilterService {
 	 * Vérifie si un chemin de dossier ou fichier correspond à la liste des dossiers exclus.
 	 */
 	public isFolderExcluded(folderOrFilePath: string): boolean {
+		if (this.isFolderTemporarilyIncluded(folderOrFilePath)) return false;
 		if (!folderOrFilePath) return false;
 		const norm = normalizePath(folderOrFilePath).toLowerCase();
 		const filters = this.getParsedFilters();

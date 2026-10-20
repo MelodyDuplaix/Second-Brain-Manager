@@ -90,6 +90,46 @@ describe('VaultFilterService', () => {
 		});
 	});
 
+	describe('Temporary included folders', () => {
+		it('should allow temporarily including an excluded folder and bypass exclusion', () => {
+			const service = new VaultFilterService(mockApp, settings);
+
+			expect(service.isFolderExcluded('Chaos/Archives/OldNote.md')).toBe(true);
+			expect(service.isFolderExcluded('99 - Privé/Secret.md')).toBe(true);
+
+			service.addTemporaryIncludedFolder('Chaos/Archives');
+			expect(service.isFolderTemporarilyIncluded('Chaos/Archives')).toBe(true);
+			expect(service.isFolderExcluded('Chaos/Archives/OldNote.md')).toBe(false);
+			expect(service.isFolderExcluded('Chaos/Archives/2023/SubFolder/Doc.md')).toBe(false);
+
+			// Other excluded folders remain excluded
+			expect(service.isFolderExcluded('99 - Privé/Secret.md')).toBe(true);
+		});
+
+		it('should remove temporary included folder and restore exclusion', () => {
+			const service = new VaultFilterService(mockApp, settings);
+			service.addTemporaryIncludedFolder('Chaos/Archives');
+			expect(service.isFolderExcluded('Chaos/Archives/OldNote.md')).toBe(false);
+
+			service.removeTemporaryIncludedFolder('Chaos/Archives');
+			expect(service.isFolderTemporarilyIncluded('Chaos/Archives')).toBe(false);
+			expect(service.isFolderExcluded('Chaos/Archives/OldNote.md')).toBe(true);
+		});
+
+		it('should manage set of multiple temporary included folders and clear them', () => {
+			const service = new VaultFilterService(mockApp, settings);
+			service.setTemporaryIncludedFolders(['Chaos/Archives', '99 - Privé']);
+			expect(service.getTemporaryIncludedFolders().length).toBe(2);
+			expect(service.isFolderExcluded('Chaos/Archives/Doc.md')).toBe(false);
+			expect(service.isFolderExcluded('99 - Privé/Doc.md')).toBe(false);
+
+			service.clearTemporaryIncludedFolders();
+			expect(service.getTemporaryIncludedFolders().length).toBe(0);
+			expect(service.isFolderExcluded('Chaos/Archives/Doc.md')).toBe(true);
+			expect(service.isFolderExcluded('99 - Privé/Doc.md')).toBe(true);
+		});
+	});
+
 	describe('File name and pattern exclusion', () => {
 		it('should exclude files matching exact name, basename or wildcards', () => {
 			const service = new VaultFilterService(mockApp, settings);
@@ -268,6 +308,44 @@ Contenu normal sans tag secret.`;
 			const readNormal = await vaultContext.readNote('01 - Projets/Normal.md');
 			expect(readNormal).not.toBeNull();
 			expect(readNormal?.title).toBe('Normal');
+		});
+
+		it('should include temporarily included folder in searchNotes and searchTasks', async () => {
+			const fileNormal = new TFile();
+			fileNormal.path = '01 - Projets/Normal.md';
+			fileNormal.basename = 'Normal';
+
+			const filePrivateFolder = new TFile();
+			filePrivateFolder.path = 'Chaos/Archives/Ancien.md';
+			filePrivateFolder.basename = 'Ancien';
+
+			mockApp.vault.getMarkdownFiles = () => [fileNormal, filePrivateFolder];
+			mockApp.vault.read = async (f: TFile) => {
+				if (f.path === '01 - Projets/Normal.md') return '# Normal\n- [ ] Tâche A 📅 2026-08-30';
+				if (f.path === 'Chaos/Archives/Ancien.md') return '# Ancien\n- [ ] Tâche B Archivée 📅 2026-08-30';
+				return '';
+			};
+
+			const vaultContext = new VaultContextService(mockApp, settings);
+
+			// Avant inclusion temporaire : Ancien.md est exclu
+			expect(vaultContext.getFilterService().isFolderExcluded('Chaos/Archives')).toBe(true);
+
+			// Inclusion temporaire
+			vaultContext.addTemporaryIncludedFolder('Chaos/Archives');
+			expect(vaultContext.isFolderTemporarilyIncluded('Chaos/Archives')).toBe(true);
+
+			const results = await vaultContext.searchNotes('Tâche');
+			expect(results.length).toBe(2);
+			expect(results.map(r => r.path)).toContain('Chaos/Archives/Ancien.md');
+
+			const tasks = await vaultContext.searchTasks({});
+			expect(tasks.length).toBe(2);
+			expect(tasks.map(t => t.title)).toContain('Tâche B Archivée');
+
+			const readArchived = await vaultContext.readNote('Chaos/Archives/Ancien.md');
+			expect(readArchived).not.toBeNull();
+			expect(readArchived?.title).toBe('Ancien');
 		});
 
 		it('should exclude private folders and files from getVaultStructure', () => {
