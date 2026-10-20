@@ -61,12 +61,6 @@ export class NoteActionModal extends Modal {
 		});
 		this.updateHeaderModelBadge();
 
-		const closeBtn = header.createEl('button', {
-			cls: 'sbm-note-action-close-btn',
-			attr: { 'aria-label': 'Fermer' }
-		});
-		setIcon(closeBtn, 'x');
-		closeBtn.addEventListener('click', () => this.close());
 
 		// 2. Zone de prévisualisation / Résultat éditable
 		const contentBox = contentEl.createDiv({ cls: 'sbm-note-action-content-box' });

@@ -6034,15 +6034,12 @@ textarea.sbm-chat-textarea:focus {
 	overflow: hidden;
 }
 
-.sbm-note-action-modal .modal-close-button {
-	display: none;
-}
-
 .sbm-note-action-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	padding-bottom: 8px;
+	padding-right: 36px;
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -6060,24 +6057,6 @@ textarea.sbm-chat-textarea:focus {
 	align-items: center;
 	justify-content: center;
 	color: var(--interactive-accent);
-}
-
-.sbm-note-action-close-btn {
-	background: transparent;
-	border: none;
-	cursor: pointer;
-	color: var(--text-muted);
-	padding: 4px;
-	border-radius: 4px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	transition: color 0.15s ease, background-color 0.15s ease;
-}
-
-.sbm-note-action-close-btn:hover {
-	color: var(--text-normal);
-	background-color: var(--background-modifier-hover);
 }
 
 /* Zone de résultat / Prévisualisation */
