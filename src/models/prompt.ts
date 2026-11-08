@@ -15,6 +15,14 @@ export interface ConfiguredPrompt {
 	enabled: boolean;
 }
 
+export const LEGACY_CORRECT_INSTRUCTIONS: string[] = [
+	`Corrige rigoureusement les fautes d'orthographe, de grammaire, de conjugaison, d'accords, de ponctuation et de typographie du texte suivant.
+CONSIGNES STRICTES :
+1. NE REFORMULE PAS : ne modifie ni la structure des phrases, ni le style, ni le vocabulaire de l'auteur. Conserve scrupuleusement chaque mot, ton et registre de langue.
+2. Respecte fidèlement la mise en page, les retours à la ligne, les indentations et les balises Markdown (titres #, listes -, cases à cocher - [ ], liens [[...]], mise en forme gras/italique, etc.).
+3. Rends UNIQUEMENT le texte corrigé, sans introduction, sans conclusion, sans méta-commentaire et sans bloc de code markdown englobant.`,
+];
+
 export const DEFAULT_CONFIGURED_PROMPTS: ConfiguredPrompt[] = [
 	{
 		id: 'correct',
@@ -23,8 +31,9 @@ export const DEFAULT_CONFIGURED_PROMPTS: ConfiguredPrompt[] = [
 		systemInstruction: `Corrige rigoureusement les fautes d'orthographe, de grammaire, de conjugaison, d'accords, de ponctuation et de typographie du texte suivant.
 CONSIGNES STRICTES :
 1. NE REFORMULE PAS : ne modifie ni la structure des phrases, ni le style, ni le vocabulaire de l'auteur. Conserve scrupuleusement chaque mot, ton et registre de langue.
-2. Respecte fidèlement la mise en page, les retours à la ligne, les indentations et les balises Markdown (titres #, listes -, cases à cocher - [ ], liens [[...]], mise en forme gras/italique, etc.).
-3. Rends UNIQUEMENT le texte corrigé, sans introduction, sans conclusion, sans méta-commentaire et sans bloc de code markdown englobant.`,
+2. Respecte fidèlement la mise en page, les retours à la ligne, les indentations et les balises Markdown déjà présentes (titres #, listes -, cases à cocher - [ ], liens [[...]], gras/italique d'origine, etc.).
+3. NE MET JAMAIS EN ÉVIDENCE les corrections : n'ajoute aucun gras, italique, surlignage (==), barré, couleur, balise HTML ni autre formatage sur les mots ou passages corrigés. Le texte rendu doit être propre et identique à l'original, hormis les corrections elles-mêmes.
+4. Rends UNIQUEMENT le texte corrigé, sans introduction, sans conclusion, sans méta-commentaire et sans bloc de code markdown englobant.`,
 		model: '',
 		icon: 'check-check',
 		showInContextMenu: true,

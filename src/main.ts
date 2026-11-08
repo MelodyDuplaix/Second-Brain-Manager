@@ -14,7 +14,7 @@ import { SettingsPageManager, SettingsPageType } from './settings/settingsPageMa
 import { EnergyLevelModal } from './modals/energyLevelModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
-import { ConfiguredPrompt, DEFAULT_CONFIGURED_PROMPTS } from './models/prompt';
+import { ConfiguredPrompt, DEFAULT_CONFIGURED_PROMPTS, LEGACY_CORRECT_INSTRUCTIONS } from './models/prompt';
 import { VaultContextService } from './services/vaultContextService';
 import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
 
@@ -154,6 +154,12 @@ export default class SecondBrainPlugin extends Plugin {
 				if (!this.settings.configuredPrompts.some(p => p.id === def.id)) {
 					this.settings.configuredPrompts.push(JSON.parse(JSON.stringify(def)));
 				}
+			}
+			// Migration : met à jour le prompt de correction s'il n'a jamais été personnalisé
+			const correct = this.settings.configuredPrompts.find(p => p.id === 'correct');
+			const newDefault = DEFAULT_CONFIGURED_PROMPTS.find(p => p.id === 'correct');
+			if (correct && newDefault && LEGACY_CORRECT_INSTRUCTIONS.includes(correct.systemInstruction)) {
+				correct.systemInstruction = newDefault.systemInstruction;
 			}
 		}
 		return this.settings.configuredPrompts;
