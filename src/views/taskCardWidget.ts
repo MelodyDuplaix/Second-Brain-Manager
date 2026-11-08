@@ -1,7 +1,7 @@
 import { App, TFile, Notice, normalizePath, setIcon } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
-import { MatrixAdapterFactory, MatrixQuadrant } from '../adapters/matrixAdapter';
+import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import SecondBrainPlugin from '../main';
 
@@ -117,6 +117,7 @@ export class TaskCardWidget {
 			text: task.matrixTag || matrixLabel
 		});
 		matrixBadge.title = 'Cliquer pour changer le quadrant de matrice Eisenhower';
+		if (!MatrixFeature.isEnabled()) matrixBadge.hide();
 		matrixBadge.addEventListener('click', async () => {
 			const order: MatrixQuadrant[] = ['q1', 'q2', 'q3', 'q4'];
 			const nextQuad = order[(order.indexOf(currentQuad || 'q4') + 1) % order.length];
@@ -378,7 +379,7 @@ export class TaskCardWidget {
 			}
 			if (idx === -1 || lines[idx] === undefined) return content;
 
-			const indentOf = (l: string) => (/^[ 	]*/.exec(l) as RegExpExecArray)[0].length;
+			const indentOf = (l: string) => (/^[ \t]*/.exec(l) as RegExpExecArray)[0].length;
 			const baseIndent = indentOf(lines[idx]);
 			let end = idx + 1;
 			while (end < lines.length && lines[end].trim() !== '' && indentOf(lines[end]) > baseIndent) {
@@ -395,6 +396,9 @@ export class TaskCardWidget {
 		const normalized = normalizePath(task.filePath);
 		const file = plugin.app.vault.getFileByPath(normalized) || plugin.app.vault.getAbstractFileByPath(normalized);
 		if (file instanceof TFile) {
+			// Action de l'utilisateur : l'écouteur de modification du coffre attribue les pièces,
+			// met à jour la série et débloque les trophées (avec sa propre notification)
+			if (completed) plugin.recordUserCheckboxInteraction(task.filePath);
 			await plugin.app.vault.process(file, (content) => {
 				const isCRLF = content.includes('\r\n');
 				const lines = isCRLF ? content.split('\r\n') : content.split('\n');
@@ -412,12 +416,7 @@ export class TaskCardWidget {
 			task.completed = completed;
 			task.status = completed ? 'done' : 'todo';
 
-			if (completed) {
-				const earned = await plugin.gamificationService.claimTaskReward(task);
-				new Notice(`🎉 Tâche terminée ! +${earned} pièces gagnées (Total: ${plugin.gamificationService.getProfile().coins} 🪙)`);
-			} else {
-				new Notice(`Tâche réouverte : ${task.title}`);
-			}
+			if (!completed) new Notice(`Tâche réouverte : ${task.title}`);
 		}
 	}
 }
