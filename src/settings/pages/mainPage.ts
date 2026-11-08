@@ -1,4 +1,4 @@
-import { ButtonComponent, Setting, setIcon, Notice, normalizePath } from 'obsidian';
+import { Setting, setIcon, Notice, normalizePath, debounce } from 'obsidian';
 import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
@@ -7,6 +7,11 @@ import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secret
 import { ModelDiscoveryService } from '../../services/modelDiscoveryService';
 import { GoogleCalendarService } from '../../services/googleCalendarService';
 import { GoogleCalendarListEntry, CalendarRole } from '../../models/googleCalendar';
+import { STARTUP_SIDEBAR_VIEWS, UiDensity } from '../../main';
+import { TaskStatusRegistry, TasksStatusType } from '../../models/taskStatusRegistry';
+import { getTaskExclusionRules, ExclusionReason, TaskExclusionSettings } from '../../services/taskExclusionService';
+import { TaskParser } from '../../parsers/taskParser';
+import { MatrixFeature } from '../../adapters/matrixAdapter';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
@@ -34,7 +39,7 @@ export class MainPage extends BaseSettingsPage {
 						.setButtonText('🔑 Gérer les clés d\'API...')
 						.setCta()
 						.onClick(() => {
-							new SecretsManagementModal(this.plugin.app, this.plugin, () => this.render()).open();
+							new SecretsManagementModal(this.plugin.app, this.plugin, () => this.rerender()).open();
 						});
 				});
 
@@ -88,7 +93,7 @@ export class MainPage extends BaseSettingsPage {
 								this.plugin.settings.llmModel = 'local-model';
 							}
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 		});
@@ -120,11 +125,11 @@ export class MainPage extends BaseSettingsPage {
 
 					dropdown.onChange(async (val) => {
 						if (val === '__custom__') {
-							this.render();
+							this.rerender();
 						} else {
 							this.plugin.settings.llmModel = val;
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						}
 					});
 				})
@@ -146,7 +151,7 @@ export class MainPage extends BaseSettingsPage {
 								btn.setDisabled(false);
 								btn.setButtonText('🔄 Détecter via API');
 								new Notice(`📡 ${live.length} modèle(s) détecté(s) auprès de ${this.plugin.settings.llmProvider.toUpperCase()}`);
-								this.render();
+								this.rerender();
 							} catch {
 								btn.setDisabled(false);
 								btn.setButtonText('🔄 Détecter via API');
@@ -208,38 +213,90 @@ export class MainPage extends BaseSettingsPage {
 					textArea.inputEl.style.fontFamily = 'monospace';
 					textArea.inputEl.style.fontSize = '12px';
 				});
+			// Champ long : libellé au-dessus, zone de saisie sur toute la largeur
+			setting.settingEl.addClass('sbm-setting-stacked');
 		});
 
 		// 1.9 Configuration des Prompts & Actions IA (Sous-page)
-		aiGroup.addSetting((setting: Setting) => {
+		aiGroup.addPageLink({
+			pageType: 'prompts-page',
+			name: 'Prompts & Actions IA personnalisés',
+			desc: 'Personnaliser les prompts de l\'éditeur, assigner un modèle léger dédié (ex: correction d\'orthographe) et configurer leur visibilité',
+			icon: 'sparkles',
+			open: () => this.openPage('prompts-page')
+		});
+
+		// =========================================================================
+		// Apparence : densité de l'interface
+		// =========================================================================
+		const appearanceGroup = new SettingGroup(this.containerEl).setHeading(
+			'Apparence',
+			'layout-template',
+			'Taille des textes, boutons et espacements dans toutes les vues du plugin.'
+		);
+
+		appearanceGroup.addSetting((setting: Setting) => {
 			setting
-				.setName('Prompts & Actions IA personnalisés')
-				.setDesc('Personnaliser les prompts de l\'éditeur, assigner un modèle léger dédié (ex: correction d\'orthographe) et configurer leur visibilité')
-				.addButton((button: ButtonComponent) => {
-					button.setIcon('chevron-right').onClick(() => {
-						this.openPage('prompts-page');
-					});
-					button.buttonEl.addClass('clickable-icon');
+				.setName('Densité de l’interface')
+				.setDesc('Compacte réduit les marges, les boutons et les titres. Très compacte maximise l’information affichée, idéal dans la barre latérale.')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('comfortable', 'Confortable (taille d’origine)')
+						.addOption('compact', 'Compacte')
+						.addOption('dense', 'Très compacte')
+						.setValue(this.plugin.settings.uiDensity || 'compact')
+						.onChange(async (value) => {
+							this.plugin.settings.uiDensity = value as UiDensity;
+							this.plugin.applyUiDensity();
+							await this.plugin.saveSettings();
+						});
 				});
+		});
 
-			const iconEl = activeDocument.createElement('div');
-			setIcon(iconEl, 'sparkles');
-			setting.settingEl.prepend(iconEl);
-			setting.settingEl.addClass('sbm-settings-page-title-setting');
-			setting.settingEl.setAttribute('tabindex', '0');
-			setting.settingEl.setAttribute('role', 'button');
+		// =========================================================================
+		// Démarrage : vues ouvertes automatiquement dans la barre latérale
+		// =========================================================================
+		const startupGroup = new SettingGroup(this.containerEl).setHeading(
+			'Démarrage & barre latérale',
+			'panel-right',
+			'Vues ouvertes automatiquement dans la barre latérale droite au lancement d’Obsidian, en arrière-plan (sans prendre le focus). Une vue déjà ouverte n’est pas dupliquée.'
+		);
 
-			const handleOpen = () => {
-				this.openPage('prompts-page');
-			};
-
-			setting.settingEl.addEventListener('click', handleOpen);
-			setting.settingEl.addEventListener('keydown', (e: KeyboardEvent) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					handleOpen();
-				}
+		STARTUP_SIDEBAR_VIEWS.forEach((view) => {
+			startupGroup.addSetting((setting: Setting) => {
+				setting
+					.setName(view.name)
+					.addToggle((toggle) => {
+						toggle
+							.setValue((this.plugin.settings.startupSidebarViews || []).includes(view.type))
+							.onChange(async (value) => {
+								const current = new Set(this.plugin.settings.startupSidebarViews || []);
+								if (value) current.add(view.type);
+								else current.delete(view.type);
+								// Conserve l'ordre du catalogue (ordre des onglets)
+								this.plugin.settings.startupSidebarViews = STARTUP_SIDEBAR_VIEWS
+									.map(v => v.type)
+									.filter(type => current.has(type));
+								await this.plugin.saveSettings();
+							});
+					});
+				const iconEl = activeDocument.createElement('span');
+				iconEl.addClass('sbm-group-heading-icon');
+				setIcon(iconEl, view.icon);
+				setting.nameEl.insertBefore(iconEl, setting.nameEl.firstChild);
 			});
+		});
+
+		startupGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Ouvrir maintenant')
+				.setDesc('Applique la sélection tout de suite, sans redémarrer Obsidian.')
+				.addButton((btn) => {
+					btn.setButtonText('Ouvrir les vues sélectionnées').onClick(async () => {
+						await this.plugin.openStartupSidebarViews();
+						new Notice('Vues ouvertes dans la barre latérale.');
+					});
+				});
 		});
 
 		// =========================================================================
@@ -356,7 +413,7 @@ export class MainPage extends BaseSettingsPage {
 								this.plugin.settings.priorityMode = 'tag';
 							}
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 		});
@@ -373,7 +430,7 @@ export class MainPage extends BaseSettingsPage {
 						.onChange(async (value: 'emoji' | 'tag') => {
 							this.plugin.settings.priorityMode = value;
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 		});
@@ -473,7 +530,7 @@ export class MainPage extends BaseSettingsPage {
 						.onChange(async (value: 'tag' | 'status') => {
 							this.plugin.settings.pauseMode = value;
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 		});
@@ -525,6 +582,24 @@ export class MainPage extends BaseSettingsPage {
 
 		matrixGroup.addSetting((setting: Setting) => {
 			setting
+				.setName('Activer les quadrants')
+				.setDesc('Désactivé : plus aucun quadrant n’est lu ni proposé. L’IA, le briefing, la reprise, les pièces et les trophées n’en tiennent plus compte, et les boutons de quadrant disparaissent. Les tags déjà présents dans vos notes ne sont pas modifiés.')
+				.addToggle((toggle) => {
+					toggle
+						.setValue(this.plugin.settings.matrixEnabled !== false)
+						.onChange(async (value) => {
+							this.plugin.settings.matrixEnabled = value;
+							MatrixFeature.setEnabled(value);
+							await this.plugin.saveSettings();
+							this.plugin.refreshTaskViews();
+							this.plugin.refreshGamificationViews();
+							this.rerender();
+						});
+				});
+		});
+
+		if (this.plugin.settings.matrixEnabled !== false) matrixGroup.addSetting((setting: Setting) => {
+			setting
 				.setName('Fournisseur de matrice')
 				.setDesc('Sélectionnez le format de tag de matrice utilisé dans votre coffre')
 				.addDropdown((dropdown) => {
@@ -538,6 +613,165 @@ export class MainPage extends BaseSettingsPage {
 							await this.plugin.saveSettings();
 						});
 				});
+		});
+
+		// =========================================================================
+		// Statuts de tâche du plugin Tasks
+		// =========================================================================
+		const statusGroup = new SettingGroup(this.containerEl).setHeading(
+			'Statuts de tâche (plugin Tasks)',
+			'list-checks',
+			'Reprend les statuts personnalisés de Tasks : nom, type et statut suivant au clic sur la case, cases « non-tâche » ignorées, filtre global respecté.'
+		);
+
+		statusGroup.addSetting((setting: Setting) => {
+			setting
+				.setName('Utiliser les statuts du plugin Tasks')
+				.setDesc('Les réglages de Tasks sont relus automatiquement dès qu’ils changent.')
+				.addToggle((toggle) => {
+					toggle
+						.setValue(this.plugin.settings.useTasksPluginStatuses !== false)
+						.onChange(async (value) => {
+							this.plugin.settings.useTasksPluginStatuses = value;
+							await this.plugin.saveSettings();
+							await this.plugin.syncTasksPluginStatuses();
+							this.plugin.refreshTaskViews();
+							this.rerender();
+						});
+				})
+				.addExtraButton((btn) => {
+					btn.setIcon('refresh-cw').setTooltip('Relire les réglages de Tasks').onClick(async () => {
+						const n = await this.plugin.syncTasksPluginStatuses();
+						this.plugin.refreshTaskViews();
+						new Notice(n ? `${n} statuts lus depuis le plugin Tasks.` : 'Plugin Tasks introuvable : statuts par défaut utilisés.');
+						this.rerender();
+					});
+				});
+		});
+
+		statusGroup.addSetting((setting: Setting) => {
+			const fromTasks = TaskStatusRegistry.isFromTasksPlugin();
+			setting
+				.setName(fromTasks ? 'Statuts reconnus' : 'Statuts reconnus (par défaut)')
+				.setDesc(fromTasks
+					? `Lus depuis le plugin Tasks${TaskStatusRegistry.globalFilter ? ` · filtre global : « ${TaskStatusRegistry.globalFilter} »` : ''}.`
+					: 'Le plugin Tasks n’est pas installé dans ce coffre, ou l’option est désactivée.');
+			setting.settingEl.addClass('sbm-setting-stacked');
+			const typeLabels: Record<TasksStatusType, string> = {
+				TODO: 'À faire', DONE: 'Terminée', IN_PROGRESS: 'En cours', CANCELLED: 'Annulée', ON_HOLD: 'En attente', NON_TASK: 'Non-tâche'
+			};
+			const list = setting.controlEl.createDiv({ cls: 'sbm-status-list' });
+			TaskStatusRegistry.all().forEach(st => {
+				const row = list.createDiv({ cls: `sbm-status-chip type-${st.type.toLowerCase()}` });
+				row.createSpan({ cls: 'sbm-status-symbol', text: `[${st.symbol}]` });
+				row.createSpan({ cls: 'sbm-status-name', text: st.name });
+				row.createSpan({ cls: 'sbm-status-type', text: typeLabels[st.type] });
+				row.createSpan({ cls: 'sbm-status-next', text: `→ [${st.nextStatusSymbol}]` });
+			});
+		});
+
+		// =========================================================================
+		// Exclusion de tâches (toutes les requêtes du plugin)
+		// =========================================================================
+		const exclusionGroup = new SettingGroup(this.containerEl).setHeading(
+			'Exclusion de tâches',
+			'filter-x',
+			'Tâches ignorées partout : tableau de bord, calendrier, briefing, revue du soir, reprise et recherches de l’IA. Les sous-tâches suivent leur tâche parente. Les pièces restent gagnées si vous les cochez.'
+		);
+
+		// Les vues sont actualisées peu après la fin de la saisie
+		const refreshViews = debounce(() => this.plugin.refreshTaskViews(), 700, true);
+		const exclusionField = (
+			key: keyof TaskExclusionSettings,
+			name: string,
+			desc: string,
+			placeholder: string
+		) => {
+			exclusionGroup.addSetting((setting: Setting) => {
+				setting
+					.setName(name)
+					.setDesc(desc)
+					.addTextArea((textarea) => {
+						textarea
+							.setPlaceholder(placeholder)
+							.setValue(this.plugin.settings[key] || '')
+							.onChange(async (value) => {
+								this.plugin.settings[key] = value;
+								await this.plugin.saveSettings();
+								refreshViews();
+							});
+						textarea.inputEl.rows = 2;
+					});
+			});
+		};
+
+		exclusionField(
+			'taskExcludeTags',
+			'Tags',
+			'Un tag exclut aussi ses sous-tags (#projet exclut #projet/client). Les tags de la note (frontmatter ou corps) comptent aussi.',
+			'ex : #archive, #un-jour, #modèle, #idée'
+		);
+		exclusionField(
+			'taskExcludeWords',
+			'Mots ou expressions',
+			'Recherchés dans le titre de la tâche, sans tenir compte des majuscules. Une expression régulière s’écrit entre barres obliques : /^brouillon/.',
+			'ex : à voir plus tard, exemple, /^test\\b/'
+		);
+		exclusionField(
+			'taskExcludePaths',
+			'Dossiers ou fichiers',
+			'Un dossier exclut tout son contenu. * remplace n’importe quels caractères (ex. *Brouillon*, Archives/2024*).',
+			'ex : Archives, Modèles, 99 - Corbeille, *Brouillon*'
+		);
+		exclusionField(
+			'taskExcludeStatuses',
+			'Statuts',
+			'Caractères de case à ignorer (voir la liste des statuts ci-dessus), ex. - pour les tâches annulées.',
+			'ex : -, >, I'
+		);
+
+		exclusionGroup.addSetting((setting: Setting) => {
+			const resultEl = createDiv({ cls: 'sbm-exclusion-result' });
+			setting
+				.setName('Tester les règles')
+				.setDesc('Compte les tâches exclues dans le coffre et en montre quelques-unes.')
+				.addButton((btn) => {
+					btn.setButtonText('Tester').onClick(async () => {
+						btn.setDisabled(true);
+						btn.setButtonText('Analyse…');
+						const reasonLabels: Record<ExclusionReason, string> = {
+							tag: 'tag', 'note-tag': 'tag de la note', word: 'mot', path: 'dossier/fichier', status: 'statut', parent: 'tâche parente'
+						};
+						const rules = getTaskExclusionRules(this.plugin.app, this.plugin.settings);
+						let total = 0;
+						const samples: Array<{ title: string; path: string; reason: string }> = [];
+						let excluded = 0;
+						for (const file of this.plugin.app.vault.getMarkdownFiles()) {
+							const content = await this.plugin.app.vault.cachedRead(file);
+							const tasks = TaskParser.parseAllTasks(content, file.path, this.plugin.settings);
+							total += tasks.length;
+							const kept = new Set(rules.filter(tasks));
+							for (const t of tasks) {
+								if (kept.has(t)) continue;
+								excluded++;
+								if (samples.length < 6) {
+									samples.push({ title: t.title, path: file.path, reason: reasonLabels[rules.reasonFor(t) || 'parent'] });
+								}
+							}
+						}
+						resultEl.empty();
+						resultEl.createDiv({ cls: 'sbm-exclusion-summary', text: `${excluded} tâche${excluded > 1 ? 's' : ''} exclue${excluded > 1 ? 's' : ''} sur ${total}.` });
+						const ul = resultEl.createEl('ul');
+						samples.forEach(sm => {
+							const li = ul.createEl('li');
+							li.createSpan({ text: sm.title || '(sans titre)' });
+							li.createSpan({ cls: 'sbm-exclusion-meta', text: ` · ${sm.reason} · ${sm.path}` });
+						});
+						btn.setDisabled(false);
+						btn.setButtonText('Tester');
+					});
+				});
+			setting.descEl.appendChild(resultEl);
 		});
 
 		// =========================================================================
@@ -675,7 +909,7 @@ export class MainPage extends BaseSettingsPage {
 						.onChange(async (val: any) => {
 							this.plugin.settings.sttEngine = val;
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 		});
@@ -789,7 +1023,7 @@ export class MainPage extends BaseSettingsPage {
 									btn.setDisabled(false);
 									btn.setButtonText('🔄 Actualiser la liste');
 									new Notice(`📅 ${this.discoveredCalendars.length} calendrier(s) synchronisé(s).`);
-									this.render();
+									this.rerender();
 								} catch (err: unknown) {
 									btn.setDisabled(false);
 									btn.setButtonText('🔄 Actualiser la liste');
@@ -824,7 +1058,7 @@ export class MainPage extends BaseSettingsPage {
 							.onClick(async () => {
 								await GoogleCalendarService.logoutGoogle(this.plugin);
 								this.discoveredCalendars = null;
-								this.render();
+								this.rerender();
 							});
 					});
 			});
@@ -833,14 +1067,17 @@ export class MainPage extends BaseSettingsPage {
 				this.plugin.settings.calendarsConfig = {};
 			}
 
-			if (this.discoveredCalendars === null) {
+			// Chargé seulement à l'affichage réel (jamais pendant l'indexation de la recherche)
+			calGroup.afterRender(() => {
+				if (this.discoveredCalendars !== null) return;
+				this.discoveredCalendars = [];
 				GoogleCalendarService.listCalendars(this.plugin.settings).then((cals) => {
 					this.discoveredCalendars = cals;
-					this.render();
+					if (cals.length > 0) this.rerender();
 				}).catch(() => {
 					this.discoveredCalendars = [];
 				});
-			}
+			});
 
 			if (this.discoveredCalendars && this.discoveredCalendars.length > 0) {
 				const calendarListGroup = new SettingGroup(this.containerEl).setHeading(
@@ -882,7 +1119,7 @@ export class MainPage extends BaseSettingsPage {
 										this.plugin.settings.defaultCalendarId = c.id;
 									}
 									await this.plugin.saveSettings();
-									this.render();
+									this.rerender();
 								});
 							});
 
@@ -917,7 +1154,7 @@ export class MainPage extends BaseSettingsPage {
 									btn.setDisabled(false);
 									btn.setButtonText('🔗 Se connecter à Google Calendar');
 									if (success) {
-										this.render();
+										this.rerender();
 									}
 								});
 							});
@@ -950,38 +1187,12 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		gamificationGroup.addSetting((setting: Setting) => {
-			setting
-				.setName('Récompenses de boutique')
-				.setDesc('Gérer le catalogue des récompenses, leurs coûts en pièces et les ajouts')
-				.addButton((button: ButtonComponent) => {
-					button.setIcon('chevron-right').onClick(() => {
-						this.openPage('rewards-page');
-					});
-					button.buttonEl.addClass('clickable-icon');
-				});
-
-			const iconEl = activeDocument.createElement('div');
-			iconEl.addClass('sbm-settings-page-title-icon');
-			setIcon(iconEl, 'gift');
-
-			setting.nameEl.insertBefore(iconEl, setting.nameEl.firstChild);
-			setting.nameEl.addClass('sbm-settings-page-title');
-			setting.settingEl.addClass('sbm-settings-page-title-setting');
-			setting.settingEl.setAttribute('tabindex', '0');
-			setting.settingEl.setAttribute('role', 'button');
-
-			const handleOpen = () => {
-				this.openPage('rewards-page');
-			};
-
-			setting.settingEl.addEventListener('click', handleOpen);
-			setting.settingEl.addEventListener('keydown', (e: KeyboardEvent) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					handleOpen();
-				}
-			});
+		gamificationGroup.addPageLink({
+			pageType: 'rewards-page',
+			name: 'Récompenses de boutique',
+			desc: 'Gérer le catalogue des récompenses, leurs coûts en pièces et les ajouts',
+			icon: 'gift',
+			open: () => this.openPage('rewards-page')
 		});
 	}
 }

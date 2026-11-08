@@ -1,15 +1,101 @@
 import { Setting, setIcon } from 'obsidian';
+import type { SettingDefinitionItem, SettingGroupItem, SettingPage } from 'obsidian';
 
+/** Fabrique d'une sous-page native (Obsidian ≥ 1.13), fournie par l'onglet de réglages. */
+export type SubPageFactory = (pageType: string, title: string) => SettingPage;
+
+export interface PageLinkOptions {
+	pageType: string;
+	name: string;
+	desc: string;
+	icon: string;
+	/** Navigation interne utilisée par l'affichage classique (Obsidian < 1.13) */
+	open: () => void;
+}
+
+interface CollectedGroup {
+	heading: string;
+	items: SettingGroupItem[];
+	afterRender: Array<() => void>;
+	afterRenderDone: boolean;
+}
+
+/**
+ * Groupe de réglages à double mode :
+ * - affichage classique : dessine directement les réglages dans le conteneur ;
+ * - collecte (Obsidian ≥ 1.13) : enregistre chaque réglage comme définition déclarative
+ *   (nom et description indexés par la recherche des réglages d'Obsidian), son rendu restant
+ *   le même code impératif, exécuté par Obsidian au moment de l'affichage.
+ */
 export class SettingGroup {
+	private static collector: CollectedGroup[] | null = null;
+	private static probing = false;
+	private static pageFactory: SubPageFactory | null = null;
+
 	private containerEl: HTMLElement;
 	private groupEl: HTMLElement;
+	private collected: CollectedGroup | null = null;
+
+	/**
+	 * Exécute `build` en mode collecte et renvoie les définitions déclaratives produites.
+	 * Utilisé par `getSettingDefinitions()` de l'onglet de réglages.
+	 */
+	public static collect(build: () => void, pageFactory: SubPageFactory): SettingDefinitionItem[] {
+		const groups: CollectedGroup[] = [];
+		SettingGroup.collector = groups;
+		SettingGroup.pageFactory = pageFactory;
+		try {
+			build();
+		} finally {
+			SettingGroup.collector = null;
+			SettingGroup.pageFactory = null;
+		}
+		return groups
+			.filter(g => g.items.length > 0)
+			.map(g => ({ type: 'group' as const, heading: g.heading || undefined, cls: 'sbm-native-group', items: g.items }));
+	}
+
+	/** Vrai pendant l'extraction du nom et de la description d'un réglage (rendu factice). */
+	public static isProbing(): boolean {
+		return SettingGroup.probing;
+	}
 
 	constructor(containerEl: HTMLElement, customClass?: string) {
 		this.containerEl = containerEl;
-		this.groupEl = this.containerEl.createDiv({ cls: `sbm-setting-group ${customClass || ''}`.trim() });
+		if (SettingGroup.collector) {
+			this.collected = { heading: '', items: [], afterRender: [], afterRenderDone: false };
+			SettingGroup.collector.push(this.collected);
+			this.groupEl = createDiv();
+		} else {
+			this.groupEl = this.containerEl.createDiv({ cls: `sbm-setting-group ${customClass || ''}`.trim() });
+		}
 	}
 
 	setHeading(headingText: string, iconName?: string, description?: string): this {
+		if (this.collected) {
+			this.collected.heading = headingText;
+			if (description) {
+				// Description du groupe : ligne d'information, exclue de la recherche
+				this.collected.items.push({
+					name: '',
+					desc: description,
+					searchable: false,
+					render: (setting: Setting) => {
+						setting.settingEl.addClass('sbm-group-intro');
+						setting.setDesc(description);
+						if (iconName) {
+							const iconEl = activeDocument.createElement('span');
+							iconEl.addClass('sbm-group-intro-icon');
+							setIcon(iconEl, iconName);
+							setting.descEl.prepend(iconEl);
+						}
+						this.runAfterRender();
+					}
+				});
+			}
+			return this;
+		}
+
 		const setting = new Setting(this.groupEl).setName(headingText).setHeading();
 		if (description) {
 			setting.setDesc(description);
@@ -24,12 +110,112 @@ export class SettingGroup {
 	}
 
 	addSetting(cb: (setting: Setting) => void): this {
+		if (this.collected) {
+			const { name, desc, aliases } = SettingGroup.probe(cb);
+			this.collected.items.push({
+				name,
+				desc,
+				aliases,
+				render: (setting: Setting) => {
+					try {
+						cb(setting);
+					} catch (e) {
+						console.error('[Second Brain Manager] Erreur d’affichage du réglage', name, e);
+					}
+					this.runAfterRender();
+				}
+			});
+			return this;
+		}
+
 		const setting = new Setting(this.groupEl);
 		cb(setting);
 		return this;
 	}
 
+	/**
+	 * Lien vers une sous-page : page native d'Obsidian (navigation, retour, recherche du nom),
+	 * ou ligne cliquable dans l'affichage classique.
+	 */
+	addPageLink(opts: PageLinkOptions): this {
+		if (this.collected) {
+			const factory = SettingGroup.pageFactory;
+			if (factory) {
+				this.collected.items.push({
+					type: 'page',
+					name: opts.name,
+					desc: opts.desc,
+					page: () => factory(opts.pageType, opts.name)
+				});
+			}
+			return this;
+		}
+
+		const setting = new Setting(this.groupEl)
+			.setName(opts.name)
+			.setDesc(opts.desc)
+			.addButton((button) => {
+				button.setIcon('chevron-right').onClick(opts.open);
+				button.buttonEl.addClass('clickable-icon');
+			});
+		const iconEl = activeDocument.createElement('div');
+		iconEl.addClass('sbm-settings-page-title-icon');
+		setIcon(iconEl, opts.icon);
+		setting.nameEl.insertBefore(iconEl, setting.nameEl.firstChild);
+		setting.nameEl.addClass('sbm-settings-page-title');
+		setting.settingEl.addClass('sbm-settings-page-title-setting');
+		setting.settingEl.setAttribute('tabindex', '0');
+		setting.settingEl.setAttribute('role', 'button');
+		setting.settingEl.addEventListener('click', opts.open);
+		setting.settingEl.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				opts.open();
+			}
+		});
+		return this;
+	}
+
+	/**
+	 * Action à lancer une fois le groupe réellement affiché (jamais pendant l'indexation de la
+	 * recherche) : chargements réseau, lectures… En affichage classique, elle s'exécute aussitôt.
+	 */
+	afterRender(fn: () => void): this {
+		if (this.collected) {
+			this.collected.afterRender.push(fn);
+		} else {
+			fn();
+		}
+		return this;
+	}
+
 	getGroupEl(): HTMLElement {
 		return this.groupEl;
+	}
+
+	private runAfterRender(): void {
+		const group = this.collected;
+		if (!group || group.afterRenderDone || group.afterRender.length === 0) return;
+		group.afterRenderDone = true;
+		window.setTimeout(() => group.afterRender.forEach(fn => fn()), 0);
+	}
+
+	/** Exécute le rendu sur un réglage détaché pour en lire le nom et la description. */
+	private static probe(cb: (setting: Setting) => void): { name: string; desc: string; aliases?: string[] } {
+		const setting = new Setting(createDiv());
+		SettingGroup.probing = true;
+		try {
+			cb(setting);
+		} catch {
+			// Un rendu qui échoue hors contexte n'empêche pas l'indexation
+		} finally {
+			SettingGroup.probing = false;
+		}
+		const name = (setting.nameEl.textContent || '').replace(/\s+/g, ' ').trim();
+		const desc = (setting.descEl.textContent || '').replace(/\s+/g, ' ').trim();
+		const placeholders = Array.from(setting.controlEl.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[placeholder], textarea[placeholder]'))
+			.map(el => el.placeholder)
+			.filter(Boolean);
+		return { name, desc, aliases: placeholders.length ? placeholders : undefined };
 	}
 }

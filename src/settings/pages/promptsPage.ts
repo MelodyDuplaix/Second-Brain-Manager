@@ -85,7 +85,7 @@ export class PromptsPage extends BaseSettingsPage {
 						.onChange(async (val) => {
 							prompt.enabled = val;
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 				});
 
@@ -102,7 +102,7 @@ export class PromptsPage extends BaseSettingsPage {
 				} else {
 					this.expandedPromptIds.add(prompt.id);
 				}
-				this.render();
+				this.rerender();
 			});
 
 			cardHeader.addEventListener('click', () => {
@@ -111,7 +111,7 @@ export class PromptsPage extends BaseSettingsPage {
 				} else {
 					this.expandedPromptIds.add(prompt.id);
 				}
-				this.render();
+				this.rerender();
 			});
 
 			// Corps détaillé dépliable
@@ -178,7 +178,7 @@ export class PromptsPage extends BaseSettingsPage {
 								prompt.model = val;
 							}
 							await this.plugin.saveSettings();
-							this.render();
+							this.rerender();
 						});
 					});
 
@@ -258,7 +258,7 @@ export class PromptsPage extends BaseSettingsPage {
 							prompt.enabled = defaultDef.enabled;
 							await this.plugin.saveSettings();
 							new Notice(`Prompt "${prompt.name}" réinitialisé aux valeurs d'origine.`);
-							this.render();
+							this.rerender();
 						}
 					});
 				} else {
@@ -271,7 +271,7 @@ export class PromptsPage extends BaseSettingsPage {
 						this.expandedPromptIds.delete(prompt.id);
 						await this.plugin.saveSettings();
 						new Notice(`Prompt "${prompt.name}" supprimé.`);
-						this.render();
+						this.rerender();
 					});
 				}
 			}
@@ -405,7 +405,7 @@ export class PromptsPage extends BaseSettingsPage {
 						await this.plugin.saveSettings();
 						this.plugin.registerCustomPromptCommands();
 						new Notice(`Prompt "${newName}" créé avec succès !`);
-						this.render();
+						this.rerender();
 					});
 			});
 		});

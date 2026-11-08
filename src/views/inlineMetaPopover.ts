@@ -1,6 +1,7 @@
 export interface PopoverFieldConfig {
 	title: string;
-	type: 'date' | 'number' | 'priority-select';
+	type: 'date' | 'number' | 'priority-select' | 'text';
+	placeholder?: string;
 	initialValue: string;
 	min?: number;
 	max?: number;
@@ -73,10 +74,11 @@ export class InlineMetaPopover {
 			}
 
 			const input = form.createEl('input', { 
-				type: config.type === 'date' ? 'date' : 'number',
+				type: config.type === 'date' ? 'date' : config.type === 'text' ? 'text' : 'number',
 				cls: 'sbm-popover-input'
 			});
 			input.value = config.initialValue;
+			if (config.placeholder) input.placeholder = config.placeholder;
 
 			if (config.min !== undefined) input.min = config.min.toString();
 			if (config.max !== undefined) input.max = config.max.toString();

@@ -48,7 +48,7 @@ export class RewardsPage extends BaseSettingsPage {
 								.onClick(async () => {
 									this.plugin.pluginData.rewards.splice(index, 1);
 									await this.plugin.savePluginData();
-									this.render();
+									this.rerender();
 								});
 						});
 				});
@@ -117,7 +117,7 @@ export class RewardsPage extends BaseSettingsPage {
 
 							await this.plugin.savePluginData();
 							new Notice(`Récompense "${newName}" ajoutée avec succès !`);
-							this.render();
+							this.rerender();
 						});
 				});
 		});
