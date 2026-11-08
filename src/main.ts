@@ -1,6 +1,6 @@
-import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView } from 'obsidian';
+import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView, WorkspaceLeaf, setIcon, debounce } from 'obsidian';
 import { TaskParser } from './parsers/taskParser';
-import { CustomMatrixTagMapping } from './adapters/matrixAdapter';
+import { CustomMatrixTagMapping, MatrixFeature } from './adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from './models/syntaxConfig';
 import { DashboardView, VIEW_TYPE_DASHBOARD } from './views/dashboardView';
 import { GamificationHistoryView, VIEW_TYPE_GAMIFICATION_HISTORY } from './views/gamificationHistoryView';
@@ -8,19 +8,31 @@ import { ChatView, VIEW_TYPE_CHAT } from './views/chatView';
 import { BriefingView, VIEW_TYPE_BRIEFING } from './views/briefingView';
 import { EveningReviewView, VIEW_TYPE_EVENING_REVIEW } from './views/eveningReviewView';
 import { CalendarView, VIEW_TYPE_CALENDAR } from './views/calendarView';
-import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts } from './models/gamification';
+import { VIEW_TYPE_RECOVERY } from './views/recoveryView';
+import { TaskCalendarView, VIEW_TYPE_TASK_CALENDAR } from './views/taskCalendarView';
+import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts, RewardPurchase } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
+import { SettingGroup } from './settings/settingGroup';
+import { MainPage } from './settings/pages/mainPage';
+import { PromptsPage } from './settings/pages/promptsPage';
+import { RewardsPage } from './settings/pages/rewardsPage';
+import * as ObsidianApi from 'obsidian';
+import type { SettingDefinitionItem, SettingPage } from 'obsidian';
 import { EnergyLevelModal } from './modals/energyLevelModal';
 import { GoogleCalendarSettings, DEFAULT_GOOGLE_CALENDAR_SETTINGS } from './models/googleCalendar';
 import { NoteActionsService } from './services/noteActionsService';
 import { ConfiguredPrompt, DEFAULT_CONFIGURED_PROMPTS, LEGACY_CORRECT_INSTRUCTIONS } from './models/prompt';
 import { VaultContextService } from './services/vaultContextService';
 import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
+import { TaskStatusRegistry } from './models/taskStatusRegistry';
+import { TaskExclusionSettings, DEFAULT_TASK_EXCLUSION_SETTINGS, getTaskExclusionRules } from './services/taskExclusionService';
 
-export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings {
+export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings {
 	energyLevel: number;
 	defaultCoinsPerTask: number;
+	/** Active la fonctionnalité des quadrants (matrice d'Eisenhower) dans tout le plugin */
+	matrixEnabled: boolean;
 	matrixProvider: 'focus-first' | 'task-matrix' | 'quad-tasks' | '4d-matrix' | 'custom';
 	customMatrixMapping: CustomMatrixTagMapping;
 	inboxFolder: string;
@@ -28,6 +40,15 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	dailyNotesFolder: string;
 	dailyNoteTemplatePath: string;
 	autoOpenDailyNoteOnBriefing: boolean;
+
+	// Vues ouvertes automatiquement (en arrière-plan) dans la barre latérale au démarrage
+	startupSidebarViews: string[];
+
+	// Densité visuelle de l'interface du plugin
+	uiDensity: UiDensity;
+
+	// Statuts de tâche lus dans les réglages du plugin Tasks (statuts personnalisés, statut suivant…)
+	useTasksPluginStatuses: boolean;
 
 	// Filtres de confidentialité & exclusion IA
 	excludedFolders: string;
@@ -64,8 +85,10 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_SYNTAX_CONFIG,
 	...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
+	...DEFAULT_TASK_EXCLUSION_SETTINGS,
 	energyLevel: 5,
 	defaultCoinsPerTask: 1,
+	matrixEnabled: true,
 	matrixProvider: 'task-matrix',
 	customMatrixMapping: {
 		q1Tag: '#q1',
@@ -78,6 +101,12 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	dailyNotesFolder: '04 - Journal',
 	dailyNoteTemplatePath: '',
 	autoOpenDailyNoteOnBriefing: true,
+
+	startupSidebarViews: [],
+
+	uiDensity: 'compact',
+
+	useTasksPluginStatuses: true,
 
 	excludedFolders: '',
 	excludedFiles: '',
@@ -115,6 +144,7 @@ interface StoredData {
 	badges?: Record<string, UserBadge>;
 	workflowCounts?: WorkflowCounts;
 	lastActiveSession?: string;
+	rewardPurchases?: RewardPurchase[];
 }
 
 const DEFAULT_STORED_DATA: StoredData = {
@@ -133,6 +163,30 @@ const DEFAULT_STORED_DATA: StoredData = {
 		recoveries: 0,
 		notesMovedOrCleaned: 0
 	}
+};
+
+export type UiDensity = 'comfortable' | 'compact' | 'dense';
+
+/** Vues pouvant être ouvertes automatiquement dans la barre latérale au démarrage (ordre des onglets). */
+export const STARTUP_SIDEBAR_VIEWS: Array<{ type: string; name: string; icon: string }> = [
+	{ type: VIEW_TYPE_DASHBOARD, name: 'Tableau de bord', icon: 'layout-dashboard' },
+	{ type: VIEW_TYPE_TASK_CALENDAR, name: 'Calendrier (tâches & agenda Google)', icon: 'calendar-check-2' },
+	{ type: VIEW_TYPE_BRIEFING, name: 'Briefing du matin', icon: 'sun' },
+	{ type: VIEW_TYPE_EVENING_REVIEW, name: 'Revue du soir', icon: 'moon' },
+	{ type: VIEW_TYPE_CHAT, name: 'Assistant IA (chat)', icon: 'bot' },
+	{ type: VIEW_TYPE_GAMIFICATION_HISTORY, name: 'Historique des pièces et statistiques', icon: 'coins' },
+];
+
+/** Icône et titre de chaque vue du plugin, pour redessiner les onglets non chargés. */
+const VIEW_TAB_HEADERS: Record<string, { icon: string; title: string }> = {
+	[VIEW_TYPE_DASHBOARD]: { icon: 'layout-dashboard', title: 'Tableau de bord' },
+	[VIEW_TYPE_TASK_CALENDAR]: { icon: 'calendar-check-2', title: 'Calendrier' },
+	[VIEW_TYPE_BRIEFING]: { icon: 'sun', title: 'Briefing du matin' },
+	[VIEW_TYPE_EVENING_REVIEW]: { icon: 'moon', title: 'Revue du soir' },
+	[VIEW_TYPE_RECOVERY]: { icon: 'coffee', title: 'Reprise après pause' },
+	[VIEW_TYPE_CHAT]: { icon: 'bot', title: 'Assistant IA' },
+	[VIEW_TYPE_CALENDAR]: { icon: 'calendar', title: 'Agenda Google' },
+	[VIEW_TYPE_GAMIFICATION_HISTORY]: { icon: 'coins', title: 'Gamification, séries et trophées' },
 };
 
 export default class SecondBrainPlugin extends Plugin {
@@ -217,8 +271,12 @@ export default class SecondBrainPlugin extends Plugin {
 
 	async onload() {
 		await this.loadPluginData();
+		MatrixFeature.setEnabled(this.settings.matrixEnabled !== false);
 		this.touchActiveSession();
 		this.registerCustomPromptCommands();
+		await this.syncTasksPluginStatuses();
+		this.applyUiDensity();
+		this.register(() => document.body.removeClass('sbm-density-compact', 'sbm-density-dense'));
 
 		// Enregistrement des vues
 		this.registerView(
@@ -251,6 +309,17 @@ export default class SecondBrainPlugin extends Plugin {
 			(leaf) => new CalendarView(leaf, this)
 		);
 
+		this.registerView(
+			VIEW_TYPE_TASK_CALENDAR,
+			(leaf) => new TaskCalendarView(leaf, this)
+		);
+
+		// Aperçu de la note au survol (Ctrl/Cmd) depuis le calendrier des tâches
+		this.registerHoverLinkSource(VIEW_TYPE_TASK_CALENDAR, {
+			display: 'Calendrier des tâches',
+			defaultMod: true
+		});
+
 		// Icônes dans le ruban latéral
 		this.addRibbonIcon('layout-dashboard', 'Tableau de bord', () => {
 			this.activateDashboardView();
@@ -264,8 +333,10 @@ export default class SecondBrainPlugin extends Plugin {
 			this.activateEveningReviewView();
 		});
 
-		this.addRibbonIcon('calendar', 'Agenda Google Calendar', () => {
-			this.activateCalendarView();
+
+		this.addRibbonIcon('calendar-check-2', 'Calendrier (tâches & agenda Google)', (evt: MouseEvent) => {
+			// Ctrl/Cmd + clic : ouverture en grand dans la vue principale
+			this.activateTaskCalendarView(evt.ctrlKey || evt.metaKey ? 'main' : 'sidebar');
 		});
 
 		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
@@ -274,6 +345,16 @@ export default class SecondBrainPlugin extends Plugin {
 
 		this.addRibbonIcon('bot', 'Assistant IA', () => {
 			this.activateChatView();
+		});
+
+		// Ouverture des vues choisies dans la barre latérale, en arrière-plan
+		this.app.workspace.onLayoutReady(() => {
+			void this.mergeLegacyCalendarLeaves();
+			void this.openStartupSidebarViews();
+			// Après un rechargement du plugin, les onglets restés en arrière-plan perdent leur icône :
+			// on la redessine tout de suite, puis une seconde fois une fois qu'Obsidian a reconstruit les onglets.
+			this.restoreViewTabHeaders();
+			window.setTimeout(() => this.restoreViewTabHeaders(), 400);
 		});
 
 		const statusBarItemEl = this.addStatusBarItem();
@@ -312,6 +393,17 @@ export default class SecondBrainPlugin extends Plugin {
 				this.lastUserEditorFilePath = activeFile?.path || null;
 			})
 		);
+
+		// Réglages du plugin Tasks modifiés (statuts personnalisés…) : on les relit et on actualise les vues
+		const tasksSettingsChanged = debounce(async () => {
+			await this.syncTasksPluginStatuses();
+			this.refreshTaskViews();
+		}, 800, true);
+		this.registerEvent((this.app.vault as unknown as {
+			on(name: 'raw', cb: (path: string) => void): import('obsidian').EventRef;
+		}).on('raw', (path: string) => {
+			if (path.endsWith('obsidian-tasks-plugin/data.json')) tasksSettingsChanged();
+		}));
 
 		// Écouteur automatique de complétion de tâches dans les fichiers Markdown
 		this.registerEvent(
@@ -372,6 +464,22 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'ouvrir-calendrier-taches',
+			name: 'Ouvrir le calendrier (barre latérale)',
+			callback: () => {
+				this.activateTaskCalendarView('sidebar');
+			}
+		});
+
+		this.addCommand({
+			id: 'ouvrir-calendrier-taches-grand',
+			name: 'Ouvrir le calendrier en grand (vue principale)',
+			callback: () => {
+				this.activateTaskCalendarView('main');
+			}
+		});
+
+		this.addCommand({
 			id: 'ouvrir-historique-pieces',
 			name: 'Ouvrir l\'historique des pièces et statistiques',
 			callback: () => {
@@ -381,7 +489,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'ouvrir-agenda-google',
-			name: 'Ouvrir l\'agenda Google Calendar',
+			name: 'Ouvrir l\'agenda Google Calendar (calendrier unifié)',
 			callback: () => {
 				this.activateCalendarView();
 			}
@@ -404,13 +512,17 @@ export default class SecondBrainPlugin extends Plugin {
 			name: 'Analyser les tâches du coffre',
 			callback: async () => {
 				const files = this.app.vault.getMarkdownFiles();
+				const rules = getTaskExclusionRules(this.app, this.settings);
 				let count = 0;
+				let excluded = 0;
 				for (const file of files) {
-					const content = await this.app.vault.read(file);
+					const content = await this.app.vault.cachedRead(file);
 					const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
-					count += tasks.length;
+					const kept = rules.filter(tasks).length;
+					count += kept;
+					excluded += tasks.length - kept;
 				}
-				new Notice(`Analyse terminée : ${count} tâches trouvées dans le coffre.`);
+				new Notice(`Analyse terminée : ${count} tâches trouvées dans le coffre${excluded ? ` (${excluded} exclues par vos règles)` : ''}.`);
 			}
 		});
 
@@ -522,6 +634,60 @@ export default class SecondBrainPlugin extends Plugin {
 		this.addSettingTab(new SecondBrainSettingTab(this.app, this));
 	}
 
+	/**
+	 * Lit les statuts de tâche définis dans le plugin Tasks (data.json de son dossier) pour les
+	 * interpréter comme lui : statuts personnalisés, statut suivant, non-tâches, filtre global.
+	 * Retourne le nombre de statuts chargés (0 si Tasks est absent ou l'option désactivée).
+	 */
+	public async syncTasksPluginStatuses(): Promise<number> {
+		if (this.settings.useTasksPluginStatuses === false) {
+			TaskStatusRegistry.reset();
+			return 0;
+		}
+		try {
+			const path = normalizePath(`${this.app.vault.configDir}/plugins/obsidian-tasks-plugin/data.json`);
+			if (!(await this.app.vault.adapter.exists(path))) {
+				TaskStatusRegistry.reset();
+				return 0;
+			}
+			const conf = TaskStatusRegistry.parseTasksPluginData(JSON.parse(await this.app.vault.adapter.read(path)));
+			if (!conf) {
+				TaskStatusRegistry.reset();
+				return 0;
+			}
+			TaskStatusRegistry.configure(conf);
+			return conf.statuses.length;
+		} catch (e) {
+			console.warn('[Second Brain Manager] Lecture des réglages du plugin Tasks impossible :', e);
+			TaskStatusRegistry.reset();
+			return 0;
+		}
+	}
+
+	/** Recharge les vues qui listent des tâches (après un changement de règles ou de statuts). */
+	public refreshTaskViews(): void {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR).forEach(leaf => {
+			if (leaf.view instanceof TaskCalendarView) void leaf.view.refresh();
+		});
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD).forEach(leaf => {
+			if (leaf.view instanceof DashboardView) void leaf.view.render();
+		});
+	}
+
+	/** Recharge la vue des pièces et trophées (ex. après activation / désactivation des quadrants). */
+	public refreshGamificationViews(): void {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_GAMIFICATION_HISTORY).forEach(leaf => {
+			if (leaf.view instanceof GamificationHistoryView) void leaf.view.render();
+		});
+	}
+
+	/** Applique la densité choisie via une classe sur <body> (lue par styles.css). */
+	public applyUiDensity(): void {
+		const density = this.settings.uiDensity || 'compact';
+		document.body.toggleClass('sbm-density-compact', density === 'compact');
+		document.body.toggleClass('sbm-density-dense', density === 'dense');
+	}
+
 	onunload() {
 		// Nettoyage automatique assuré par Obsidian pour les vues et événements enregistrés
 	}
@@ -546,11 +712,16 @@ export default class SecondBrainPlugin extends Plugin {
 		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
 
 		let dataModified = false;
+		// Doublons exacts (même titre, même date ✅) dans le fichier : numérotés pour rester distincts
+		const seen = new Map<string, number>();
 
 		for (const task of tasks) {
 			if (task.completed || task.status === 'done') {
+				const baseId = GamificationService.getStableTaskId(task);
+				const occurrence = seen.get(baseId) || 0;
+				seen.set(baseId, occurrence + 1);
 				if (isLocal) {
-					const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider);
+					const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider, undefined, occurrence);
 					if (res.rewardGranted) {
 						dataModified = true;
 						new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
@@ -563,7 +734,7 @@ export default class SecondBrainPlugin extends Plugin {
 				} else {
 					// Tâche cochée hors Obsidian (ex: synchronisation depuis un autre appareil / sync distant)
 					// On enregistre silencieusement pour éviter de distribuer des pièces ou notifications en double
-					const syncRes = GamificationService.recordSyncCompletion(task, this.pluginData, this.settings.matrixProvider);
+					const syncRes = GamificationService.recordSyncCompletion(task, this.pluginData, this.settings.matrixProvider, occurrence);
 					if (syncRes.newlyRecorded) {
 						dataModified = true;
 					}
@@ -670,24 +841,131 @@ export default class SecondBrainPlugin extends Plugin {
 		}
 	}
 
-	async activateCalendarView() {
+	/**
+	 * Fusion des calendriers : chaque onglet de l'ancien « Agenda Google » est remplacé par le
+	 * calendrier unifié, ou fermé si un calendrier unifié existe déjà au même endroit.
+	 */
+	private async mergeLegacyCalendarLeaves(): Promise<void> {
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)[0];
+		const isSide = (leaf: WorkspaceLeaf) => {
+			const root = leaf.getRoot();
+			return root === workspace.rightSplit || root === workspace.leftSplit;
+		};
+		for (const leaf of workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+			const side = isSide(leaf);
+			const duplicate = workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR).some(l => isSide(l) === side);
+			if (duplicate) {
+				leaf.detach();
+			} else {
+				await leaf.setViewState({ type: VIEW_TYPE_TASK_CALENDAR, active: false });
+			}
+		}
+	}
+
+	/**
+	 * Redessine l'icône et le titre des onglets du plugin.
+	 * Les onglets non chargés (« deferred », Obsidian ≥ 1.7) ne sont pas réaffichés par Obsidian
+	 * après un rechargement du plugin : on corrige leur en-tête sans charger la vue,
+	 * pour ne pas déclencher ses traitements (lecture du coffre, synchronisation…).
+	 */
+	private restoreViewTabHeaders(): void {
+		this.app.workspace.iterateAllLeaves((leaf) => {
+			const header = VIEW_TAB_HEADERS[leaf.getViewState().type];
+			if (!header) return;
+
+			const internal = leaf as unknown as {
+				tabHeaderInnerIconEl?: HTMLElement;
+				tabHeaderInnerTitleEl?: HTMLElement;
+				tabHeaderEl?: HTMLElement;
+				updateHeader?: () => void;
+			};
+
+			if (!leaf.isDeferred) {
+				internal.updateHeader?.();
+				return;
+			}
+
+			if (internal.tabHeaderInnerIconEl) {
+				internal.tabHeaderInnerIconEl.empty();
+				setIcon(internal.tabHeaderInnerIconEl, header.icon);
+				internal.tabHeaderInnerTitleEl?.setText(header.title);
+				internal.tabHeaderEl?.setAttribute('aria-label', header.title);
+			} else {
+				// API interne absente : on charge la vue en dernier recours
+				void leaf.loadIfDeferred();
+			}
+		});
+	}
+
+	/**
+	 * Ouvre dans la barre latérale droite les vues cochées dans les réglages, sans les afficher
+	 * ni leur donner le focus. Les vues déjà présentes (restaurées par Obsidian) sont ignorées.
+	 */
+	async openStartupSidebarViews(): Promise<void> {
+		const { workspace } = this.app;
+		const wanted = (this.settings.startupSidebarViews || [])
+			.filter(type => STARTUP_SIDEBAR_VIEWS.some(v => v.type === type));
+		const ordered = STARTUP_SIDEBAR_VIEWS.filter(v => wanted.includes(v.type));
+		if (ordered.length === 0) return;
+
+		// Mémorise l'onglet visible de chaque groupe de la barre droite pour le restaurer ensuite
+		type TabGroup = { currentTab?: number; children?: WorkspaceLeaf[]; selectTabIndex?: (i: number) => void };
+		const visibleBefore = new Map<TabGroup, number>();
+		const rememberTabs = () => {
+			workspace.iterateAllLeaves(leaf => {
+				if (leaf.getRoot() !== workspace.rightSplit) return;
+				const group = leaf.parent as unknown as TabGroup;
+				if (group && typeof group.currentTab === 'number' && !visibleBefore.has(group)) {
+					visibleBefore.set(group, group.currentTab);
+				}
+			});
+		};
+		rememberTabs();
+
+		for (const view of ordered) {
+			if (workspace.getLeavesOfType(view.type).length > 0) continue;
+			try {
+				const leaf = workspace.getRightLeaf(false);
+				if (!leaf) continue;
+				await leaf.setViewState({ type: view.type, active: false });
+			} catch (e) {
+				console.warn(`[Second Brain Manager] Ouverture au démarrage impossible : ${view.name}`, e);
+			}
+		}
+
+		visibleBefore.forEach((index, group) => {
+			if (group.currentTab !== index && typeof group.selectTabIndex === 'function') {
+				group.selectTabIndex(index);
+			}
+		});
+	}
+
+	/**
+	 * Ouvre le calendrier des tâches dans la barre latérale droite ou dans la zone principale.
+	 * Réutilise une vue existante au même emplacement plutôt que d'en créer une seconde.
+	 */
+	async activateTaskCalendarView(location: 'sidebar' | 'main' = 'sidebar') {
+		const { workspace } = this.app;
+		const isSide = (leaf: WorkspaceLeaf) => {
+			const root = leaf.getRoot();
+			return root === workspace.rightSplit || root === workspace.leftSplit;
+		};
+		const existing = workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR);
+		let leaf: WorkspaceLeaf | null = existing.find(l => (location === 'sidebar') === isSide(l)) || null;
 
 		if (!leaf) {
-			const rightLeaf = workspace.getRightLeaf(false);
-			if (rightLeaf) {
-				leaf = rightLeaf;
-				await leaf.setViewState({ type: VIEW_TYPE_CALENDAR, active: true });
-			}
+			const previousState = existing[0]?.view?.getState();
+			leaf = location === 'sidebar' ? workspace.getRightLeaf(false) : workspace.getLeaf('tab');
+			if (!leaf) return;
+			await leaf.setViewState({ type: VIEW_TYPE_TASK_CALENDAR, active: true, state: previousState });
 		}
 
-		if (leaf) {
-			workspace.revealLeaf(leaf);
-			if (leaf.view instanceof CalendarView) {
-				await (leaf.view as CalendarView).refreshEvents();
-			}
-		}
+		await workspace.revealLeaf(leaf);
+	}
+
+	/** L'agenda Google est désormais intégré au calendrier unifié. */
+	async activateCalendarView() {
+		await this.activateTaskCalendarView('sidebar');
 	}
 
 	async activateChatView() {
@@ -751,6 +1029,10 @@ export default class SecondBrainPlugin extends Plugin {
 	async loadPluginData() {
 		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, await this.loadData());
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings);
+		if (Array.isArray(this.settings.startupSidebarViews) && this.settings.startupSidebarViews.includes(VIEW_TYPE_CALENDAR)) {
+			const merged = new Set(this.settings.startupSidebarViews.map(t => t === VIEW_TYPE_CALENDAR ? VIEW_TYPE_TASK_CALENDAR : t));
+			this.settings.startupSidebarViews = [...merged];
+		}
 		if (this.settings.autoOpenDailyNoteOnBriefing === undefined) {
 			this.settings.autoOpenDailyNoteOnBriefing = true;
 		}
@@ -775,11 +1057,18 @@ export default class SecondBrainPlugin extends Plugin {
 				recoveries: 0,
 				notesMovedOrCleaned: 0
 			},
-			lastActiveSession: raw.lastActiveSession
+			lastActiveSession: raw.lastActiveSession,
+			rewardPurchases: raw.rewardPurchases || []
 		};
 
 		GamificationService.ensureDataStructures(this.pluginData);
+		// Nettoyage des anciennes tâches cochées enregistrées en masse à 0 pièce (identifiants liés aux numéros de ligne)
+		const pruned = GamificationService.pruneHistoricalSyncEvents(this.pluginData);
 		GamificationService.checkAndUnlockBadges(this.pluginData);
+		if (pruned > 0) {
+			console.info(`[Second Brain Manager] ${pruned} complétion(s) historique(s) en double retirée(s) de l'historique.`);
+			await this.savePluginData();
+		}
 		this.getPrompts();
 	}
 
@@ -792,7 +1081,8 @@ export default class SecondBrainPlugin extends Plugin {
 			streak: this.pluginData.streak,
 			badges: this.pluginData.badges,
 			workflowCounts: this.pluginData.workflowCounts,
-			lastActiveSession: this.pluginData.lastActiveSession
+			lastActiveSession: this.pluginData.lastActiveSession,
+			rewardPurchases: this.pluginData.rewardPurchases || []
 		};
 		await this.saveData(dataToStore);
 	}
@@ -813,6 +1103,8 @@ export class SecondBrainSettingTab extends PluginSettingTab {
 	plugin: SecondBrainPlugin;
 	private settingsPageManager: SettingsPageManager | null = null;
 	private lastPage: SettingsPageType = 'main-page';
+	/** Page principale réutilisée d'une collecte à l'autre (elle garde son état, ex. agendas chargés) */
+	private declarativeMain: MainPage | null = null;
 
 	constructor(app: App, plugin: SecondBrainPlugin) {
 		super(app, plugin);
@@ -820,6 +1112,56 @@ export class SecondBrainSettingTab extends PluginSettingTab {
 		this.containerEl.addClass('sbm-settings-tab');
 	}
 
+	/**
+	 * Obsidian ≥ 1.13 : réglages déclaratifs, indexés par la recherche des réglages.
+	 * Chaque réglage garde son rendu actuel ; seuls son nom et sa description sont déclarés.
+	 * En cas d'erreur, on renvoie une liste vide et Obsidian se rabat sur display().
+	 */
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		try {
+			if (!this.declarativeMain) {
+				const main = new MainPage(createDiv(), this.plugin, 'main-page', () => this.refreshDeclarative(), () => {});
+				main.declarativeRefresh = () => this.refreshDeclarative();
+				this.declarativeMain = main;
+			}
+			const main = this.declarativeMain;
+			return SettingGroup.collect(() => main.render(), (pageType, title) => this.createSubPage(pageType as SettingsPageType, title));
+		} catch (e) {
+			console.error('[Second Brain Manager] Réglages déclaratifs indisponibles, affichage classique utilisé :', e);
+			return [];
+		}
+	}
+
+	/** Reconstruit l'onglet (définitions ajoutées ou retirées) sans perdre la position de défilement. */
+	private refreshDeclarative(): void {
+		const scroller = this.containerEl;
+		const top = scroller.scrollTop;
+		(this as unknown as { update?: () => void }).update?.();
+		scroller.scrollTop = top;
+		window.requestAnimationFrame(() => { scroller.scrollTop = top; });
+	}
+
+	/** Sous-page native (Prompts, Récompenses) qui réutilise le rendu existant de ces pages. */
+	private createSubPage(pageType: SettingsPageType, title: string): SettingPage {
+		const Base = (ObsidianApi as unknown as { SettingPage?: new () => { containerEl: HTMLElement; title: string } }).SettingPage;
+		if (!Base) throw new Error('SettingPage indisponible');
+		const plugin = this.plugin;
+		class EmbeddedSettingsPage extends Base {
+			display(): void {
+				this.containerEl.empty();
+				this.containerEl.addClass('sbm-settings-tab');
+				const PageClass = pageType === 'prompts-page' ? PromptsPage : RewardsPage;
+				const page = new PageClass(this.containerEl, plugin, pageType, () => this.display(), () => {});
+				page.embedded = true;
+				page.render();
+			}
+		}
+		const page = new EmbeddedSettingsPage();
+		page.title = title;
+		return page as unknown as SettingPage;
+	}
+
+	/** Obsidian < 1.13 : affichage classique avec navigation interne entre pages. */
 	display(): void {
 		this.containerEl.empty();
 		this.settingsPageManager = new SettingsPageManager(
@@ -833,7 +1175,9 @@ export class SecondBrainSettingTab extends PluginSettingTab {
 	hide(): void {
 		if (this.settingsPageManager) {
 			this.settingsPageManager.destroy();
+			this.settingsPageManager = null;
 		}
-		this.containerEl.empty();
+		const base = (PluginSettingTab.prototype as unknown as { hide?: () => void }).hide;
+		base?.call(this);
 	}
 }
