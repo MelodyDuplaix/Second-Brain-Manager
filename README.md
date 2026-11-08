@@ -75,7 +75,7 @@
 ![Propositions de rangements](propositions-de-rangements.png)
 ![Vue Chat](vue-chat.png)
 ![Vue des trophés](vue-des-trophes.png)
-
+![Vue calendrier main et sidebar](Vue-calendrier-main-et-sidebar.png)
 
 
 ## 🚀 Installation & Développement
