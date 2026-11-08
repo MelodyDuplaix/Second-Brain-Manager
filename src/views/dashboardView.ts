@@ -1,9 +1,11 @@
 import { ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian';
+import { setIcon } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
+import { TaskCardWidget } from './taskCardWidget';
 import { GamificationService } from '../services/gamificationService';
 import { DomUtils } from '../utils/domUtils';
 import SecondBrainPlugin from '../main';
@@ -392,6 +394,37 @@ export class DashboardView extends ItemView {
 				await this.decomposeTask(task);
 				new Notice(`Sous-tâche ajoutée à : ${task.title}`);
 				await this.render();
+			});
+
+			const deleteBtn = actionGroup.createEl('button', { cls: 'sbm-action-btn delete' });
+			setIcon(deleteBtn, 'trash-2');
+			deleteBtn.title = 'Supprimer cette tâche de la note';
+			let armTimer: number | null = null;
+			const disarm = () => {
+				deleteBtn.removeClass('is-armed');
+				deleteBtn.empty();
+				setIcon(deleteBtn, 'trash-2');
+				deleteBtn.title = 'Supprimer cette tâche de la note';
+				armTimer = null;
+			};
+			deleteBtn.addEventListener('click', async () => {
+				if (armTimer === null) {
+					deleteBtn.addClass('is-armed');
+					deleteBtn.setText('Confirmer ?');
+					deleteBtn.title = 'Cliquer à nouveau pour supprimer définitivement';
+					armTimer = window.setTimeout(disarm, 4000);
+					return;
+				}
+				window.clearTimeout(armTimer);
+				armTimer = null;
+				const removed = await TaskCardWidget.deleteTask(this.plugin, task);
+				if (removed) {
+					new Notice(`🗑️ Tâche supprimée : ${task.title}`);
+					await this.render();
+				} else {
+					new Notice(`Impossible de retrouver la tâche : ${task.title}`);
+					disarm();
+				}
 			});
 		});
 

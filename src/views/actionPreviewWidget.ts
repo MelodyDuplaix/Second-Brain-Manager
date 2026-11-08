@@ -10,6 +10,7 @@ import {
 	CreateNoteActionProposal
 } from '../models/actions';
 import { ActionExecutor } from '../services/actionExecutor';
+import { TaskCardWidget } from './taskCardWidget';
 import { FolderSuggest } from '../suggesters/folderSuggest';
 import { FileSuggest } from '../suggesters/fileSuggest';
 import { TaskPriority } from '../models/task';
@@ -700,6 +701,58 @@ export class ActionPreviewWidget {
 					up.newStatus = up.newStatus === 'cancelled' ? undefined : 'cancelled';
 					updateUI();
 				});
+
+				if (app && itemRow && up.targetPath && up.lineNumber) {
+					const deleteTaskBtn = quickBar.createEl('button', {
+						cls: 'sbm-preview-quick-btn btn-danger',
+						text: '🗑️ Supprimer'
+					});
+					deleteTaskBtn.title = 'Supprimer définitivement la tâche de la note';
+					let armTimer: number | null = null;
+					const disarm = () => {
+						deleteTaskBtn.removeClass('is-armed');
+						deleteTaskBtn.setText('🗑️ Supprimer');
+						armTimer = null;
+					};
+					deleteTaskBtn.addEventListener('click', async (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						if (armTimer === null) {
+							deleteTaskBtn.addClass('is-armed');
+							deleteTaskBtn.setText('Confirmer ?');
+							armTimer = window.setTimeout(disarm, 4000);
+							return;
+						}
+						window.clearTimeout(armTimer);
+						armTimer = null;
+						const title = up.taskTitle || up.diff?.taskTitle || '';
+						const removed = await TaskCardWidget.deleteTask({ app }, {
+							filePath: up.targetPath,
+							lineNumber: up.lineNumber,
+							title
+						});
+						if (!removed) {
+							new Notice('Impossible de retrouver la tâche à supprimer.');
+							disarm();
+							return;
+						}
+						new Notice(`🗑️ Tâche supprimée${title ? ` : ${title}` : ''}`);
+						itemRow.empty();
+						itemRow.className = 'sbm-preview-item is-applied';
+						const box = itemRow.createDiv({ cls: 'sbm-preview-applied-box' });
+						box.createSpan({ cls: 'sbm-preview-applied-icon', text: '🗑️' });
+						box.createSpan({ cls: 'sbm-preview-applied-text', text: `Tâche supprimée${title ? ` : ${title}` : ''}` });
+						if (proposals) {
+							const idx = proposals.indexOf(prop);
+							if (idx !== -1) proposals.splice(idx, 1);
+							if (titleHeaderEl) {
+								titleHeaderEl.setText(proposals.length === 0
+									? '📋 Toutes les modifications ont été appliquées !'
+									: `📋 Plan d'Allègement & Tri Proposé (${proposals.length} restant${proposals.length > 1 ? 's' : ''})`);
+							}
+						}
+					});
+				}
 
 				const isPausedProposal = up.newStatus === 'paused';
 				const pauseTaskBtn = quickBar.createEl('button', {

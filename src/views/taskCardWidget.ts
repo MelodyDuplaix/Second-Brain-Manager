@@ -269,6 +269,39 @@ export class TaskCardWidget {
 			await TaskCardWidget.openTaskLocation(plugin.app, task);
 		});
 
+		// Bouton Supprimer (confirmation en deux clics)
+		const deleteBtn = actionsRow.createEl('button', { cls: 'sbm-chat-task-btn delete' });
+		setIcon(deleteBtn, 'trash-2');
+		deleteBtn.title = 'Supprimer cette tâche de la note';
+		let deleteArmTimer: number | null = null;
+		const disarmDelete = () => {
+			deleteBtn.removeClass('is-armed');
+			deleteBtn.empty();
+			setIcon(deleteBtn, 'trash-2');
+			deleteBtn.title = 'Supprimer cette tâche de la note';
+			deleteArmTimer = null;
+		};
+		deleteBtn.addEventListener('click', async () => {
+			if (deleteArmTimer === null) {
+				deleteBtn.addClass('is-armed');
+				deleteBtn.setText('Confirmer ?');
+				deleteBtn.title = 'Cliquer à nouveau pour supprimer définitivement';
+				deleteArmTimer = window.setTimeout(disarmDelete, 4000);
+				return;
+			}
+			window.clearTimeout(deleteArmTimer);
+			deleteArmTimer = null;
+			const removed = await TaskCardWidget.deleteTask(plugin, task);
+			if (removed) {
+				newNotice(`🗑️ Tâche supprimée : ${task.title}`);
+				cardEl.remove();
+				if (onTaskUpdated) onTaskUpdated();
+			} else {
+				newNotice(`Impossible de retrouver la tâche : ${task.title}`);
+				disarmDelete();
+			}
+		});
+
 		// Interaction avec la checkbox pour terminer la tâche
 		checkbox.addEventListener('change', async () => {
 			const isDone = checkbox.checked;
@@ -320,6 +353,42 @@ export class TaskCardWidget {
 				return isCRLF ? lines.join('\r\n') : lines.join('\n');
 			});
 		}
+	}
+
+	/**
+	 * Supprime la ligne de la tâche (et ses sous-éléments plus indentés) de la note.
+	 * Retourne false si la ligne n'a pas pu être localisée.
+	 */
+	public static async deleteTask(
+		plugin: { app: App },
+		task: Pick<ObsidianTask, 'filePath' | 'lineNumber' | 'title'>
+	): Promise<boolean> {
+		const normalized = normalizePath(task.filePath);
+		const file = plugin.app.vault.getFileByPath(normalized) || plugin.app.vault.getAbstractFileByPath(normalized);
+		if (!(file instanceof TFile)) return false;
+
+		let removed = false;
+		await plugin.app.vault.process(file, (content) => {
+			const isCRLF = content.includes('\r\n');
+			const lines = isCRLF ? content.split('\r\n') : content.split('\n');
+			let idx = task.lineNumber - 1;
+			if (lines[idx] === undefined || !lines[idx].includes(task.title)) {
+				const cleanSearch = task.title.trim().toLowerCase();
+				idx = lines.findIndex(l => l.includes('- [') && l.toLowerCase().includes(cleanSearch));
+			}
+			if (idx === -1 || lines[idx] === undefined) return content;
+
+			const indentOf = (l: string) => (/^[ 	]*/.exec(l) as RegExpExecArray)[0].length;
+			const baseIndent = indentOf(lines[idx]);
+			let end = idx + 1;
+			while (end < lines.length && lines[end].trim() !== '' && indentOf(lines[end]) > baseIndent) {
+				end++;
+			}
+			lines.splice(idx, end - idx);
+			removed = true;
+			return isCRLF ? lines.join('\r\n') : lines.join('\n');
+		});
+		return removed;
 	}
 
 	public static async setTaskCompleted(plugin: SecondBrainPlugin, task: ObsidianTask, completed: boolean): Promise<void> {
