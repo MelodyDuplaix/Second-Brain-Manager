@@ -1,14 +1,17 @@
 import { ItemView, WorkspaceLeaf, Notice, setIcon, Modal, App } from 'obsidian';
 import { GamificationService } from '../services/gamificationService';
 import { DomUtils } from '../utils/domUtils';
-import { BADGE_DEFINITIONS } from '../models/gamification';
+import { BADGE_CATEGORY_LABELS, BadgeDefinition, RewardPurchase, getActiveBadgeDefinitions } from '../models/gamification';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_GAMIFICATION_HISTORY = 'sbm-gamification-history-view';
 
 export class GamificationHistoryView extends ItemView {
 	private plugin: SecondBrainPlugin;
-	private currentTab: 'history' | 'badges' | 'stats' = 'history';
+	private currentTab: 'history' | 'badges' | 'shop' | 'stats' = 'history';
+	/** Récompense en attente de confirmation d'achat (second clic) */
+	private pendingPurchaseId: string | null = null;
+	private pendingPurchaseTimer: number | undefined;
 	private searchQuery = '';
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
@@ -34,7 +37,10 @@ export class GamificationHistoryView extends ItemView {
 
 	async render(): Promise<void> {
 		GamificationService.ensureDataStructures(this.plugin.pluginData);
-		GamificationService.checkAndUnlockBadges(this.plugin.pluginData);
+		// Trophées débloqués rétroactivement (nouvelles règles) : enregistrés sans notification en rafale
+		if (GamificationService.checkAndUnlockBadges(this.plugin.pluginData).length > 0) {
+			void this.plugin.savePluginData();
+		}
 
 		const container = this.containerEl.children[1];
 		container.empty();
@@ -71,6 +77,15 @@ export class GamificationHistoryView extends ItemView {
 		});
 		badgesTabBtn.addEventListener('click', () => {
 			this.currentTab = 'badges';
+			this.render();
+		});
+
+		const shopTabBtn = tabNav.createEl('button', {
+			cls: `sbm-tab-btn ${this.currentTab === 'shop' ? 'active' : ''}`,
+			text: '🛍️ Boutique'
+		});
+		shopTabBtn.addEventListener('click', () => {
+			this.currentTab = 'shop';
 			this.render();
 		});
 
@@ -111,6 +126,8 @@ export class GamificationHistoryView extends ItemView {
 			this.renderHistoryTab(mainContent, events);
 		} else if (this.currentTab === 'badges') {
 			this.renderBadgesTab(mainContent);
+		} else if (this.currentTab === 'shop') {
+			this.renderShopTab(mainContent);
 		} else {
 			this.renderAdvancedStatsTab(mainContent, events);
 		}
@@ -126,53 +143,190 @@ export class GamificationHistoryView extends ItemView {
 
 		const streakInfo = streakHero.createDiv({ cls: 'sbm-streak-hero-info' });
 		streakInfo.createEl('h3', { text: `🔥 Série : ${currentStreak} jour${currentStreak > 1 ? 's' : ''}` });
-		streakInfo.createEl('p', { 
+		streakInfo.createEl('p', {
 			text: `Record : ${longestStreak} j — Complétez 1 tâche par jour pour maintenir votre flamme.`,
 			cls: 'sbm-streak-hero-desc'
 		});
 
-		// Galerie des Badges & Trophées
-		container.createEl('h3', { text: '🏆 Galerie des Trophées', cls: 'sbm-badges-section-title' });
+		// Galerie des trophées, regroupés par famille
+		const defs = getActiveBadgeDefinitions();
+		const badges = this.plugin.pluginData.badges;
+		const unlockedCount = defs.filter(d => badges[d.id]?.unlockedAt).length;
+		const titleRow = container.createDiv({ cls: 'sbm-badges-title-row' });
+		titleRow.createEl('h3', { text: '🏆 Galerie des Trophées', cls: 'sbm-badges-section-title' });
+		titleRow.createSpan({ cls: 'sbm-badges-counter', text: `${unlockedCount} / ${defs.length}` });
 
-		const gridEl = container.createEl('div', { cls: 'sbm-badges-grid' });
-
-		BADGE_DEFINITIONS.forEach(badgeDef => {
-			const userBadge = this.plugin.pluginData.badges[badgeDef.id];
-			const isUnlocked = Boolean(userBadge && userBadge.unlockedAt);
-			const progress = userBadge ? userBadge.progress : 0;
-
-			const card = gridEl.createEl('div', { 
-				cls: `sbm-badge-card ${isUnlocked ? 'is-unlocked' : 'is-locked'}` 
-			});
-
-			const badgeHeader = card.createDiv({ cls: 'sbm-badge-card-header' });
-			const iconEl = badgeHeader.createDiv({ cls: 'sbm-badge-icon' });
-			setIcon(iconEl, badgeDef.icon || 'award');
-
-			const badgeMeta = badgeHeader.createDiv({ cls: 'sbm-badge-meta' });
-			badgeMeta.createEl('h4', { text: badgeDef.name, cls: 'sbm-badge-name' });
-
-			card.createEl('p', { text: badgeDef.description, cls: 'sbm-badge-desc' });
-
-			const footerEl = card.createDiv({ cls: 'sbm-badge-footer' });
-			if (isUnlocked) {
-				const dateStr = userBadge.unlockedAt ? new Date(userBadge.unlockedAt).toLocaleDateString('fr-FR') : 'Obtenu';
-				footerEl.createSpan({ text: `✨ Débloqué le ${dateStr}`, cls: 'sbm-badge-unlocked-tag' });
-			} else {
-				const progressWrap = footerEl.createDiv({ cls: 'sbm-badge-progress-wrap' });
-				progressWrap.createDiv({ cls: 'sbm-badge-progress-text', text: `Progression : ${progress} / ${badgeDef.maxProgress}` });
-				const progressBar = progressWrap.createDiv({ cls: 'sbm-badge-progress-bar' });
-				const percent = Math.min(100, Math.round((progress / badgeDef.maxProgress) * 100));
-				progressBar.createDiv({ cls: 'sbm-badge-progress-fill' }).style.width = `${percent}%`;
-			}
+		BADGE_CATEGORY_LABELS.forEach(({ id, label }) => {
+			const inCategory = defs.filter(d => d.category === id);
+			if (inCategory.length === 0) return;
+			const done = inCategory.filter(d => badges[d.id]?.unlockedAt).length;
+			const section = container.createDiv({ cls: 'sbm-badges-category' });
+			const head = section.createDiv({ cls: 'sbm-badges-category-head' });
+			head.createSpan({ cls: 'sbm-badges-category-title', text: label });
+			head.createSpan({ cls: 'sbm-badges-category-count', text: `${done} / ${inCategory.length}` });
+			const gridEl = section.createDiv({ cls: 'sbm-badges-grid' });
+			// Débloqués d'abord, puis les plus proches du but
+			const ratio = (d: BadgeDefinition) => (badges[d.id]?.progress || 0) / d.maxProgress;
+			[...inCategory]
+				.sort((a, b) => Number(Boolean(badges[b.id]?.unlockedAt)) - Number(Boolean(badges[a.id]?.unlockedAt)) || ratio(b) - ratio(a))
+				.forEach(badgeDef => this.renderBadgeCard(gridEl, badgeDef));
 		});
+	}
+
+	private renderBadgeCard(gridEl: HTMLElement, badgeDef: BadgeDefinition): void {
+		const userBadge = this.plugin.pluginData.badges[badgeDef.id];
+		const isUnlocked = Boolean(userBadge && userBadge.unlockedAt);
+		const progress = userBadge ? Math.min(userBadge.progress, badgeDef.maxProgress) : 0;
+
+		const card = gridEl.createEl('div', {
+			cls: `sbm-badge-card ${isUnlocked ? 'is-unlocked' : 'is-locked'}`
+		});
+
+		const badgeHeader = card.createDiv({ cls: 'sbm-badge-card-header' });
+		const iconEl = badgeHeader.createDiv({ cls: 'sbm-badge-icon' });
+		setIcon(iconEl, badgeDef.icon || 'award');
+
+		const badgeMeta = badgeHeader.createDiv({ cls: 'sbm-badge-meta' });
+		badgeMeta.createEl('h4', { text: badgeDef.name, cls: 'sbm-badge-name' });
+
+		card.createEl('p', { text: badgeDef.description, cls: 'sbm-badge-desc' });
+
+		const footerEl = card.createDiv({ cls: 'sbm-badge-footer' });
+		if (isUnlocked) {
+			const dateStr = userBadge.unlockedAt ? new Date(userBadge.unlockedAt).toLocaleDateString('fr-FR') : 'Obtenu';
+			footerEl.createSpan({ text: `✨ Débloqué le ${dateStr}`, cls: 'sbm-badge-unlocked-tag' });
+		} else {
+			const progressWrap = footerEl.createDiv({ cls: 'sbm-badge-progress-wrap' });
+			progressWrap.createDiv({ cls: 'sbm-badge-progress-text', text: `Progression : ${progress} / ${badgeDef.maxProgress}` });
+			const progressBar = progressWrap.createDiv({ cls: 'sbm-badge-progress-bar' });
+			const percent = Math.min(100, Math.round((progress / badgeDef.maxProgress) * 100));
+			progressBar.createDiv({ cls: 'sbm-badge-progress-fill' }).style.width = `${percent}%`;
+		}
+	}
+
+	/* ======================================================================
+	   Boutique : échanger ses pièces contre des récompenses
+	   ====================================================================== */
+
+	private renderShopTab(container: Element): void {
+		const data = this.plugin.pluginData;
+		const balance = data.wallet.balance;
+		const rewards = (data.rewards || []).filter(r => r.enabled).sort((a, b) => a.cost - b.cost);
+
+		const hero = container.createDiv({ cls: 'sbm-shop-hero' });
+		const heroIcon = hero.createDiv({ cls: 'sbm-shop-hero-icon' });
+		setIcon(heroIcon, 'shopping-bag');
+		const heroInfo = hero.createDiv({ cls: 'sbm-shop-hero-info' });
+		heroInfo.createEl('h3', { text: `${balance} 🪙 à dépenser` });
+		const affordable = rewards.filter(r => r.cost <= balance).length;
+		heroInfo.createEl('p', {
+			cls: 'sbm-shop-hero-desc',
+			text: rewards.length === 0
+				? 'Aucune récompense dans la boutique pour le moment.'
+				: affordable > 0
+					? `${affordable} récompense${affordable > 1 ? 's' : ''} à votre portée. Faites-vous plaisir, c'est mérité.`
+					: 'Encore un peu d’efforts : chaque tâche vous rapproche de votre prochaine récompense.'
+		});
+		const manageBtn = hero.createEl('button', { cls: 'sbm-shop-manage-btn', text: 'Gérer le catalogue' });
+		manageBtn.title = 'Ajouter ou modifier des récompenses dans les réglages';
+		manageBtn.addEventListener('click', () => this.openRewardSettings());
+
+		if (rewards.length === 0) {
+			container.createDiv({ cls: 'sbm-shop-empty', text: 'Ajoutez vos premières récompenses (une pause jeu, un bon repas, un film…) dans les réglages du plugin.' });
+		} else {
+			const grid = container.createDiv({ cls: 'sbm-shop-grid' });
+			rewards.forEach(reward => {
+				const canBuy = reward.cost <= balance;
+				const card = grid.createDiv({ cls: `sbm-shop-card ${canBuy ? 'is-affordable' : 'is-locked'}` });
+				const top = card.createDiv({ cls: 'sbm-shop-card-top' });
+				top.createDiv({ cls: 'sbm-shop-card-name', text: reward.name });
+				top.createDiv({ cls: 'sbm-shop-card-cost', text: `${reward.cost} 🪙` });
+				if (reward.description) card.createDiv({ cls: 'sbm-shop-card-desc', text: reward.description });
+
+				if (!canBuy) {
+					const missing = reward.cost - balance;
+					const wrap = card.createDiv({ cls: 'sbm-shop-card-progress' });
+					const bar = wrap.createDiv({ cls: 'sbm-badge-progress-bar' });
+					bar.createDiv({ cls: 'sbm-badge-progress-fill' }).style.width = `${Math.max(0, Math.min(100, Math.round((balance / reward.cost) * 100)))}%`;
+					wrap.createDiv({ cls: 'sbm-shop-card-missing', text: `Encore ${missing} pièce${missing > 1 ? 's' : ''}` });
+				}
+
+				const pending = this.pendingPurchaseId === reward.id;
+				const buyBtn = card.createEl('button', {
+					cls: `sbm-shop-buy-btn ${pending ? 'is-armed' : ''} ${canBuy ? 'mod-cta' : ''}`,
+					text: pending ? `Confirmer (−${reward.cost} 🪙)` : canBuy ? 'Échanger' : 'Pas encore'
+				});
+				buyBtn.disabled = !canBuy;
+				buyBtn.addEventListener('click', () => this.onBuyClick(reward.id));
+			});
+		}
+
+		// Historique des échanges
+		const purchases = [...((data.rewardPurchases || []) as RewardPurchase[])].reverse();
+		const historyHead = container.createDiv({ cls: 'sbm-shop-history-head' });
+		historyHead.createEl('h3', { text: '🧾 Mes récompenses' });
+		historyHead.createSpan({ cls: 'sbm-shop-history-total', text: `${data.wallet.lifetimeSpent || 0} 🪙 dépensées au total` });
+		if (purchases.length === 0) {
+			container.createDiv({ cls: 'sbm-shop-empty', text: 'Aucune récompense échangée pour l’instant.' });
+			return;
+		}
+		const list = container.createDiv({ cls: 'sbm-shop-history' });
+		purchases.slice(0, 30).forEach(p => {
+			const row = list.createDiv({ cls: 'sbm-shop-history-row' });
+			row.createSpan({ cls: 'sbm-shop-history-name', text: `🎁 ${p.rewardName}` });
+			row.createSpan({
+				cls: 'sbm-shop-history-date',
+				text: new Date(p.purchasedAt).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
+			});
+			row.createSpan({ cls: 'sbm-shop-history-cost', text: `−${p.cost} 🪙` });
+			const undo = row.createEl('button', { cls: 'sbm-shop-undo-btn clickable-icon' });
+			setIcon(undo, 'undo-2');
+			undo.title = 'Annuler cet échange (les pièces sont rendues)';
+			undo.addEventListener('click', async () => {
+				if (GamificationService.refundPurchase(this.plugin.pluginData, p.id)) {
+					await this.plugin.savePluginData();
+					new Notice(`↩️ Échange annulé : +${p.cost} 🪙 rendues`);
+					await this.render();
+				}
+			});
+		});
+	}
+
+	/** Achat en deux clics : le premier arme le bouton, le second confirme (4 s). */
+	private async onBuyClick(rewardId: string): Promise<void> {
+		if (this.pendingPurchaseId !== rewardId) {
+			this.pendingPurchaseId = rewardId;
+			if (this.pendingPurchaseTimer) window.clearTimeout(this.pendingPurchaseTimer);
+			this.pendingPurchaseTimer = window.setTimeout(() => {
+				this.pendingPurchaseId = null;
+				if (this.currentTab === 'shop') void this.render();
+			}, 4000);
+			await this.render();
+			return;
+		}
+		this.pendingPurchaseId = null;
+		if (this.pendingPurchaseTimer) window.clearTimeout(this.pendingPurchaseTimer);
+		const res = GamificationService.purchaseReward(this.plugin.pluginData, rewardId);
+		new Notice(res.message, res.ok ? 5000 : 4000);
+		if (res.ok) {
+			res.newlyUnlockedBadges.forEach(b => new Notice(`🏆 NOUVEAU TROPHÉE : ${b.name} !\n${b.description}`, 7000));
+			await this.plugin.savePluginData();
+		}
+		await this.render();
+	}
+
+	private openRewardSettings(): void {
+		const setting = (this.app as unknown as { setting?: { open: () => void; openTabById: (id: string) => void } }).setting;
+		if (!setting) return;
+		setting.open();
+		setting.openTabById(this.plugin.manifest.id);
 	}
 
 	private renderHistoryTab(container: Element, events: Array<{ taskId: string; completedAt: string; coins: number; taskText: string; categoryTags?: string[] }>): void {
 		const searchContainer = container.createEl('div', { cls: 'sbm-history-search' });
 		const searchInput = searchContainer.createEl('input', {
 			type: 'text',
-			placeholder: '🔍 Rechercher une tâche complétée (titre, tag)...'
+			placeholder: '🔍 Rechercher une tâche ou une récompense (titre, tag)...'
 		});
 		searchInput.value = this.searchQuery;
 		searchInput.addEventListener('input', () => {
@@ -187,20 +341,36 @@ export class GamificationHistoryView extends ItemView {
 	private renderList(container: Element, events: Array<{ taskId: string; completedAt: string; coins: number; taskText: string; categoryTags?: string[] }>): void {
 		container.empty();
 
+		const q = this.searchQuery;
 		const filtered = events.filter(e => {
-			if (!this.searchQuery) return true;
-			const matchText = (e.taskText || '').toLowerCase().includes(this.searchQuery);
-			const matchTags = (e.categoryTags || []).some(t => t.toLowerCase().includes(this.searchQuery));
+			if (!q) return true;
+			const matchText = (e.taskText || '').toLowerCase().includes(q);
+			const matchTags = (e.categoryTags || []).some(t => t.toLowerCase().includes(q));
 			return matchText || matchTags;
 		});
 
-		if (filtered.length === 0) {
+		// Échanges de la boutique, mêlés aux tâches dans l'ordre chronologique
+		const purchases = ((this.plugin.pluginData.rewardPurchases || []) as RewardPurchase[])
+			.filter(p => !q || (p.rewardName || '').toLowerCase().includes(q) || 'récompense'.includes(q));
+
+		type Entry = { kind: 'task'; at: string; item: typeof events[number] } | { kind: 'purchase'; at: string; purchase: RewardPurchase };
+		const entries: Entry[] = [
+			...filtered.map(item => ({ kind: 'task' as const, at: item.completedAt || '', item })),
+			...purchases.map(purchase => ({ kind: 'purchase' as const, at: purchase.purchasedAt || '', purchase }))
+		].sort((a, b) => b.at.localeCompare(a.at));
+
+		if (entries.length === 0) {
 			const emptyState = container.createEl('div', { cls: 'sbm-empty-history' });
-			emptyState.setText(this.searchQuery ? 'Aucune tâche ne correspond à votre recherche.' : 'Aucune tâche récompensée pour le moment.');
+			emptyState.setText(q ? 'Aucune entrée ne correspond à votre recherche.' : 'Aucune tâche récompensée pour le moment.');
 			return;
 		}
 
-		filtered.forEach(item => {
+		entries.forEach(entry => {
+			if (entry.kind === 'purchase') {
+				this.renderPurchaseRow(container, entry.purchase);
+				return;
+			}
+			const item = entry.item;
 			const row = container.createEl('div', { cls: 'sbm-history-card' });
 
 			const mainInfo = row.createEl('div', { cls: 'sbm-history-left' });
@@ -236,6 +406,32 @@ export class GamificationHistoryView extends ItemView {
 					await this.render();
 				}
 			});
+		});
+	}
+
+	/** Ligne d'historique pour un échange de pièces contre une récompense. */
+	private renderPurchaseRow(container: Element, p: RewardPurchase): void {
+		const row = container.createEl('div', { cls: 'sbm-history-card is-purchase' });
+
+		const mainInfo = row.createEl('div', { cls: 'sbm-history-left' });
+		mainInfo.createEl('div', { cls: 'sbm-history-task-text', text: `🎁 ${p.rewardName}` });
+		const metaInfo = mainInfo.createEl('div', { cls: 'sbm-history-meta' });
+		metaInfo.createEl('span', {
+			cls: 'sbm-history-date',
+			text: new Date(p.purchasedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+		});
+		metaInfo.createEl('span', { cls: 'sbm-tag-pill sbm-history-purchase-pill', text: 'Récompense' });
+
+		const rightWrap = row.createEl('div', { cls: 'sbm-history-right' });
+		rightWrap.createEl('span', { cls: 'sbm-history-coins is-spent', text: `−${p.cost} 🪙` });
+		const undoBtn = rightWrap.createEl('button', { cls: 'sbm-revoke-btn', text: 'Annuler' });
+		undoBtn.title = 'Annuler cet échange et récupérer les pièces';
+		undoBtn.addEventListener('click', async () => {
+			if (GamificationService.refundPurchase(this.plugin.pluginData, p.id)) {
+				await this.plugin.savePluginData();
+				new Notice(`↩️ Échange annulé : +${p.cost} 🪙 rendues`);
+				await this.render();
+			}
 		});
 	}
 
