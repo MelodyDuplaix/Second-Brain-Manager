@@ -2,6 +2,7 @@ import { App, Editor, MarkdownView, Notice } from 'obsidian';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage, LLMProvider } from '../models/llm';
 import { TaskMutator } from '../mutators/taskMutator';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { TaskParser } from '../parsers/taskParser';
 import { VaultFilterService } from './vaultFilterService';
 import { NoteActionModal } from '../modals/noteActionModal';
@@ -73,8 +74,9 @@ CONSIGNES STRICTES DE FORMATAGE :
 ${taskSyntaxDesc}
 3. Estimation des métadonnées :
    - Date due : date mentionnée dans le texte ou date d'aujourd'hui (${todayStr}) si urgent.
-   - Matrice : #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4 (ou équivalent dataview/tag selon configuration).
-   - Énergie : 1 à 10 (1 = très rapide, 10 = tâche complexe).
+${MatrixFeature.isEnabled()
+		? '   - Matrice : #tm/q1 (urgent & important), #tm/q2 (important de fond), #tm/q3 (urgent non important), ou #tm/q4 (ou équivalent dataview/tag selon configuration).\n'
+		: '   - Pas de quadrant ni de tag de matrice (fonctionnalité désactivée).\n'}   - Énergie : 1 à 10 (1 = très rapide, 10 = tâche complexe).
 4. Liens & Références : Si une personne, un contact, un projet ou une autre note est mentionné dans l'intitulé de la tâche, entoure-le systématiquement d'un wikilink [[...]] (ex: "Appeler [[Claire Dupont]]", "Envoyer le compte-rendu à [[Sophie]]").
 5. Ne renvoie AUCUN blabla, AUCUN commentaire, AUCUN bloc markdown \`\`\` : renvoie UNIQUEMENT la liste des lignes de tâches.
 6. Si aucune action n'est identifiable, renvoie exactement: "Aucune action concrète identifiée."`;

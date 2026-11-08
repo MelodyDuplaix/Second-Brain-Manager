@@ -1,8 +1,10 @@
-import { App, normalizePath, TFile } from 'obsidian';
+import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { getTaskExclusionRules } from './taskExclusionService';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { ActionProposal, UpdateTaskActionProposal, TaskDiffMetadata } from '../models/actions';
@@ -142,7 +144,7 @@ export class RecoveryService {
 				}
 			})
 		);
-		const allTasks = results.flat();
+		const allTasks = getTaskExclusionRules(app, plugin.settings).filter(results.flat());
 		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
 		// Seuil de 7 jours pour identifier les tâches en retard "obsolètes / en souffrance"
@@ -296,8 +298,8 @@ export class RecoveryService {
 					lineNumber: task.lineNumber,
 					oldDueDate: task.dueDate,
 					newDueDate: data.dateStr,
-					oldQuadrant: currentQ || 'q1',
-					newQuadrant: 'q1',
+					oldQuadrant: MatrixFeature.isEnabled() ? currentQ || 'q1' : null,
+					newQuadrant: MatrixFeature.isEnabled() ? 'q1' : null,
 					oldPriority: task.priority || 'high',
 					newPriority: task.priority || 'high',
 					oldEnergy: task.energy,
@@ -311,10 +313,10 @@ export class RecoveryService {
 					targetPath: task.filePath,
 					lineNumber: task.lineNumber,
 					taskTitle: task.title,
-					description: `⏩ Reporter à aujourd'hui (Priorité Q1) : "${task.title}"`,
+					description: `⏩ Reporter à aujourd'hui (${MatrixFeature.isEnabled() ? 'Priorité Q1' : 'prioritaire'}) : "${task.title}"`,
 					selected: true,
 					newDueDate: data.dateStr,
-					newMatrixQuadrant: 'q1',
+					newMatrixQuadrant: MatrixFeature.isEnabled() ? 'q1' : undefined,
 					diff,
 					reason: diff.reason
 				} as UpdateTaskActionProposal);
@@ -603,7 +605,7 @@ VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
 1. Annulation / Obsolescence (passer en \`newStatus: "cancelled"\` les tâches obsolètes ou périmées).
 2. Report de date (replanifier à aujourd'hui ou à une date réaliste).
 3. Rangement & Renommage de notes en vrac (\`type: "move_note"\`, \`type: "rename_note"\`).
-4. Rétrogradation de quadrant (passer de Q1 à Q2 pour ajuster la priorité).
+${MatrixFeature.isEnabled() ? '4. Rétrogradation de quadrant (passer de Q1 à Q2 pour ajuster la priorité).' : '4. Baisse de priorité (newPriority) pour les tâches qui ne sont plus pressantes. Les quadrants sont désactivés : n\'utilise jamais newMatrixQuadrant.'}
 5. Délestage d'échéances (mettre \`newDueDate: null\` sur les tâches de fond sans date butoir ferme).
 
 STRUCTURE DE TA RÉPONSE :
@@ -625,8 +627,7 @@ BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
     "targetPath": "01 - Projets/Acme.md",
     "lineNumber": 12,
     "taskTitle": "Rediger le rapport",
-    "description": "Retrograder en Q2 et replanifier",
-    "newMatrixQuadrant": "q2",
+    "description": "${MatrixFeature.isEnabled() ? 'Retrograder en Q2 et replanifier' : 'Replanifier'}",${MatrixFeature.isEnabled() ? '\n    "newMatrixQuadrant": "q2",' : ''}
     "newDueDate": "${data.dateStr}",
     "reason": "Tache non urgente, retrogradee pour soulager la reprise"
   },
@@ -711,7 +712,7 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et 
 				}
 			})
 		);
-		const vaultTasks: ObsidianTask[] = results.flat();
+		const vaultTasks: ObsidianTask[] = getTaskExclusionRules(app, plugin.settings).filter(results.flat());
 
 		const defaultProposals = this.generateDefaultLighteningProposals(data, plugin);
 

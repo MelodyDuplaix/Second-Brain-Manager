@@ -2,8 +2,9 @@ import { ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian'
 import { setIcon } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { getTaskExclusionRules } from '../services/taskExclusionService';
 import { TaskMutator } from '../mutators/taskMutator';
-import { MatrixAdapterFactory, MatrixQuadrant } from '../adapters/matrixAdapter';
+import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import { TaskCardWidget } from './taskCardWidget';
 import { GamificationService } from '../services/gamificationService';
@@ -361,6 +362,7 @@ export class DashboardView extends ItemView {
 			const matrixLabel = currentQuad ? `#${currentQuad.toUpperCase()}` : '+ Quadrant';
 			const matrixTag = metaEl.createEl('span', { cls: 'sbm-meta-tag matrix sbm-editable-tag', text: task.matrixTag || matrixLabel });
 			matrixTag.addEventListener('click', () => this.editMatrixInline(task));
+			if (!MatrixFeature.isEnabled()) matrixTag.hide();
 
 			const actionGroup = cardEl.createEl('div', { cls: 'sbm-action-group' });
 
@@ -572,7 +574,7 @@ export class DashboardView extends ItemView {
 			})
 		);
 
-		return results.flat();
+		return getTaskExclusionRules(this.app, this.plugin.settings).filter(results.flat());
 	}
 
 	private async updateTaskStatus(task: ObsidianTask, inProgress: boolean): Promise<void> {

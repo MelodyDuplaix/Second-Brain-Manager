@@ -1,4 +1,5 @@
 import { VaultContextService } from './vaultContextService';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { ToolDefinition, ActionProposal } from '../models/actions';
 import { TaskMutator } from '../mutators/taskMutator';
 import { GoogleCalendarService } from './googleCalendarService';
@@ -390,14 +391,29 @@ export class ToolRegistry {
 	}
 
 	public static getToolDefinitions(): ToolDefinition[] {
-		return this.tools;
+		return this.activeTools();
+	}
+
+	/** Outils exposés à l'IA ; sans quadrants, les paramètres de matrice disparaissent des schémas. */
+	private static activeTools(): ToolDefinition[] {
+		if (MatrixFeature.isEnabled()) return this.tools;
+		const matrixParams = ['quadrant', 'matrixQuadrant', 'newMatrixQuadrant'];
+		return this.tools.map(t => {
+			const props = { ...(t.parameters.properties || {}) } as Record<string, unknown>;
+			matrixParams.forEach(k => delete props[k]);
+			return {
+				...t,
+				description: t.description.replace(/,?\s*quadrant/gi, ''),
+				parameters: { ...t.parameters, properties: props } as ToolDefinition['parameters']
+			};
+		});
 	}
 
 	/**
 	 * Convertit la liste des outils au format JSON Schema attendu par OpenAI & Ollama.
 	 */
 	public static getOpenAIToolsSchema(): Array<{ type: 'function'; function: ToolDefinition }> {
-		return this.tools.map(t => ({
+		return this.activeTools().map(t => ({
 			type: 'function',
 			function: t
 		}));
@@ -407,7 +423,7 @@ export class ToolRegistry {
 	 * Convertit la liste des outils au format attendu par l'API Google Gemini.
 	 */
 	public static getGeminiToolsSchema(): Array<{ functionDeclarations: ToolDefinition[] }> {
-		return [{ functionDeclarations: this.tools }];
+		return [{ functionDeclarations: this.activeTools() }];
 	}
 
 	/**
@@ -415,7 +431,7 @@ export class ToolRegistry {
 	 */
 	public static getSystemPromptToolDocumentation(): string {
 		let doc = '### OUTILS DISPONIBLES :\n';
-		this.tools.forEach(t => {
+		this.activeTools().forEach(t => {
 			doc += `- **${t.name}**: ${t.description}\n  Paramètres: ${JSON.stringify(t.parameters.properties)}\n`;
 		});
 		doc += '\nPour appeler un outil, utilisez le format JSON : ```json\n{"tool": "nom_outil", "arguments": { ... }}\n```\n';

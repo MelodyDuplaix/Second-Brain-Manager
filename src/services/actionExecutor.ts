@@ -10,6 +10,7 @@ import {
 } from '../models/actions';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { GoogleCalendarService } from './googleCalendarService';
 import { VaultContextService, normalizeCanonicalKey, isTFile } from './vaultContextService';
 import { TemplateService } from './templateService';
@@ -260,7 +261,7 @@ export class ActionExecutor {
 		// Supprimer block IDs
 		title = title.replace(/\s+\^[a-zA-Z0-9_-]+$/, '');
 		// Supprimer tags (ex: #tm/q1, #projet, etc.)
-		title = title.replace(/#[a-zA-Z0-9_\u00C0-\u017F/-]+/g, '');
+		title = title.replace(/#[\p{L}\p{N}_/-]+/gu, '');
 		// Nettoyer wikilinks vers texte brut : [[Kwarto|Kwarto]] -> Kwarto, [[Kwarto]] -> Kwarto
 		title = title.replace(/\[\[(?:[^|\]]+\|)?([^\]]+)\]\]/g, '$1');
 		return title.replace(/\s+/g, ' ').trim();
@@ -927,7 +928,7 @@ export class ActionExecutor {
 		if (proposal.pieces !== undefined) {
 			taskLine = TaskMutator.setControlledTag(taskLine, 'pieces', proposal.pieces, this.settings);
 		}
-		if (proposal.matrixQuadrant) {
+		if (proposal.matrixQuadrant && MatrixFeature.isEnabled()) {
 			if (this.settings.taskFormat === 'dataview') {
 				taskLine = TaskMutator.setControlledTag(taskLine, 'matrix', proposal.matrixQuadrant, this.settings);
 			} else {
@@ -1033,7 +1034,7 @@ export class ActionExecutor {
 				if (proposal.newPieces !== undefined) {
 					line = TaskMutator.setControlledTag(line, 'pieces', proposal.newPieces, this.settings);
 				}
-				if (proposal.newMatrixQuadrant !== undefined) {
+				if (proposal.newMatrixQuadrant !== undefined && MatrixFeature.isEnabled()) {
 					if (this.settings.taskFormat === 'dataview') {
 						line = TaskMutator.setControlledTag(line, 'matrix', proposal.newMatrixQuadrant, this.settings);
 					} else {

@@ -1,6 +1,7 @@
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import { TaskPriority } from '../models/task';
 import { DynamicRegexBuilder } from '../parsers/regexBuilder';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 
 export class TaskMutator {
 	private static readonly BLOCK_ID_MATCH_REGEX = /\s+(\^[a-zA-Z0-9_-]+)$/;
@@ -395,13 +396,13 @@ export class TaskMutator {
 		if (options.pieces !== undefined && options.pieces !== null) {
 			line = this.setControlledTag(line, 'pieces', options.pieces, config);
 		}
-		if (options.matrixQuadrant) {
+		if (options.matrixQuadrant && MatrixFeature.isEnabled()) {
 			const qTag = options.matrixQuadrant.startsWith('q') ? options.matrixQuadrant : `q${options.matrixQuadrant}`;
 			const matrixVal = config.taskFormat === 'dataview'
 				? qTag
 				: `${config.matrixTagPrefix || 'tm/q'}${qTag.replace('q', '')}`;
 			line = this.setControlledTag(line, 'matrix', matrixVal, config);
-		} else if (options.matrixTag) {
+		} else if (options.matrixTag && MatrixFeature.isEnabled()) {
 			const cleanMat = options.matrixTag.replace(/^#/, '');
 			line = this.setControlledTag(line, 'matrix', cleanMat, config);
 		}
@@ -465,36 +466,39 @@ export class TaskMutator {
 	 */
 	public static getTaskSyntaxPromptDescription(config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const dateEx = config.useWikilinks ? '[[YYYY-MM-DD]]' : 'YYYY-MM-DD';
+		const matrixOn = MatrixFeature.isEnabled();
+		const matrixTagEx = matrixOn ? ` #${config.matrixTagPrefix || 'tm/q'}1` : '';
+		const noMatrixRule = matrixOn ? '' : '\n- N\'ajoute JAMAIS de quadrant ni de tag de matrice (#tm/qN, #q1…) : cette fonctionnalité est désactivée.';
 
 		if (config.taskFormat === 'dataview') {
 			return `FORMAT STRICT DES TÂCHES (Dataview Inline Fields) :
 Chaque tâche DOIT impérativement respecter le format Dataview configuré par l'utilisateur :
-- [ ] Titre de la tâche [due:: ${dateEx}] [scheduled:: ${dateEx}] [start:: ${dateEx}] [priority:: high] [energy:: 5] [matrix:: q1] [[LienNote]]
+- [ ] Titre de la tâche [due:: ${dateEx}] [scheduled:: ${dateEx}] [start:: ${dateEx}] [priority:: high] [energy:: 5]${matrixOn ? ' [matrix:: q1]' : ''} [[LienNote]]
 Règles :
 - Les échéances doivent utiliser [due:: ...], la date planifiée [scheduled:: ...], la date de début [start:: ...].
-- Les métadonnées utilisent des champs Dataview entre crochets : [priority:: ...], [energy:: ...], [matrix:: ...].`;
+- Les métadonnées utilisent des champs Dataview entre crochets : [priority:: ...], [energy:: ...]${matrixOn ? ', [matrix:: ...]' : ''}.${noMatrixRule}`;
 		} else if (config.taskFormat === 'tag') {
 			return `FORMAT STRICT DES TÂCHES (Tags) :
 Chaque tâche DOIT impérativement respecter le format Tags configuré par l'utilisateur :
-- [ ] Titre de la tâche #due/${dateEx} #scheduled/${dateEx} #start/${dateEx} #${config.priorityTagPrefix}/haute #${config.energyTagPrefix}/5 #${config.matrixTagPrefix || 'tm/q'}1 [[LienNote]]
+- [ ] Titre de la tâche #due/${dateEx} #scheduled/${dateEx} #start/${dateEx} #${config.priorityTagPrefix}/haute #${config.energyTagPrefix}/5${matrixTagEx} [[LienNote]]
 Règles :
 - Les dates s'écrivent sous forme de tags : #due/..., #scheduled/..., #start/...
 - Les priorités s'écrivent sous forme de tags : #${config.priorityTagPrefix}/haute, #${config.priorityTagPrefix}/moyenne, etc.
-- L'énergie s'écrit #${config.energyTagPrefix}/N.`;
+- L'énergie s'écrit #${config.energyTagPrefix}/N.${noMatrixRule}`;
 		} else {
 			const prioEx = config.priorityMode === 'tag'
 				? `#${config.priorityTagPrefix}/haute`
 				: (config.highPrioritySignifier || '⏫');
 			return `FORMAT STRICT DES TÂCHES (Obsidian Tasks - Emojis) :
 Chaque tâche DOIT impérativement respecter le format Emojis configuré par l'utilisateur :
-- [ ] Titre de la tâche ${config.dueDateSignifier} ${dateEx} ${config.scheduledDateSignifier} ${dateEx} ${config.startDateSignifier} ${dateEx} ${prioEx} #${config.energyTagPrefix}/5 #${config.matrixTagPrefix || 'tm/q'}1 [[LienNote]]
+- [ ] Titre de la tâche ${config.dueDateSignifier} ${dateEx} ${config.scheduledDateSignifier} ${dateEx} ${config.startDateSignifier} ${dateEx} ${prioEx} #${config.energyTagPrefix}/5${matrixTagEx} [[LienNote]]
 Règles :
 - Échéance : ${config.dueDateSignifier} ${dateEx}
 - Date planifiée : ${config.scheduledDateSignifier} ${dateEx}
 - Date de début : ${config.startDateSignifier} ${dateEx}
 - Priorité : ${prioEx} (ou ${config.highestPrioritySignifier || '🔺'}, ${config.mediumPrioritySignifier || '🔼'}, ${config.lowPrioritySignifier || '🔽'})
 - Énergie : #${config.energyTagPrefix}/1 à 10
-- Matrice : #${config.matrixTagPrefix || 'tm/q'}1 à 4`;
+${matrixOn ? `- Matrice : #${config.matrixTagPrefix || 'tm/q'}1 à 4` : noMatrixRule.trim()}`;
 		}
 	}
 

@@ -1,8 +1,8 @@
-import { App, normalizePath, TFile } from 'obsidian';
+import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
-import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { MatrixAdapterFactory, MatrixFeature } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
 import { TaskSafetyGuard } from './taskSafetyGuard';
@@ -441,7 +441,7 @@ export class MorningBriefingService {
 
 		const priorityText = (data.priorityTasks && data.priorityTasks.length > 0)
 			? data.priorityTasks.slice(0, 8).map(formatTaskLine).join('\n')
-			: 'Aucune tâche Q1/Q2 prioritaire.';
+			: (MatrixFeature.isEnabled() ? 'Aucune tâche Q1/Q2 prioritaire.' : 'Aucune tâche prioritaire.');
 
 		const inboxText = (data.inboxTasks && data.inboxTasks.length > 0)
 			? data.inboxTasks.slice(0, 20).map(formatTaskLine).join('\n')
@@ -526,7 +526,7 @@ export class MorningBriefingService {
 		let userMessage = '';
 
 		if (data.isRecoveryMode) {
-			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle, méthodologie GTD et matrice d'Eisenhower.
+			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle${MatrixFeature.isEnabled() ? ', méthodologie GTD et matrice d\'Eisenhower' : ' et méthodologie GTD'}.
 
 SITUATION DU COFFRE :
 Le coffre présente un volume d'éléments en attente à réorganiser (${data.inactivityText}, ${data.overdueTasks.length} tâches en retard dont ${data.staleTasks.length} anciennes, ${data.inboxNotePreviews.length} notes non classées).
@@ -553,7 +553,7 @@ CONSIGNES DE REDACTION :
    - **Plan de Tri & d'Organisation** :
      - Annule les réunions passées et tâches manifestement obsolètes (\`newStatus: "cancelled"\`).
      - Replanifie à aujourd'hui (${data.dateStr}) ou à une date réaliste les tâches réellement prioritaires.
-     - Rétrograde en Q2 ou retire les échéances non fermes (\`newDueDate: null\`) des tâches secondaires.
+     - ${MatrixFeature.isEnabled() ? 'Rétrograde en Q2 ou retire' : 'Retire'} les échéances non fermes (\`newDueDate: null\`) des tâches secondaires.
      - Propose le rangement et le renommage explicite de chaque note en vrac vers son dossier pertinent (\`type: "move_note"\`, \`type: "rename_note"\`).
    - **Conseil de Rythme** (Une recommandation motivante et pratique pour aborder la journée sereinement)
 2. **Format des Tâches Recommandées** :
@@ -628,7 +628,7 @@ Propose-moi mon briefing avec un plan de tri et d'organisation des tâches et no
 
 		} else {
 			// Mode Briefing Quotidien standard
-			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle, méthodologie GTD et matrice d'Eisenhower.
+			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle${MatrixFeature.isEnabled() ? ', méthodologie GTD et matrice d\'Eisenhower' : ' et méthodologie GTD'}.
 
 PRISE EN COMPTE DES AGENDAS :
 1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement construire le plan de journée et ordonner les tâches dans les créneaux libres disponibles.
@@ -667,7 +667,7 @@ ${calendarSectionText}
 TACHES PLANIFIEES POUR AUJOURD'HUI :
 ${todayText}
 
-TACHES PRIORITAIRES (Q1 / Q2) :
+TACHES PRIORITAIRES${MatrixFeature.isEnabled() ? ' (Q1 / Q2)' : ''} :
 ${priorityText}
 
 TACHES EN RETARD (${data.overdueTasks.length} détectées) :

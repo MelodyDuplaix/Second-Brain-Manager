@@ -1,5 +1,6 @@
 import { ObsidianTask } from '../models/task';
 import { ActionProposal, UpdateTaskActionProposal } from '../models/actions';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 
 export class TaskSafetyGuard {
 	/**
@@ -47,14 +48,15 @@ export class TaskSafetyGuard {
 			if (upProp.newStatus === 'cancelled' || upProp.newDueDate === null) {
 				upProp.newStatus = undefined;
 				upProp.newDueDate = today;
-				upProp.newMatrixQuadrant = 'q1';
-				upProp.description = `⚠️ Tâche prioritaire (Q1) : report sécurisé à aujourd'hui (${today})`;
+				const matrixOn = MatrixFeature.isEnabled();
+				upProp.newMatrixQuadrant = matrixOn ? 'q1' : undefined;
+				upProp.description = `⚠️ Tâche prioritaire${matrixOn ? ' (Q1)' : ''} : report sécurisé à aujourd'hui (${today})`;
 				
 				if (upProp.diff) {
 					upProp.diff.newDueDate = today;
-					upProp.diff.newQuadrant = 'q1';
+					upProp.diff.newQuadrant = matrixOn ? 'q1' : upProp.diff.newQuadrant;
 					upProp.diff.newStatus = undefined;
-					upProp.diff.reason = 'Tâche prioritaire Q1 : maintien de l\'échéance avec report sécurisé à aujourd\'hui.';
+					upProp.diff.reason = `Tâche prioritaire${matrixOn ? ' Q1' : ''} : maintien de l'échéance avec report sécurisé à aujourd'hui.`;
 				}
 				upProp.reason = upProp.diff?.reason;
 			}

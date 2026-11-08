@@ -14,7 +14,7 @@ import { TaskCardWidget } from './taskCardWidget';
 import { FolderSuggest } from '../suggesters/folderSuggest';
 import { FileSuggest } from '../suggesters/fileSuggest';
 import { TaskPriority } from '../models/task';
-import { MatrixQuadrant } from '../adapters/matrixAdapter';
+import { MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 
 export class ActionPreviewWidget {
 	public static render(
@@ -412,7 +412,7 @@ export class ActionPreviewWidget {
 			}
 
 			// 2. Quadrant / Matrice
-			if (upProp.newMatrixQuadrant !== undefined || diff?.newQuadrant !== undefined) {
+			if (MatrixFeature.isEnabled() && (upProp.newMatrixQuadrant !== undefined || diff?.newQuadrant !== undefined)) {
 				const oldQ = diff?.oldQuadrant ? diff.oldQuadrant.toUpperCase() : 'Non classé';
 				const newQ = (upProp.newMatrixQuadrant || diff?.newQuadrant || '').toUpperCase();
 				if (newQ) {
@@ -500,7 +500,7 @@ export class ActionPreviewWidget {
 			} else {
 				dueDiffPill.createSpan({ text: 'Sans date', cls: 'sbm-diff-removed' });
 			}
-			if (crProp.matrixQuadrant) {
+			if (crProp.matrixQuadrant && MatrixFeature.isEnabled()) {
 				const quadPill = diffsRow.createDiv({ cls: 'sbm-preview-diff-pill' });
 				quadPill.createSpan({ text: '🎯 ' });
 				quadPill.createSpan({ text: `#${crProp.matrixQuadrant.toUpperCase()}`, cls: 'sbm-diff-new' });
@@ -773,6 +773,7 @@ export class ActionPreviewWidget {
 				text: '🔺 Q1'
 			});
 			q1Btn.title = 'Classer en Q1 (Urgent & Important)';
+			if (!MatrixFeature.isEnabled()) q1Btn.hide();
 			q1Btn.addEventListener('click', (e) => {
 				e.preventDefault();
 				if (prop.type === 'create_task') {
@@ -886,6 +887,7 @@ export class ActionPreviewWidget {
 			const quadCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
 			const quadHeader = quadCard.createDiv({ cls: 'sbm-facet-header' });
 			quadHeader.createSpan({ cls: 'sbm-facet-title', text: '🎯 Quadrant Eisenhower' });
+			if (!MatrixFeature.isEnabled()) quadCard.hide();
 
 			const quadChips = quadCard.createDiv({ cls: 'sbm-edit-chips-row' });
 			const quadrants: Array<{ val: MatrixQuadrant | undefined; label: string }> = [
@@ -1046,6 +1048,7 @@ export class ActionPreviewWidget {
 			const quadCard = grid.createDiv({ cls: 'sbm-action-facet-card' });
 			const quadHeader = quadCard.createDiv({ cls: 'sbm-facet-header' });
 			quadHeader.createSpan({ cls: 'sbm-facet-title', text: '🎯 Action 2 : Quadrant Eisenhower' });
+			if (!MatrixFeature.isEnabled()) quadCard.hide();
 
 			const quadChips = quadCard.createDiv({ cls: 'sbm-edit-chips-row' });
 			const quadrants: Array<{ val: MatrixQuadrant | undefined; label: string }> = [

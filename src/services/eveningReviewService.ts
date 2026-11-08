@@ -1,6 +1,7 @@
-import { App, normalizePath, TFile } from 'obsidian';
+import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { getTaskExclusionRules } from './taskExclusionService';
 import { TaskMutator } from '../mutators/taskMutator';
 import { LLMService } from './llmService';
 import { LLMConfig, ChatMessage } from '../models/llm';
@@ -71,7 +72,7 @@ export class EveningReviewService {
 			})
 		);
 
-		for (const t of results.flat()) {
+		for (const t of getTaskExclusionRules(app, plugin.settings).filter(results.flat())) {
 			if (filterService.isTaskExcluded(t)) {
 				continue;
 			}

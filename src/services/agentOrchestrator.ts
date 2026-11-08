@@ -6,6 +6,7 @@ import { ToolRegistry, ToolCallRequest } from './toolRegistry';
 import { ActionProposal } from '../models/actions';
 import { ObsidianTask } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { SecondBrainSettings } from '../main';
 import { JsonUtils } from '../utils/jsonUtils';
 
@@ -151,7 +152,9 @@ CONTEXTE EN TEMPS RÉEL DU COFFRE :
 - Dossier Boîte de réception (Inbox) : "${this.settings.inboxFolder}"${activeNoteInfo}
 - Niveau d'énergie actuel : ${energy}/10 (${energy <= 3 ? 'Mode Économie' : 'Mode Plein Potentiel'})
 - Format des tâches configuré : ${this.settings.taskFormat}
-- Format de priorité matrice : ${this.settings.matrixProvider}
+${MatrixFeature.isEnabled()
+		? `- Format de priorité matrice : ${this.settings.matrixProvider}`
+		: '- Quadrants d\'Eisenhower : DÉSACTIVÉS. Ne parle jamais de quadrant, de Q1–Q4 ni de matrice, et n\'ajoute aucun tag #tm/qN. Priorise avec les échéances, la priorité et l\'énergie.'}
 - Projets existants : ${structure.projects.slice(0, 20).join(', ') || 'Aucun'}
 - Contacts existants : ${structure.contacts.slice(0, 20).join(', ') || 'Aucun'}
 - Domaines existants : ${structure.domains.slice(0, 20).join(', ') || 'Aucun'}
