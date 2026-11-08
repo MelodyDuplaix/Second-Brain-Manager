@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import { TaskParser } from '../parsers/taskParser';
+import { getTaskExclusionRules } from './taskExclusionService';
 import { DynamicRegexBuilder } from '../parsers/regexBuilder';
 import { ObsidianTask } from '../models/task';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
@@ -300,7 +301,7 @@ export class VaultContextService {
 			});
 
 			if (score > 0 || !queryWords.length) {
-				const tagsMatch = content.match(/#([\w/_-]+)/g) || [];
+				const tagsMatch = content.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 				const tags = Array.from(new Set(tagsMatch.map(t => t.toLowerCase())));
 
 				// Extraction d'un extrait pertinent autour de la première occurrence
@@ -377,7 +378,7 @@ export class VaultContextService {
 				continue;
 			}
 
-			const tasks = TaskParser.parseAllTasks(content, normPath, this.settings);
+			const tasks = getTaskExclusionRules(this.app, this.settings).filter(TaskParser.parseAllTasks(content, normPath, this.settings));
 
 			for (const task of tasks) {
 				// 3. Filtre spécifique de la tâche
@@ -497,7 +498,7 @@ export class VaultContextService {
 		})));
 
 		// 2. Tags
-		const tagsMatch = content.match(/#([\w/_-]+)/g) || [];
+		const tagsMatch = content.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 		const tags = Array.from(new Set(tagsMatch.map(t => t.toLowerCase())));
 
 		// 3. Backlinks (Recherche des autres fichiers qui pointent vers cette note)

@@ -317,7 +317,7 @@ export class VaultFilterService {
 			}
 
 			// Extraction des tags inline : #tag
-			const inlineTags = content.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			const inlineTags = content.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 			tags.push(...inlineTags);
 		}
 
@@ -382,7 +382,7 @@ export class VaultFilterService {
 			taskTags.push(...task.domainTags);
 		}
 		if (task.rawText) {
-			const inline = task.rawText.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			const inline = task.rawText.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 			taskTags.push(...inline);
 		}
 		if (this.isTagExcluded(taskTags)) {
@@ -513,7 +513,7 @@ export class VaultFilterService {
 		}
 
 		if (fileContent) {
-			const inlineTags = fileContent.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			const inlineTags = fileContent.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 			if (inlineTags.length > 0 && this.isTagPrioritized(inlineTags)) {
 				return true;
 			}
@@ -534,7 +534,7 @@ export class VaultFilterService {
 			taskTags.push(...task.domainTags);
 		}
 		if (task.rawText) {
-			const inline = task.rawText.match(/#([a-zA-Z0-9_/-]+)/g) || [];
+			const inline = task.rawText.match(/#([\p{L}\p{N}_/-]+)/gu) || [];
 			taskTags.push(...inline);
 		}
 		if (this.isTagPrioritized(taskTags)) {

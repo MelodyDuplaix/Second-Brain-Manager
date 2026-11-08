@@ -460,7 +460,7 @@ export class RecoveryView extends ItemView {
 			str
 				.toLowerCase()
 				.replace(/\[\[([^\]]+)\]\]/g, '$1')
-				.replace(/#[\w/_-]+/g, '')
+				.replace(/#[\p{L}\p{N}_/-]+/gu, '')
 				.replace(/📅[^\s]+|⚡[^\s]+|\(énergie\s*:[^)]+\)/gi, '')
 				.replace(/[^\p{L}\p{N}]+/gu, ' ')
 				.trim();

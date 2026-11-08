@@ -1,8 +1,10 @@
 import { TaskSyntaxConfig } from '../models/syntaxConfig';
+import { TaskStatusRegistry } from '../models/taskStatusRegistry';
 
 export class DynamicRegexBuilder {
 	public static buildCheckboxRegex(config: TaskSyntaxConfig): RegExp {
-		const symbols = config.statusSymbols.map(s => this.escapeRegexChar(s)).join('');
+		const all = new Set([...(config.statusSymbols || []), ...TaskStatusRegistry.symbols()]);
+		const symbols = [...all].map(s => this.escapeRegexChar(s)).join('');
 		return new RegExp(`^(\\s*)-\\s*\\[([${symbols}])\\]\\s+(.*)$`);
 	}
 
@@ -19,9 +21,9 @@ export class DynamicRegexBuilder {
 	public static buildTagRegex(prefix: string, isNumeric = false): RegExp {
 		const escaped = this.escapeRegex(prefix);
 		if (prefix.includes('/')) {
-			return new RegExp(`#${escaped}([a-zA-Z0-9_-]+)`, 'i');
+			return new RegExp(`#${escaped}([\\p{L}\\p{N}_-]+)`, 'iu');
 		}
-		return isNumeric ? new RegExp(`#${escaped}\\/(\\d+)`, 'i') : new RegExp(`#${escaped}\\/([a-zA-ZÀ-ÿ0-9_-]+)`, 'i');
+		return isNumeric ? new RegExp(`#${escaped}\\/(\\d+)`, 'iu') : new RegExp(`#${escaped}\\/([\\p{L}\\p{N}_-]+)`, 'iu');
 	}
 
 	public static buildTagDateRegex(tagPrefix: string | string[]): RegExp {

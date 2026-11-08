@@ -1,11 +1,13 @@
 import { ObsidianTask, TaskStatus, TaskPriority } from '../models/task';
+import { TaskStatusRegistry } from '../models/taskStatusRegistry';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import { DynamicRegexBuilder } from './regexBuilder';
 import { TaskMutator } from '../mutators/taskMutator';
 
 export class TaskParser {
 	private static readonly BLOCK_ID_REGEX = /\^([a-zA-Z0-9_-]+)$/;
-	private static readonly ALL_TAGS_REGEX = /#([\w/_-]+)/g;
+	private static readonly ALL_TAGS_REGEX = /#([\p{L}\p{N}_/-]+)/gu;
 
 	private static readonly PRIORITY_EMOJIS_REGEX = /([🔺⏫🔼🔽⏬])/u;
 
@@ -18,9 +20,15 @@ export class TaskParser {
 		const statusChar = match[2];
 		const body = match[3].trim();
 
+		// Statuts du plugin Tasks : une « non-tâche » (ex. [b] signet) n'est pas une tâche
+		const statusType = TaskStatusRegistry.typeOf(statusChar);
+		if (statusType === 'NON_TASK') return null;
+		// Filtre global de Tasks : seules les cases qui le contiennent sont des tâches
+		if (!TaskStatusRegistry.passesGlobalFilter(body)) return null;
+
 		const indentLevel = this.calculateIndentLevel(indentWhitespace);
-		const completed = statusChar.toLowerCase() === 'x';
-		const status = this.resolveTaskStatus(statusChar);
+		const completed = statusType === 'DONE';
+		const status = this.resolveTaskStatus(statusChar, statusType);
 
 		const dueDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.dueDateSignifier);
 		const scheduledDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.scheduledDateSignifier);
@@ -162,7 +170,8 @@ export class TaskParser {
 		}
 
 		const matrixMatch = matrixRegex.exec(body) || stdMatrixTmRegex.exec(body) || stdMatrixQRegex.exec(body) || stdMatrixFocusRegex.exec(body) || dvMatrixRegex.exec(body);
-		const matrixTag = matrixMatch ? matrixMatch[0] : undefined;
+		// Quadrants désactivés : aucune tâche ne porte de quadrant
+		const matrixTag = MatrixFeature.isEnabled() && matrixMatch ? matrixMatch[0] : undefined;
 
 		const domainTags = this.extractDomainTags(body, config);
 
@@ -191,7 +200,7 @@ export class TaskParser {
 		const isPausedByTag = (body.toLowerCase().includes('#pause') || body.toLowerCase().includes('#en-pause') || body.toLowerCase().includes('#on-hold') || (rawPauseTag && body.toLowerCase().includes(`#${rawPauseTag}`))) || (config.taskFormat === 'dataview' && body.includes('[status:: paused]'));
 
 		const pauseSymbol = config.pauseStatusSymbol || '?';
-		const isPausedByStatus = statusChar === pauseSymbol || statusChar === '?' || statusChar === 'p';
+		const isPausedByStatus = statusType === 'ON_HOLD' || statusChar === pauseSymbol || statusChar === '?' || statusChar === 'p';
 
 		const isPaused = !completed && (isPausedByTag || isPausedByStatus);
 		const finalStatus: TaskStatus = isPaused ? 'paused' : status;
@@ -199,11 +208,13 @@ export class TaskParser {
 		return {
 			rawText: rawLine,
 			cleanText: body,
-			title,
+			title: this.stripGlobalFilter(title),
 			completed,
 			isPaused,
 			statusChar,
 			status: finalStatus,
+			statusName: TaskStatusRegistry.nameOf(statusChar),
+			statusType,
 			filePath,
 			lineNumber,
 			indentLevel,
@@ -288,22 +299,27 @@ export class TaskParser {
 		return Math.floor(level);
 	}
 
-	private static resolveTaskStatus(statusChar: string): TaskStatus {
-		switch (statusChar.toLowerCase()) {
-			case 'x':
+	/** Statut interne déduit du type Tasks ; un « à faire » non standard garde son symbole. */
+	private static resolveTaskStatus(statusChar: string, statusType: string): TaskStatus {
+		switch (statusType) {
+			case 'DONE':
 				return 'done';
-			case '/':
-				return 'in-progress';
-			case '-':
+			case 'CANCELLED':
 				return 'cancelled';
-			case '?':
-			case 'p':
+			case 'IN_PROGRESS':
+				return 'in-progress';
+			case 'ON_HOLD':
 				return 'paused';
-			case ' ':
-				return 'todo';
 			default:
-				return statusChar;
+				return statusChar === ' ' ? 'todo' : statusChar;
 		}
+	}
+
+	/** Option « Retirer le filtre global » de Tasks : le filtre n'apparaît pas dans le titre. */
+	private static stripGlobalFilter(title: string): string {
+		const filter = TaskStatusRegistry.globalFilter.trim();
+		if (!filter || !TaskStatusRegistry.removeGlobalFilter) return title;
+		return title.split(filter).join(' ').replace(/\s+/g, ' ').trim();
 	}
 
 	private static resolveEmojiPriority(emoji: string, config: TaskSyntaxConfig): TaskPriority {

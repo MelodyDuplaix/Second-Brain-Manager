@@ -15,6 +15,10 @@ export interface ObsidianTask {
 	isPaused?: boolean;
 	statusChar: string;
 	status: TaskStatus;
+	/** Nom du statut (réglages du plugin Tasks), ex. « En cours », « progress » */
+	statusName?: string;
+	/** Type du statut selon Tasks : TODO, DONE, IN_PROGRESS, CANCELLED, ON_HOLD */
+	statusType?: string;
 
 	filePath: string;
 	lineNumber: number;
