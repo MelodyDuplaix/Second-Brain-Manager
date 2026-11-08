@@ -3,10 +3,12 @@ import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
+import { MatrixFeature } from '../adapters/matrixAdapter';
 import { ActionPreviewWidget } from './actionPreviewWidget';
 import { ActionExecutor } from '../services/actionExecutor';
 import { MorningBriefingService, BriefingVaultData } from '../services/morningBriefingService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
+import { ModelPickerModal } from '../modals/modelPickerModal';
 import { ContextPickerModal, ContextItem } from '../modals/contextPickerModal';
 import { VaultContextService } from '../services/vaultContextService';
 import { CalendarTaskSyncService } from '../services/calendarTaskSyncService';
@@ -646,13 +648,18 @@ export class BriefingView extends ItemView {
 
 		const footerCard = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chat-dock-card' });
 
-		// 1. Boutons de réponses rapides suggérées (Chips)
-		const chipsRow = footerCard.createDiv({ cls: 'sbm-briefing-chips-row' });
-		
+		// Même cadre de saisie que la vue Chat : suggestions en haut, zone de texte, barre d'outils en bas
+		const inputCard = footerCard.createDiv({ cls: 'sbm-chat-input-card sbm-briefing-chat-input' });
+
+		// 1. Réponses rapides suggérées, intégrées en haut du cadre
+		const chipsRow = inputCard.createDiv({ cls: 'sbm-card-top-context sbm-briefing-chips-row' });
+
 		const suggestions = [
 			{ label: '🎯 Valider ce plan', prompt: 'Ce plan me convient parfaitement ! Aide-moi à démarrer la toute première tâche prioritaire.' },
 			{ label: '⚡ Alléger mon planning', prompt: 'Je me sens plus fatigué que prévu, allège mon planning pour ne garder que le strict minimum vital.' },
-			{ label: '⏩ Reporter le non urgent', prompt: 'Peux-tu me proposer de reporter à demain toutes les tâches non urgentes (Q3/Q4) ?' },
+			{ label: '⏩ Reporter le non urgent', prompt: MatrixFeature.isEnabled()
+				? 'Peux-tu me proposer de reporter à demain toutes les tâches non urgentes (Q3/Q4) ?'
+				: 'Peux-tu me proposer de reporter à demain toutes les tâches non urgentes ?' },
 			{ label: '📝 Noter dans mon journal', prompt: 'Résume mon focus et mes tâches principales dans le journal de ma note quotidienne du jour.' },
 			{ label: '🧩 Décomposer la priorité', prompt: 'Peux-tu décomposer la tâche prioritaire du jour en sous-tâches simples et rapides ?' }
 		];
@@ -664,16 +671,33 @@ export class BriefingView extends ItemView {
 			});
 		});
 
-		// 2. Champ de saisie fluide Copilot-style
-		const inputCard = footerCard.createDiv({ cls: 'sbm-briefing-input-card' });
-		
+		// 2. Zone de texte qui s'agrandit avec le contenu
 		const textarea = inputCard.createEl('textarea', {
-			cls: 'sbm-briefing-textarea',
-			placeholder: 'Répondre au briefing, demander un ajustement ou affiner votre programme...'
+			cls: 'sbm-chat-textarea',
+			placeholder: 'Répondre au briefing, demander un ajustement ou affiner votre programme…'
+		});
+		const adjustHeight = () => {
+			textarea.style.height = 'auto';
+			textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 44), 220)}px`;
+		};
+		textarea.addEventListener('input', adjustHeight);
+
+		// 3. Barre d'outils inférieure : modèle utilisé et envoi
+		const bottomBar = inputCard.createDiv({ cls: 'sbm-input-bottom-bar' });
+		const leftActions = bottomBar.createDiv({ cls: 'sbm-input-left-actions' });
+		const modelBtn = leftActions.createEl('button', {
+			cls: 'sbm-input-model-btn',
+			text: `⚡ ${this.plugin.settings.llmModel || this.plugin.settings.llmProvider} ▾`
+		});
+		modelBtn.title = 'Changer de modèle ou de fournisseur IA';
+		modelBtn.addEventListener('click', () => {
+			new ModelPickerModal(this.app, this.plugin, (selected) => {
+				modelBtn.setText(`⚡ ${selected.name} ▾`);
+			}).open();
 		});
 
-		const submitBtn = inputCard.createEl('button', {
-			cls: 'sbm-briefing-send-btn mod-cta'
+		const submitBtn = bottomBar.createEl('button', {
+			cls: 'sbm-chat-send-btn mod-cta'
 		});
 		setIcon(submitBtn, 'arrow-up');
 		submitBtn.title = 'Poursuivre la discussion dans le Chat (Entrée)';
@@ -738,7 +762,7 @@ export class BriefingView extends ItemView {
 			str
 				.toLowerCase()
 				.replace(/\[\[([^\]]+)\]\]/g, '$1')
-				.replace(/#[\w/_-]+/g, '')
+				.replace(/#[\p{L}\p{N}_/-]+/gu, '')
 				.replace(/📅[^\s]+|⚡[^\s]+|\(énergie\s*:[^)]+\)/gi, '')
 				.replace(/[^\p{L}\p{N}]+/gu, ' ')
 				.trim();
