@@ -5,6 +5,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
 import { EveningReviewService, EveningVaultData } from '../services/eveningReviewService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
+import { ModelPickerModal } from '../modals/modelPickerModal';
 import { ChatMessage } from '../models/llm';
 import SecondBrainPlugin from '../main';
 
@@ -378,9 +379,12 @@ export class EveningReviewView extends ItemView {
 
 		const footerCard = this.responseAreaEl.createDiv({ cls: 'sbm-briefing-chat-dock-card' });
 
-		// 1. Boutons de réponses rapides suggérées (Chips)
-		const chipsRow = footerCard.createDiv({ cls: 'sbm-briefing-chips-row' });
-		
+		// Même cadre de saisie que la vue Chat : suggestions en haut, zone de texte, barre d'outils en bas
+		const inputCard = footerCard.createDiv({ cls: 'sbm-chat-input-card sbm-briefing-chat-input' });
+
+		// 1. Réponses rapides suggérées, intégrées en haut du cadre
+		const chipsRow = inputCard.createDiv({ cls: 'sbm-card-top-context sbm-briefing-chips-row' });
+
 		const suggestions = [
 			{ label: '🌙 Clôturer ma journée', prompt: 'Merci pour ce bilan ! Aide-moi à clôturer sereinement ma journée et à déconnecter l\'esprit tranquille.' },
 			{ label: '⏩ Reporter tout à demain', prompt: 'Peux-tu reporter à demain toutes les tâches ouvertes restantes sans culpabilité ?' },
@@ -396,16 +400,33 @@ export class EveningReviewView extends ItemView {
 			});
 		});
 
-		// 2. Champ de saisie fluide Copilot-style
-		const inputCard = footerCard.createDiv({ cls: 'sbm-briefing-input-card' });
-		
+		// 2. Zone de texte qui s'agrandit avec le contenu
 		const textarea = inputCard.createEl('textarea', {
-			cls: 'sbm-briefing-textarea',
-			placeholder: 'Répondre au bilan du soir, poser une question ou débriefer de votre journée...'
+			cls: 'sbm-chat-textarea',
+			placeholder: 'Répondre au bilan du soir, poser une question ou débriefer de votre journée…'
+		});
+		const adjustHeight = () => {
+			textarea.style.height = 'auto';
+			textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 44), 220)}px`;
+		};
+		textarea.addEventListener('input', adjustHeight);
+
+		// 3. Barre d'outils inférieure : modèle utilisé et envoi
+		const bottomBar = inputCard.createDiv({ cls: 'sbm-input-bottom-bar' });
+		const leftActions = bottomBar.createDiv({ cls: 'sbm-input-left-actions' });
+		const modelBtn = leftActions.createEl('button', {
+			cls: 'sbm-input-model-btn',
+			text: `⚡ ${this.plugin.settings.llmModel || this.plugin.settings.llmProvider} ▾`
+		});
+		modelBtn.title = 'Changer de modèle ou de fournisseur IA';
+		modelBtn.addEventListener('click', () => {
+			new ModelPickerModal(this.app, this.plugin, (selected) => {
+				modelBtn.setText(`⚡ ${selected.name} ▾`);
+			}).open();
 		});
 
-		const submitBtn = inputCard.createEl('button', {
-			cls: 'sbm-briefing-send-btn mod-cta'
+		const submitBtn = bottomBar.createEl('button', {
+			cls: 'sbm-chat-send-btn mod-cta'
 		});
 		setIcon(submitBtn, 'arrow-up');
 		submitBtn.title = 'Poursuivre la discussion dans le Chat (Entrée)';
