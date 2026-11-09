@@ -26,11 +26,12 @@
   - Bouton « Tester les règles » pour voir immédiatement les tâches exclues.
 
 - **Calendrier unifié tâches + Google Agenda (`TaskCalendarView`)** :
-  - Vues Jour, Semaine, Mois et Agenda continu (défilement fluide), dans la barre latérale ou la zone principale.
+  - Vues Jour et Semaine avec grille horaire (déplacer / redimensionner à la souris, cliquer-glisser sur un créneau vide pour créer, zoom avec Ctrl + molette ou `+` / `-`), Mois et Agenda continu, dans la barre latérale ou la zone principale (en barre latérale étroite : liste ou grille du jour).
   - Tâches et événements Google réunis, plusieurs agendas avec couleurs, dédoublonnage des événements présents dans plusieurs agendas.
-  - Glisser-déposer pour replanifier, menus contextuels, ajout rapide d'une tâche ou d'un événement.
+  - **Entrées des notes quotidiennes** : les lignes horodatées (`- 11:30 - 12:00 Dentiste`, `- 13:16 [[Projet]]`, cases à cocher comprises) s'affichent à leur heure. Section lue, formes de ligne (`{start}`, `{end}`, `{text}`), format d'heure, modèle d'écriture et position d'insertion sont réglables, avec un champ d'essai. Ajout, modification, déplacement et suppression depuis le calendrier.
+  - Glisser-déposer pour replanifier, menus contextuels, ajout rapide d'une tâche, d'une entrée de note quotidienne ou d'un événement.
   - Bacs « En retard » et « Sans date » fixés en haut de la barre latérale.
-  - Vue Mois : toutes les tâches restent visibles, seuls les événements en surnombre sont repliés.
+  - Vue Mois : tout reste visible (les semaines chargées s'agrandissent), sans bouton pour déplier une journée.
 
 - **Gamification & Portefeuille de Pièces d'Or** :
   - Écouteur automatique de complétion de tâches (`app.vault.on('modify')`).

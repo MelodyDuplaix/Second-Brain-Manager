@@ -655,12 +655,48 @@ export class CalendarEventModal extends Modal {
 	private locationInput!: HTMLInputElement;
 	private descInput!: HTMLTextAreaElement;
 
-	constructor(app: App, plugin: SecondBrainPlugin, existingEvent?: GoogleCalendarEvent, presetDate?: string, onSaved?: () => Promise<void>) {
+	private presetTime?: string;
+	private presetEndTime?: string;
+
+	constructor(
+		app: App,
+		plugin: SecondBrainPlugin,
+		existingEvent?: GoogleCalendarEvent,
+		presetDate?: string,
+		onSaved?: () => Promise<void>,
+		presetTime?: string,
+		presetEndTime?: string
+	) {
 		super(app);
 		this.plugin = plugin;
 		this.existingEvent = existingEvent;
 		this.presetDate = presetDate;
 		this.onSaved = onSaved || (async () => {});
+		this.presetTime = presetTime;
+		this.presetEndTime = presetEndTime;
+	}
+
+	/** Fin de l'événement : durée d'origine conservée en modification, plage choisie dans la grille en création. */
+	private computeEnd(startDate: string, startTime: string): { endDate?: string; endTime?: string } {
+		const pad = (n: number) => String(n).padStart(2, '0');
+		const toParts = (d: Date) => ({
+			endDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+			endTime: `${pad(d.getHours())}:${pad(d.getMinutes())}`
+		});
+		const start = new Date(`${startDate}T${startTime}:00`);
+		if (isNaN(start.getTime())) return {};
+		const ev = this.existingEvent;
+		if (ev?.start?.dateTime && ev.end?.dateTime) {
+			const duration = new Date(ev.end.dateTime).getTime() - new Date(ev.start.dateTime).getTime();
+			if (duration > 0) return toParts(new Date(start.getTime() + duration));
+		}
+		if (!ev && this.presetTime && this.presetEndTime && startTime === this.presetTime) {
+			const [h, m] = this.presetEndTime.split(':').map(Number);
+			const [sh, sm] = this.presetTime.split(':').map(Number);
+			const minutes = h * 60 + m - (sh * 60 + sm);
+			if (minutes > 0) return toParts(new Date(start.getTime() + minutes * 60000));
+		}
+		return {};
 	}
 
 	onOpen(): void {
@@ -682,7 +718,7 @@ export class CalendarEventModal extends Modal {
 		// Date & Heure
 		const now = new Date();
 		const defaultDate = this.presetDate || now.toISOString().split('T')[0];
-		const defaultTime = `${String(now.getHours()).padStart(2, '0')}:00`;
+		const defaultTime = this.presetTime || `${String(now.getHours()).padStart(2, '0')}:00`;
 
 		const defaultStartDateTime = this.existingEvent?.start.dateTime;
 		const defaultStartDate = this.existingEvent?.start.date || (defaultStartDateTime ? defaultStartDateTime.split('T')[0] : defaultDate);
@@ -742,12 +778,14 @@ export class CalendarEventModal extends Modal {
 				const isAllDay = this.allDayToggle.checked;
 				const startDate = this.startDateInput.value;
 				const startTime = isAllDay ? undefined : this.startTimeInput.value;
+				const endParts = startTime ? this.computeEnd(startDate, startTime) : {};
 
 				if (this.existingEvent) {
 					await GoogleCalendarService.updateEvent(this.plugin.settings, this.existingEvent.id, {
 						summary,
 						startDate,
 						startTime,
+						...endParts,
 						location: this.locationInput.value.trim() || undefined,
 						description: this.descInput.value.trim() || undefined,
 						calendarId: this.existingEvent.calendarId
@@ -758,6 +796,7 @@ export class CalendarEventModal extends Modal {
 						summary,
 						startDate,
 						startTime,
+						...endParts,
 						location: this.locationInput.value.trim() || undefined,
 						description: this.descInput.value.trim() || undefined
 					});

@@ -12,9 +12,295 @@ import { TaskStatusRegistry, TasksStatusType } from '../../models/taskStatusRegi
 import { getTaskExclusionRules, ExclusionReason, TaskExclusionSettings } from '../../services/taskExclusionService';
 import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
+import { DailyEntryParser, DailyEntryInsertPosition, formatClock } from '../../services/dailyEntriesService';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
+	private entrySample = '- 11:30 - 12:00 Dentiste #santé\n- 13:16 [[Projet]]\n- [ ] 18:45 - 19:45 Cours de danse';
+	private refreshCalendarViews = debounce(() => this.plugin.refreshTaskViews(), 600, true);
+
+	/** Calendrier : grille horaire et entrées horodatées des notes quotidiennes. */
+	private renderCalendarEntriesSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Calendrier & entrées de la note quotidienne',
+			'calendar-clock',
+			'Grille horaire des vues Jour et Semaine, et lignes horodatées des notes quotidiennes (ex. « - 11:30 - 12:00 Dentiste ») affichées et ajoutées depuis le calendrier'
+		);
+		const save = async () => {
+			await this.plugin.saveSettings();
+			this.refreshCalendarViews();
+		};
+		let updatePreview: () => void = () => {};
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Afficher les entrées des notes quotidiennes')
+				.setDesc('Lit les lignes horodatées des notes quotidiennes et les place dans le calendrier (mois, agenda, grille horaire). Le bouton + permet aussi d’en ajouter.')
+				.addToggle((toggle) => {
+					toggle.setValue(s.dailyEntriesEnabled !== false).onChange(async (val) => {
+						s.dailyEntriesEnabled = val;
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Sections lues')
+				.setDesc('Titres des sections de la note quotidienne à lire, séparés par des virgules (ex. « Recap du jour, Agenda »). Le texte du titre suffit, sans les #. Vide : toute la note.')
+				.addText((text) => {
+					text
+						.setPlaceholder('Recap du jour')
+						.setValue(s.dailyEntriesHeadings || '')
+						.onChange(async (val) => {
+							s.dailyEntriesHeadings = val;
+							updatePreview();
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting.settingEl.addClass('sbm-setting-textarea');
+			setting
+				.setName('Formes de ligne reconnues')
+				.setDesc('Une forme par ligne, essayées dans l’ordre, avec {start}, {end} et {text}. La puce (« - », « - [ ] »…) est gérée automatiquement ; un tiret accepte aussi « – » et « — », les espaces sont facultatifs.')
+				.addTextArea((area) => {
+					area
+						.setPlaceholder('{start} - {end} {text}\n{start} {text}')
+						.setValue(s.dailyEntriesLineFormats || '')
+						.onChange(async (val) => {
+							s.dailyEntriesLineFormats = val;
+							updatePreview();
+							await save();
+						});
+					area.inputEl.rows = 3;
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Format d’heure')
+				.setDesc('Jetons : HH / H (heures 0-23), hh / h (1-12), mm (minutes), A / a (AM-PM) ; texte littéral entre crochets. Ex. HH:mm → 09:30, H[h]mm → 9h30, h:mm a → 9:30 am.')
+				.addDropdown((dropdown) => {
+					const presets = ['HH:mm', 'H:mm', 'HH[h]mm', 'H[h]mm', 'hh:mm A', 'h:mm a'];
+					presets.forEach(p => dropdown.addOption(p, p));
+					if (!presets.includes(s.dailyEntriesTimeFormat)) dropdown.addOption(s.dailyEntriesTimeFormat, s.dailyEntriesTimeFormat);
+					dropdown.setValue(s.dailyEntriesTimeFormat || 'HH:mm');
+					dropdown.onChange(async (val) => {
+						s.dailyEntriesTimeFormat = val;
+						updatePreview();
+						await save();
+						this.rerender();
+					});
+				})
+				.addText((text) => {
+					text
+						.setPlaceholder('Personnalisé')
+						.setValue(s.dailyEntriesTimeFormat || 'HH:mm')
+						.onChange(async (val) => {
+							if (!val.trim()) return;
+							s.dailyEntriesTimeFormat = val.trim();
+							updatePreview();
+							await save();
+						});
+					text.inputEl.style.width = '110px';
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Éléments de liste uniquement')
+				.setDesc('Ne lit que les lignes commençant par une puce (« - », « * », « + », « 1. »). Désactivé : toute ligne qui commence par une heure.')
+				.addToggle((toggle) => {
+					toggle.setValue(s.dailyEntriesListOnly !== false).onChange(async (val) => {
+						s.dailyEntriesListOnly = val;
+						updatePreview();
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Inclure les tâches horodatées')
+				.setDesc('Lit aussi les cases à cocher (« - [ ] 10:00 … »). Elles s’affichent à leur heure, avec leur case, au lieu d’apparaître comme tâches classiques.')
+				.addToggle((toggle) => {
+					toggle.setValue(s.dailyEntriesIncludeTasks !== false).onChange(async (val) => {
+						s.dailyEntriesIncludeTasks = val;
+						updatePreview();
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting.settingEl.addClass('sbm-setting-textarea');
+			setting
+				.setName('Essai')
+				.setDesc('Collez des lignes de votre note quotidienne pour vérifier ce qui est reconnu.');
+			const preview = setting.descEl.createDiv({ cls: 'sbm-entry-preview' });
+			setting.addTextArea((area) => {
+				area.setValue(this.entrySample).onChange((val) => {
+					this.entrySample = val;
+					updatePreview();
+				});
+				area.inputEl.rows = 3;
+			});
+			updatePreview = () => {
+				preview.empty();
+				const parser = new DailyEntryParser(s);
+				this.entrySample.split(/\r?\n/).filter(l => l.trim()).forEach(line => {
+					const e = parser.parseLine(line);
+					const row = preview.createDiv({ cls: e ? 'is-ok' : 'is-ko' });
+					if (!e) {
+						row.setText(`✗ ${line.trim()}`);
+						return;
+					}
+					const range = e.end !== null ? `${formatClock(e.start)} → ${formatClock(e.end)}` : formatClock(e.start);
+					row.setText(`✓ ${range} · ${e.text}${e.statusChar !== undefined ? ` · tâche [${e.statusChar}]` : ''}`);
+				});
+			};
+			updatePreview();
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Nouvelle entrée avec heure de fin')
+				.setDesc('Ligne écrite dans la note quotidienne depuis le calendrier ({start}, {end}, {text}).')
+				.addText((text) => {
+					text
+						.setPlaceholder('- {start} - {end} {text}')
+						.setValue(s.dailyEntriesNewRangeFormat || '')
+						.onChange(async (val) => {
+							s.dailyEntriesNewRangeFormat = val;
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Nouvelle entrée sans heure de fin')
+				.setDesc('Ligne écrite quand aucune heure de fin n’est donnée ({start}, {text}).')
+				.addText((text) => {
+					text
+						.setPlaceholder('- {start} {text}')
+						.setValue(s.dailyEntriesNewPointFormat || '')
+						.onChange(async (val) => {
+							s.dailyEntriesNewPointFormat = val;
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Place des nouvelles entrées')
+				.setDesc('Dans la première section lue (ou à la fin de la note si aucune section n’est choisie).')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('sorted', 'Triées par heure')
+						.addOption('end', 'À la fin de la section')
+						.addOption('start', 'Au début de la section')
+						.setValue(s.dailyEntriesInsertPosition || 'sorted')
+						.onChange(async (val) => {
+							s.dailyEntriesInsertPosition = val as DailyEntryInsertPosition;
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Titre créé si la section manque')
+				.setDesc('Ajouté à la fin de la note quotidienne avant la première entrée. Vide : « ## » suivi du premier titre de section.')
+				.addText((text) => {
+					text
+						.setPlaceholder('## Recap du jour')
+						.setValue(s.dailyEntriesNewHeading || '')
+						.onChange(async (val) => {
+							s.dailyEntriesNewHeading = val;
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Durée d’une entrée sans heure de fin')
+				.setDesc('Hauteur donnée dans la grille horaire aux entrées « - HH:mm texte » (minutes).')
+				.addSlider((slider) => {
+					slider
+						.setLimits(5, 120, 5)
+						.setValue(Number(s.dailyEntriesDefaultDuration) || 30)
+						.setDynamicTooltip()
+						.onChange(async (val) => {
+							s.dailyEntriesDefaultDuration = val;
+							await save();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Couleur des entrées')
+				.setDesc('Couleur des entrées de la note quotidienne dans le calendrier.')
+				.addColorPicker((picker) => {
+					picker.setValue(s.dailyEntriesColor || '#a855f7').onChange(async (val) => {
+						s.dailyEntriesColor = val;
+						await save();
+					});
+				})
+				.addExtraButton((btn) => {
+					btn.setIcon('rotate-ccw').setTooltip('Couleur du thème').onClick(async () => {
+						s.dailyEntriesColor = '';
+						await save();
+						this.rerender();
+					});
+				});
+		});
+
+		const hourOptions = (dropdown: { addOption: (v: string, l: string) => unknown }, from: number, to: number) => {
+			for (let h = from; h <= to; h++) dropdown.addOption(String(h), `${String(h).padStart(2, '0')}:00`);
+		};
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Heures affichées dans la grille')
+				.setDesc('Première et dernière heure des vues Jour et Semaine.')
+				.addDropdown((dropdown) => {
+					hourOptions(dropdown, 0, 23);
+					dropdown.setValue(String(s.calendarGridStartHour ?? 0)).onChange(async (val) => {
+						s.calendarGridStartHour = Number(val);
+						if (s.calendarGridEndHour <= s.calendarGridStartHour) s.calendarGridEndHour = Math.min(24, s.calendarGridStartHour + 1);
+						await save();
+					});
+				})
+				.addDropdown((dropdown) => {
+					hourOptions(dropdown, 1, 24);
+					dropdown.setValue(String(s.calendarGridEndHour ?? 24)).onChange(async (val) => {
+						s.calendarGridEndHour = Number(val);
+						if (s.calendarGridEndHour <= s.calendarGridStartHour) s.calendarGridStartHour = Math.max(0, s.calendarGridEndHour - 1);
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Heure visible à l’ouverture')
+				.setDesc('Heure placée en haut de la grille (le jour même, la grille s’ouvre sur l’heure actuelle).')
+				.addDropdown((dropdown) => {
+					hourOptions(dropdown, 0, 23);
+					dropdown.setValue(String(s.calendarScrollToHour ?? 7)).onChange(async (val) => {
+						s.calendarScrollToHour = Number(val);
+						await save();
+					});
+				});
+		});
+	}
 
 	render(): void {
 		this.containerEl.empty();
@@ -963,6 +1249,8 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+
+		this.renderCalendarEntriesSettings();
 
 		// =========================================================================
 		// 9. Google Calendar & Synchronisation Agendas

@@ -27,8 +27,9 @@ import { VaultContextService } from './services/vaultContextService';
 import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
 import { TaskStatusRegistry } from './models/taskStatusRegistry';
 import { TaskExclusionSettings, DEFAULT_TASK_EXCLUSION_SETTINGS, getTaskExclusionRules } from './services/taskExclusionService';
+import { DailyEntriesSettings, DEFAULT_DAILY_ENTRIES_SETTINGS } from './services/dailyEntriesService';
 
-export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings {
+export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings {
 	energyLevel: number;
 	defaultCoinsPerTask: number;
 	/** Active la fonctionnalité des quadrants (matrice d'Eisenhower) dans tout le plugin */
@@ -86,6 +87,7 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_SYNTAX_CONFIG,
 	...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
 	...DEFAULT_TASK_EXCLUSION_SETTINGS,
+	...DEFAULT_DAILY_ENTRIES_SETTINGS,
 	energyLevel: 5,
 	defaultCoinsPerTask: 1,
 	matrixEnabled: true,

@@ -28,17 +28,80 @@ import {
 	eventKey,
 	formatEventRange,
 	formatEventTime,
-	shiftEvent
+	localParts,
+	shiftEvent,
+	toLocalIsoWithOffset
 } from '../services/calendarEventsService';
+import {
+	DailyEntry,
+	DailyEntryIndex,
+	entryBounds,
+	entryKey,
+	entryTaskKey,
+	formatClock,
+	locateEntryLine
+} from '../services/dailyEntriesService';
 import { CalendarEventModal } from './calendarView';
+import { DailyEntryModal, DailyEntryDraft } from './dailyEntryModal';
 import { getTaskExclusionRules } from '../services/taskExclusionService';
 import { TaskStatusRegistry } from '../models/taskStatusRegistry';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_TASK_CALENDAR = 'sbm-task-calendar-view';
 
-type CalendarMode = 'month' | 'week' | 'agenda';
+type CalendarMode = 'day' | 'week' | 'month' | 'agenda';
 type LayoutSize = 'compact' | 'medium' | 'wide';
+
+/** Élément placé dans la grille horaire (événement Google minuté ou entrée de note quotidienne). */
+interface TimedItem {
+	kind: 'event' | 'entry';
+	key: string;
+	day: string;
+	/** Minutes depuis minuit sur ce jour */
+	start: number;
+	end: number;
+	/** Commence la veille / finit le lendemain (événements sur plusieurs jours) */
+	clippedStart: boolean;
+	clippedEnd: boolean;
+	point: boolean;
+	event?: GoogleCalendarEvent;
+	entry?: DailyEntry;
+	col: number;
+	cols: number;
+}
+
+interface GridDrag {
+	item: TimedItem;
+	el: HTMLElement;
+	mode: 'move' | 'resize';
+	pointerId: number;
+	pointerType: string;
+	startX: number;
+	startY: number;
+	lastX: number;
+	lastY: number;
+	/** Minutes entre le début de l'élément et le point saisi */
+	grabOffset: number;
+	active: boolean;
+	holdTimer?: number;
+	preview?: HTMLElement;
+	targetDay?: string;
+	targetStart?: number;
+	targetEnd?: number;
+	scrollRaf?: number;
+}
+
+interface GridSelection {
+	day: string;
+	col: HTMLElement;
+	pointerId: number;
+	pointerType: string;
+	anchor: number;
+	current: number;
+	startY: number;
+	moved: boolean;
+	box?: HTMLElement;
+}
 
 interface TaskCalendarState {
 	mode: CalendarMode;
@@ -53,11 +116,18 @@ interface TaskCalendarState {
 	hiddenCalendars: string[];
 	/** Lignes de titre dans la vue mois : 1, 2 ou 0 (en entier) */
 	titleLines: number;
+	/** Affichage en barre latérale étroite : liste (agenda) ou grille horaire du jour */
+	compactMode: 'agenda' | 'day';
+	/** Affiche les entrées horodatées des notes quotidiennes */
+	showEntries: boolean;
+	/** Hauteur d'une heure dans la grille horaire (px) */
+	hourHeight: number;
 }
 
 interface DragItem {
 	task?: ObsidianTask;
 	event?: GoogleCalendarEvent;
+	entry?: DailyEntry;
 	/** Jour depuis lequel l'événement est saisi (événements sur plusieurs jours) */
 	eventDay?: string;
 }
@@ -84,10 +154,11 @@ interface DragSession extends DragItem {
 
 const COMPACT_MAX = 520;
 const WIDE_MIN = 900;
-/** Nombre d'éléments visibles par case du mois avant de replier les événements en trop */
-const MONTH_VISIBLE_CHIPS = 4;
-/** Événements toujours visibles, même quand les tâches remplissent déjà la case */
-const MONTH_MIN_VISIBLE_EVENTS = 2;
+/** Hauteurs d'heure proposées pour la grille horaire (zoom) */
+const HOUR_HEIGHTS = [28, 36, 44, 56, 72, 96];
+const DEFAULT_HOUR_HEIGHT = 44;
+/** Pas d'aimantation dans la grille horaire (minutes) */
+const GRID_SNAP = 15;
 const AGENDA_DAYS_COMPACT = 14;
 const AGENDA_DAYS_WIDE = 28;
 const UNDATED_PAGE = 40;
@@ -124,13 +195,15 @@ export class TaskCalendarView extends ItemView {
 		collapsed: [],
 		showEvents: true,
 		hiddenCalendars: [],
-		titleLines: 2
+		titleLines: 2,
+		compactMode: 'agenda',
+		showEntries: true,
+		hourHeight: DEFAULT_HOUR_HEIGHT
 	};
 
 	private layout: LayoutSize = 'wide';
 	private today = CalendarDate.today();
 	private query = '';
-	private expandedDays = new Set<string>();
 	private undatedLimit = UNDATED_PAGE;
 	private loaded = false;
 	private flash: { key: string; until: number } | null = null;
@@ -182,6 +255,17 @@ export class TaskCalendarView extends ItemView {
 	private peekEl: HTMLElement | null = null;
 	private peekTimer: number | undefined;
 
+	// Entrées horodatées des notes quotidiennes
+	private entries: DailyEntryIndex;
+	private entriesLoading = false;
+	private entriesPending = false;
+
+	// Grille horaire
+	private gridDrag: GridDrag | null = null;
+	private gridSelection: GridSelection | null = null;
+	/** Position verticale conservée d'une période à l'autre (même zoom) */
+	private gridScroll: { top: number; hourHeight: number } | null = null;
+
 	private scheduleRender = debounce(() => this.renderPreservingScroll(), 180, true);
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
@@ -195,6 +279,7 @@ export class TaskCalendarView extends ItemView {
 			(tasks) => getTaskExclusionRules(this.app, this.plugin.settings).filter(tasks)
 		);
 		this.writer = new TaskWriter(this.app, () => this.plugin.settings);
+		this.entries = new DailyEntryIndex(this.app, () => this.plugin.settings);
 	}
 
 	getViewType(): string {
@@ -215,7 +300,10 @@ export class TaskCalendarView extends ItemView {
 
 	async setState(state: unknown, result: any): Promise<void> {
 		const s = (state || {}) as Partial<TaskCalendarState>;
-		if (s.mode === 'month' || s.mode === 'week' || s.mode === 'agenda') this.state.mode = s.mode;
+		if (s.mode === 'day' || s.mode === 'month' || s.mode === 'week' || s.mode === 'agenda') this.state.mode = s.mode;
+		if (s.compactMode === 'agenda' || s.compactMode === 'day') this.state.compactMode = s.compactMode;
+		if (typeof s.showEntries === 'boolean') this.state.showEntries = s.showEntries;
+		if (typeof s.hourHeight === 'number' && s.hourHeight >= 20 && s.hourHeight <= 160) this.state.hourHeight = s.hourHeight;
 		if (s.dateField === 'due' || s.dateField === 'scheduled') this.state.dateField = s.dateField;
 		if (typeof s.showDone === 'boolean') this.state.showDone = s.showDone;
 		if (typeof s.miniMonthOpen === 'boolean') this.state.miniMonthOpen = s.miniMonthOpen;
@@ -250,19 +338,27 @@ export class TaskCalendarView extends ItemView {
 
 		this.registerEvent(this.app.metadataCache.on('changed', (file) => this.onFileChanged(file)));
 		this.registerEvent(this.app.vault.on('delete', (file) => {
-			if (this.index.removeFile(file.path)) this.requestRender();
+			const hadTasks = this.index.removeFile(file.path);
+			const hadEntries = this.entries.removeFile(file.path);
+			if (hadTasks || hadEntries) this.requestRender();
+		}));
+		this.registerEvent(this.app.vault.on('create', (file) => {
+			if (file instanceof TFile && this.entries.isBuilt() && this.entries.register(file)) this.ensureEntries();
 		}));
 		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
 			this.index.removeFile(oldPath);
+			this.entries.removeFile(oldPath);
 			this.onFileChanged(file);
 		}));
 
-		// Bascule de jour à minuit
+		// Bascule de jour à minuit, et ligne « maintenant » de la grille horaire
 		this.registerInterval(window.setInterval(() => {
 			const now = CalendarDate.today();
 			if (now !== this.today) {
 				this.today = now;
 				this.requestRender();
+			} else {
+				this.updateNowLine();
 			}
 		}, 60 * 1000));
 
@@ -278,6 +374,7 @@ export class TaskCalendarView extends ItemView {
 
 		this.app.workspace.onLayoutReady(async () => {
 			await this.index.buildAll();
+			this.entries.rebuild();
 			this.loaded = true;
 			this.render();
 		});
@@ -289,6 +386,8 @@ export class TaskCalendarView extends ItemView {
 		this.peekEl?.remove();
 		this.peekEl = null;
 		this.cancelDrag();
+		this.cancelGridDrag();
+		this.clearGridSelection();
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 	}
@@ -296,6 +395,7 @@ export class TaskCalendarView extends ItemView {
 	/** Recharge complètement l'index (commande "Rafraîchir"). */
 	public async refresh(): Promise<void> {
 		await this.index.buildAll();
+		this.entries.rebuild();
 		this.render();
 		if (this.googleReady() && this.state.showEvents) await this.refreshEvents(true);
 	}
@@ -327,6 +427,9 @@ export class TaskCalendarView extends ItemView {
 		if (mode === 'week') {
 			const days = CalendarDate.weekDays(this.state.anchor);
 			return { start: days[0], end: days[6] };
+		}
+		if (mode === 'day') {
+			return { start: this.state.anchor, end: this.state.anchor };
 		}
 		if (this.agendaStart !== null) {
 			return { start: this.agendaStart, end: CalendarDate.addDays(this.agendaStart, this.agendaCount) };
@@ -453,10 +556,10 @@ export class TaskCalendarView extends ItemView {
 				: 'Synchroniser l’agenda Google';
 	}
 
-	private openEventModal(ev?: GoogleCalendarEvent, day?: string): void {
+	private openEventModal(ev?: GoogleCalendarEvent, day?: string, startTime?: string, endTime?: string): void {
 		new CalendarEventModal(this.app, this.plugin, ev, day, async () => {
 			await this.refreshEvents(false);
-		}).open();
+		}, startTime, endTime).open();
 	}
 
 	/** Déplacement optimiste d'un événement de `deltaDays` jours (heures et durée conservées). */
@@ -612,13 +715,275 @@ export class TaskCalendarView extends ItemView {
 
 	private async onFileChanged(file: TAbstractFile): Promise<void> {
 		if (!(file instanceof TFile) || file.extension !== 'md') return;
-		const changed = await this.index.updateFile(file);
-		if (changed) this.requestRender();
+		const [tasksChanged, entriesChanged] = await Promise.all([
+			this.index.updateFile(file),
+			this.entriesEnabled() ? this.entries.updateFile(file) : Promise.resolve(false)
+		]);
+		if (tasksChanged || entriesChanged) this.requestRender();
+	}
+
+	/* ======================================================================
+	   Entrées horodatées des notes quotidiennes
+	   ====================================================================== */
+
+	private entriesEnabled(): boolean {
+		return this.plugin.settings.dailyEntriesEnabled !== false && this.state.showEntries;
+	}
+
+	/** Lit (sans bloquer le rendu) les notes quotidiennes de la plage affichée. */
+	private ensureEntries(): void {
+		if (!this.entriesEnabled() || !this.loaded) return;
+		if (this.entriesLoading) {
+			this.entriesPending = true;
+			return;
+		}
+		const range = this.visibleRange();
+		this.entriesLoading = true;
+		this.entries.ensureRange(CalendarDate.addDays(range.start, -7), CalendarDate.addDays(range.end, 7))
+			.then(changed => {
+				this.entriesLoading = false;
+				if (changed) this.requestRender();
+				if (this.entriesPending) {
+					this.entriesPending = false;
+					this.ensureEntries();
+				}
+			})
+			.catch(() => {
+				this.entriesLoading = false;
+				this.entriesPending = false;
+			});
+	}
+
+	/** Entrées d'un jour, filtrées (recherche, tâches terminées). */
+	private dayEntries(day: string): DailyEntry[] {
+		if (!this.entriesEnabled()) return [];
+		const q = this.query.trim().toLowerCase();
+		return this.entries.entriesFor(day).filter(e => {
+			if (!this.state.showDone && e.statusChar !== undefined) {
+				const type = TaskStatusRegistry.typeOf(e.statusChar);
+				if (type === 'DONE' || type === 'CANCELLED') return false;
+			}
+			return !q || e.text.toLowerCase().includes(q);
+		});
+	}
+
+	private entryDuration(): number {
+		return Math.max(5, Number(this.plugin.settings.dailyEntriesDefaultDuration) || 30);
+	}
+
+	/** Tâche de l'index correspondant à une entrée cochable (pour réutiliser le cycle des statuts). */
+	private taskForEntry(entry: DailyEntry): ObsidianTask | undefined {
+		if (entry.statusChar === undefined) return undefined;
+		const key = entryTaskKey(entry);
+		return this.index.getAll().find(t => taskKey(t) === key);
+	}
+
+	private entryTitle(entry: DailyEntry): string {
+		// Retire les métadonnées de Tasks (dates, priorités) qui encombrent la grille
+		const cleaned = entry.text
+			.replace(/[✅❌➕🛫⏳📅]️?\s*\d{4}-\d{2}-\d{2}/gu, '')
+			.replace(/[🔺⏫🔼🔽⏬]️?/gu, '')
+			.replace(/🔁️?\s*[^#\n]*/gu, '');
+		return this.displayTitle(cleaned, true);
+	}
+
+	private entryRangeLabel(entry: DailyEntry): string {
+		return entry.end !== null && entry.end !== entry.start
+			? `${formatClock(entry.start)} – ${formatClock(entry.end)}`
+			: formatClock(entry.start);
+	}
+
+	private async openEntryNote(entry: DailyEntry, newTab = false): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(entry.filePath));
+		if (!(file instanceof TFile)) return;
+		const leaf = newTab ? this.app.workspace.getLeaf('tab') : this.app.workspace.getLeaf(false);
+		await leaf.openFile(file, { eState: { line: entry.line } });
+	}
+
+	/** Note quotidienne d'un jour, créée (avec son modèle) si besoin. */
+	private async getOrCreateDailyFile(day: string): Promise<TFile> {
+		const existing = this.entries.fileFor(day);
+		if (existing) return existing;
+		const settings = this.plugin.settings;
+		const vaultContext = new VaultContextService(this.app, settings);
+		// Le format peut contenir des sous-dossiers (ex. YYYY/MM/DD-MM-YYYY) : on les crée d'abord
+		const config = vaultContext.getDailyNotesConfig();
+		const moment = (window as unknown as { moment?: (d: string, f: string) => { format: (f: string) => string } }).moment;
+		if (moment && config.format.includes('/')) {
+			const target = normalizePath(`${config.folder}/${moment(day, 'YYYY-MM-DD').format(config.format)}.md`);
+			const parent = target.split('/').slice(0, -1).join('/');
+			if (parent && !this.app.vault.getAbstractFileByPath(parent)) {
+				try { await this.app.vault.createFolder(parent); } catch { /* déjà créé */ }
+			}
+		}
+		const daily = await vaultContext.getOrCreateDailyNote(day, settings.dailyNoteTemplatePath);
+		if (!daily.file) throw new Error('note quotidienne introuvable');
+		this.entries.register(daily.file);
+		return daily.file;
+	}
+
+	private async createEntry(draft: DailyEntryDraft): Promise<void> {
+		try {
+			const parser = this.entries.getParser();
+			const file = await this.getOrCreateDailyFile(draft.date);
+			const line = parser.formatNewLine(draft.start, draft.end, draft.text);
+			await this.app.vault.process(file, content => parser.insert(content, line, draft.start));
+			new Notice(`🕒 Ajouté à ${file.basename} : ${formatClock(draft.start)} ${draft.text}`, 2500);
+		} catch (err) {
+			new Notice(`Impossible d’ajouter l’entrée : ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/** Remplace (ou supprime si `next` est null) la ligne d'une entrée. */
+	private async rewriteEntryLine(entry: DailyEntry, next: string | null): Promise<boolean> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(entry.filePath));
+		if (!(file instanceof TFile)) return false;
+		let ok = false;
+		await this.app.vault.process(file, content => {
+			const eol = content.includes('\r\n') ? '\r\n' : '\n';
+			const lines = content.split(/\r?\n/);
+			const idx = locateEntryLine(lines, entry);
+			if (idx === -1) return content;
+			ok = true;
+			if (next === null) lines.splice(idx, 1);
+			else lines[idx] = next;
+			return lines.join(eol);
+		});
+		if (!ok) new Notice('Entrée introuvable : la note a changé entre-temps.');
+		return ok;
+	}
+
+	/** Change le jour, les heures et/ou le texte d'une entrée (déplacée dans une autre note si besoin). */
+	private async updateEntry(entry: DailyEntry, draft: DailyEntryDraft): Promise<boolean> {
+		const parser = this.entries.getParser();
+		const line = parser.rewriteLine(entry, draft.start, draft.end, draft.text);
+		if (draft.date === entry.date) {
+			return line === entry.raw || this.rewriteEntryLine(entry, line);
+		}
+		try {
+			const target = await this.getOrCreateDailyFile(draft.date);
+			// La ligne garde sa puce et sa case à cocher, sans l'indentation d'origine
+			const moved = line.replace(/^\s+/, '');
+			if (!(await this.rewriteEntryLine(entry, null))) return false;
+			await this.app.vault.process(target, content => parser.insert(content, moved, draft.start));
+			new Notice(`🕒 ${this.entryTitle(entry)} → ${CalendarDate.relativeLabel(draft.date, this.today)}`, 2500);
+			return true;
+		} catch (err) {
+			new Notice(`Déplacement impossible : ${err instanceof Error ? err.message : String(err)}`);
+			return false;
+		}
+	}
+
+	/** Déplacement optimiste (glisser-déposer) : l'affichage suit immédiatement. */
+	private async moveEntry(entry: DailyEntry, day: string, start: number, end: number | null): Promise<void> {
+		if (day === entry.date && start === entry.start && end === entry.end) return;
+		const previous = { date: entry.date, start: entry.start, end: entry.end };
+		this.flash = { key: entryKey(entry), until: Date.now() + 900 };
+		if (day === entry.date) {
+			entry.start = start;
+			entry.end = end;
+			this.renderPreservingScroll();
+		}
+		const original = { ...entry, start: previous.start, end: previous.end };
+		const ok = await this.updateEntry(original, { date: day, start, end, text: entry.text });
+		if (!ok && day === previous.date) {
+			entry.start = previous.start;
+			entry.end = previous.end;
+			this.renderPreservingScroll();
+		}
+	}
+
+	private openEntryModal(entry?: DailyEntry, draft?: Partial<DailyEntryDraft>): void {
+		this.hidePeek();
+		if (entry) {
+			new DailyEntryModal(this.app, {
+				title: 'Modifier l’entrée',
+				fileLabel: `${entry.filePath.replace(/\.md$/, '')} · ligne ${entry.line + 1}`,
+				draft: { date: entry.date, start: entry.start, end: entry.end, text: entry.text },
+				onSubmit: (d) => this.updateEntry(entry, d),
+				onDelete: () => this.confirmDeleteEntry(entry),
+				onOpenNote: () => void this.openEntryNote(entry)
+			}).open();
+			return;
+		}
+		const start = draft?.start ?? this.defaultNewStart(draft?.date ?? this.today);
+		new DailyEntryModal(this.app, {
+			title: 'Nouvelle entrée dans la note quotidienne',
+			draft: {
+				date: draft?.date ?? this.today,
+				start,
+				end: draft?.end !== undefined ? draft.end : null,
+				text: draft?.text ?? ''
+			},
+			onSubmit: (d) => this.createEntry(d)
+		}).open();
+	}
+
+	/** Heure proposée pour une nouvelle entrée : l'heure suivante aujourd'hui, sinon l'heure d'ouverture de la grille. */
+	private defaultNewStart(day: string): number {
+		if (day === this.today) {
+			const now = new Date();
+			return Math.min(23 * 60, (now.getHours() + 1) * 60);
+		}
+		return Math.max(0, Math.min(23, Number(this.plugin.settings.calendarScrollToHour) || 9)) * 60;
+	}
+
+	private confirmDeleteEntry(entry: DailyEntry): void {
+		new ConfirmModal(this.app, `Supprimer « ${this.entryTitle(entry)} » ?`, 'La ligne sera retirée de la note quotidienne.', async () => {
+			if (await this.rewriteEntryLine(entry, null)) new Notice(`🗑️ Entrée supprimée : ${this.entryTitle(entry)}`);
+		}).open();
+	}
+
+	private openEntryMenu(e: MouseEvent, entry: DailyEntry): void {
+		const menu = new Menu();
+		menu.addItem(i => i.setTitle('Modifier l’entrée…').setIcon('pencil').onClick(() => this.openEntryModal(entry)));
+		menu.addItem(i => i.setTitle('Ouvrir la note quotidienne').setIcon('file-text').onClick(() => this.openEntryNote(entry)));
+		menu.addItem(i => i.setTitle('Ouvrir dans un nouvel onglet').setIcon('file-plus').onClick(() => this.openEntryNote(entry, true)));
+		const task = this.taskForEntry(entry);
+		if (task) {
+			menu.addSeparator();
+			menu.addItem(i => i.setTitle(task.completed ? 'Rouvrir' : 'Terminer').setIcon(task.completed ? 'rotate-ccw' : 'check-circle-2').onClick(() => {
+				void this.writer.setCompleted(task, !task.completed);
+			}));
+		}
+		menu.addSeparator();
+		const choices: Array<[string, string, string]> = [
+			['Aujourd\'hui', 'sun', this.today],
+			['Demain', 'sunrise', CalendarDate.addDays(this.today, 1)],
+			['Une semaine plus tard', 'calendar-plus', CalendarDate.addDays(entry.date, 7)]
+		];
+		choices.forEach(([label, icon, target]) => {
+			if (target === entry.date) return;
+			menu.addItem(i => i.setTitle(label).setIcon(icon).onClick(() => this.moveEntry(entry, target, entry.start, entry.end)));
+		});
+		menu.addSeparator();
+		menu.addItem(i => {
+			i.setTitle('Supprimer l’entrée').setIcon('trash-2').onClick(() => this.confirmDeleteEntry(entry));
+			(i as unknown as { setWarning?: (w: boolean) => void }).setWarning?.(true);
+		});
+		menu.showAtMouseEvent(e);
+	}
+
+	private fillEntryPeek(entry: DailyEntry): (el: HTMLElement) => void {
+		return (el) => {
+			el.style.setProperty('--chip-accent', 'var(--sbm-entry-color)');
+			el.createDiv({ cls: 'sbm-tcal-peek-title', text: this.entryTitle(entry) });
+			const meta = el.createDiv({ cls: 'sbm-tcal-peek-meta' });
+			meta.createSpan({ text: `🕒 ${this.entryRangeLabel(entry)}` });
+			if (entry.statusChar !== undefined) meta.createSpan({ text: `[${entry.statusChar}] ${TaskStatusRegistry.nameOf(entry.statusChar)}` });
+			const tags = entry.text.match(/(^|\s)#[^\s#]+/g);
+			if (tags?.length) {
+				const tagsEl = el.createDiv({ cls: 'sbm-tcal-peek-tags' });
+				tags.forEach(t => tagsEl.createSpan({ cls: 'sbm-tcal-meta tag', text: t.trim() }));
+			}
+			el.createDiv({ cls: 'sbm-tcal-peek-file', text: `📓 ${entry.filePath.replace(/\.md$/, '')} · ligne ${entry.line + 1}` });
+		};
 	}
 
 	private requestRender(): void {
 		if (!this.loaded) return;
-		if (this.drag) {
+		// Pas de rendu pendant un glisser ou une sélection de créneau (il les interromprait)
+		if (this.drag || this.gridDrag || this.gridSelection) {
 			this.pendingRender = true;
 			return;
 		}
@@ -674,10 +1039,16 @@ export class TaskCalendarView extends ItemView {
 		const caret = searchFocused ? (document.activeElement as HTMLInputElement).selectionStart : null;
 
 		this.hidePeek();
+		this.clearGridSelection();
 		this.rootEl.empty();
 		this.rootEl.className = `sbm-tcal is-${this.layout} mode-${this.effectiveMode()} titles-${this.state.titleLines || 'full'}`;
+		const entryColor = (this.plugin.settings.dailyEntriesColor || '').trim();
+		if (entryColor) this.rootEl.style.setProperty('--sbm-entry-color', entryColor);
+		else this.rootEl.style.removeProperty('--sbm-entry-color');
 
-		const tasks = this.getVisibleTasks();
+		// Les cases à cocher horodatées des notes quotidiennes s'affichent comme entrées (pas en double)
+		const entryTaskKeys = this.entriesEnabled() ? this.entries.taskKeys() : new Set<string>();
+		const tasks = this.getVisibleTasks().filter(t => !entryTaskKeys.has(taskKey(t)));
 		const buckets = bucketTasksByDate(tasks, this.state.dateField);
 		this.taskBuckets = buckets;
 		this.eventBuckets = bucketEventsByDate(this.getVisibleEvents());
@@ -693,12 +1064,14 @@ export class TaskCalendarView extends ItemView {
 			const main = this.bodyEl.createDiv({ cls: 'sbm-tcal-main' });
 			const mode = this.effectiveMode();
 			if (mode === 'month') this.renderMonth(main, buckets);
-			else if (mode === 'week') this.renderWeek(main, buckets);
+			else if (mode === 'week') this.renderTimeGrid(main, CalendarDate.weekDays(this.state.anchor), buckets);
+			else if (mode === 'day') this.renderTimeGrid(main, [this.state.anchor], buckets);
 			else this.renderAgenda(main, buckets, AGENDA_DAYS_WIDE, 'row');
 			this.renderTrays(this.layout === 'wide' ? this.bodyEl.createDiv({ cls: 'sbm-tcal-side' }) : this.bodyEl.createDiv({ cls: 'sbm-tcal-bottom' }), tasks);
 		}
 
 		this.ensureEvents();
+		this.ensureEntries();
 
 		if (searchFocused) {
 			const input = this.rootEl.querySelector<HTMLInputElement>('.sbm-tcal-search');
@@ -712,7 +1085,12 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	private effectiveMode(): CalendarMode {
-		return this.layout === 'compact' ? 'agenda' : this.state.mode;
+		return this.layout === 'compact' ? this.state.compactMode : this.state.mode;
+	}
+
+	private isGridMode(): boolean {
+		const mode = this.effectiveMode();
+		return mode === 'day' || mode === 'week';
 	}
 
 	/* ======================================================================
@@ -750,13 +1128,23 @@ export class TaskCalendarView extends ItemView {
 		if (this.layout !== 'compact') {
 			const seg = tools.createDiv({ cls: 'sbm-tcal-segmented' });
 			const modes: Array<[CalendarMode, string, string]> = [
-				['month', 'Mois', 'M'], ['week', 'Semaine', 'S'], ['agenda', 'Agenda', 'A']
+				['day', 'Jour', 'J'], ['week', 'Semaine', 'S'], ['month', 'Mois', 'M'], ['agenda', 'Agenda', 'A']
 			];
 			modes.forEach(([mode, label, key]) => {
 				const b = seg.createEl('button', { text: label, cls: this.state.mode === mode ? 'is-active' : '' });
 				b.title = `${label} (${key})`;
 				b.addEventListener('click', () => this.setMode(mode));
 			});
+		} else {
+			const isDay = this.state.compactMode === 'day';
+			const toggle = this.iconButton(tools, isDay ? 'list' : 'clock', isDay ? 'Afficher l’agenda (liste)' : 'Afficher la grille horaire du jour', () => {
+				this.state.compactMode = isDay ? 'agenda' : 'day';
+				if (!isDay) this.state.anchor = this.stripFirstVisible && this.state.anchor < this.stripFirstVisible ? this.stripFirstVisible : this.state.anchor;
+				this.agendaFocus = this.state.anchor;
+				this.saveState();
+				this.render();
+			});
+			toggle.addClass('sbm-tcal-compact-toggle');
 		}
 
 		const searchWrap = tools.createDiv({ cls: 'sbm-tcal-search-wrap' });
@@ -783,6 +1171,12 @@ export class TaskCalendarView extends ItemView {
 	private periodTitle(): string {
 		const mode = this.effectiveMode();
 		const a = this.state.anchor;
+		if (mode === 'day' && this.layout !== 'compact') {
+			const sameYear = a.slice(0, 4) === this.today.slice(0, 4);
+			return CalendarDate.format(a, sameYear
+				? { weekday: 'long', day: 'numeric', month: 'long' }
+				: { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+		}
 		if (mode === 'week' || this.layout === 'compact') {
 			const days = CalendarDate.weekDays(a);
 			const first = days[0];
@@ -819,6 +1213,20 @@ export class TaskCalendarView extends ItemView {
 				this.render();
 			}));
 		});
+		if (this.plugin.settings.dailyEntriesEnabled !== false) {
+			menu.addSeparator();
+			menu.addItem(i => i.setTitle('Afficher les entrées des notes quotidiennes').setIcon('clock').setChecked(this.state.showEntries).onClick(() => {
+				this.state.showEntries = !this.state.showEntries;
+				this.saveState();
+				this.render();
+			}));
+		}
+		if (this.isGridMode()) {
+			menu.addSeparator();
+			const idx = HOUR_HEIGHTS.indexOf(this.closestHourHeight());
+			menu.addItem(i => i.setTitle('Grille horaire plus aérée').setIcon('zoom-in').setDisabled(idx >= HOUR_HEIGHTS.length - 1).onClick(() => this.zoomGrid(1)));
+			menu.addItem(i => i.setTitle('Grille horaire plus compacte').setIcon('zoom-out').setDisabled(idx <= 0).onClick(() => this.zoomGrid(-1)));
+		}
 		if (this.googleReady()) {
 			menu.addSeparator();
 			menu.addItem(i => i.setTitle('Afficher l’agenda Google').setIcon('calendar').setChecked(this.state.showEvents).onClick(() => {
@@ -849,8 +1257,29 @@ export class TaskCalendarView extends ItemView {
 			menu.addItem(i => i.setTitle('Ouvrir dans la barre latérale').setIcon('panel-right').onClick(() => this.plugin.activateTaskCalendarView('sidebar')));
 		}
 		menu.addItem(i => i.setTitle('Nouvelle tâche aujourd\'hui').setIcon('plus').onClick(() => this.promptNewTask(this.today, this.rootEl.querySelector('.sbm-tcal-toolbar') as HTMLElement)));
+		if (this.plugin.settings.dailyEntriesEnabled !== false) {
+			menu.addItem(i => i.setTitle('Nouvelle entrée dans la note quotidienne').setIcon('clock').onClick(() => this.openEntryModal(undefined, { date: this.today })));
+		}
 		menu.addItem(i => i.setTitle('Rafraîchir').setIcon('refresh-cw').onClick(() => this.refresh()));
 		menu.showAtMouseEvent(e);
+	}
+
+	private closestHourHeight(): number {
+		const h = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		return HOUR_HEIGHTS.reduce((best, v) => Math.abs(v - h) < Math.abs(best - h) ? v : best, HOUR_HEIGHTS[0]);
+	}
+
+	/** Zoom de la grille horaire en gardant l'heure du haut de l'écran. */
+	private zoomGrid(direction: 1 | -1): void {
+		const idx = HOUR_HEIGHTS.indexOf(this.closestHourHeight());
+		const next = HOUR_HEIGHTS[Math.max(0, Math.min(HOUR_HEIGHTS.length - 1, idx + direction))];
+		if (next === this.state.hourHeight) return;
+		const scroller = this.rootEl.querySelector<HTMLElement>('.sbm-tcal-tg-scroll');
+		const topMinutes = scroller ? scroller.scrollTop / this.state.hourHeight * 60 : null;
+		this.state.hourHeight = next;
+		this.gridScroll = topMinutes !== null ? { top: topMinutes / 60 * next, hourHeight: next } : null;
+		this.saveState();
+		this.render();
 	}
 
 	private setMode(mode: CalendarMode): void {
@@ -871,6 +1300,14 @@ export class TaskCalendarView extends ItemView {
 
 	private shift(direction: number): void {
 		const mode = this.effectiveMode();
+		if (this.layout === 'compact' && mode === 'day' && !this.state.miniMonthOpen) {
+			// Grille du jour en barre latérale : un jour à la fois, le ruban suit
+			this.state.anchor = CalendarDate.addDays(this.state.anchor, direction);
+			this.stripPendingTarget = CalendarDate.startOfWeek(this.state.anchor);
+			this.saveState();
+			this.render();
+			return;
+		}
 		if (this.layout === 'compact') {
 			if (this.state.miniMonthOpen) {
 				this.state.anchor = CalendarDate.addMonths(this.state.anchor, direction);
@@ -885,6 +1322,8 @@ export class TaskCalendarView extends ItemView {
 			this.state.anchor = CalendarDate.addMonths(this.state.anchor, direction);
 		} else if (mode === 'week') {
 			this.state.anchor = CalendarDate.addDays(this.state.anchor, 7 * direction);
+		} else if (mode === 'day') {
+			this.state.anchor = CalendarDate.addDays(this.state.anchor, direction);
 		} else {
 			const from = this.firstVisibleAgendaDay() || CalendarDate.startOfWeek(this.state.anchor);
 			const target = CalendarDate.addDays(CalendarDate.startOfWeek(from), 7 * direction);
@@ -934,6 +1373,9 @@ export class TaskCalendarView extends ItemView {
 			case 'ArrowRight': this.shift(1); break;
 			case 't': case 'T': this.goTo(this.today); break;
 			case 'm': case 'M': if (this.layout !== 'compact') this.setMode('month'); break;
+			case 'j': case 'J': case 'd': case 'D': if (this.layout !== 'compact') this.setMode('day'); break;
+			case '+': case '=': if (this.isGridMode()) this.zoomGrid(1); break;
+			case '-': if (this.isGridMode()) this.zoomGrid(-1); break;
 			case 's': case 'S': case 'w': case 'W': if (this.layout !== 'compact') this.setMode('week'); break;
 			case 'a': case 'A': if (this.layout !== 'compact') this.setMode('agenda'); break;
 			case '/': {
@@ -992,28 +1434,9 @@ export class TaskCalendarView extends ItemView {
 				this.renderLoadMeter(header, dayTasks);
 				this.addQuickAddButton(header, day);
 
+				// Tout est visible : la case s'agrandit, la grille du mois défile
 				const list = cell.createDiv({ cls: 'sbm-tcal-cell-list' });
-				const expanded = this.expandedDays.has(day);
-				// Les tâches sont toujours toutes visibles ; seuls les événements en trop sont repliés
-				const eventBudget = Math.max(MONTH_MIN_VISIBLE_EVENTS, MONTH_VISIBLE_CHIPS - dayTasks.length);
-				const hiddenEvents = Math.max(0, dayEvents.length - eventBudget);
-				dayEvents.forEach((ev, i) => {
-					const chip = this.renderEventChip(list, ev, 'mini', day);
-					if (!expanded && i >= eventBudget) chip.addClass('is-overflow');
-				});
-				if (hiddenEvents > 0) {
-					const more = list.createEl('button', {
-						cls: 'sbm-tcal-more',
-						text: expanded ? 'Réduire les événements' : `+${hiddenEvents} événement${hiddenEvents > 1 ? 's' : ''}`
-					});
-					more.addEventListener('click', (e) => {
-						e.stopPropagation();
-						if (expanded) this.expandedDays.delete(day);
-						else this.expandedDays.add(day);
-						this.renderPreservingScroll();
-					});
-				}
-				dayTasks.forEach(t => this.renderChip(list, t, 'mini'));
+				this.renderDayItems(list, day, 'mini', dayTasks, dayEvents);
 
 				cell.addEventListener('dblclick', (e) => {
 					if ((e.target as HTMLElement).closest('.sbm-tcal-chip')) return;
@@ -1023,43 +1446,647 @@ export class TaskCalendarView extends ItemView {
 		}
 	}
 
+	/**
+	 * Contenu d'un jour dans une liste (mois, agenda) : événements « journée », puis
+	 * événements minutés et entrées de la note quotidienne dans l'ordre des heures, puis tâches.
+	 */
+	private renderDayItems(
+		list: HTMLElement,
+		day: string,
+		variant: 'mini' | 'card' | 'row',
+		dayTasks: ObsidianTask[],
+		dayEvents: GoogleCalendarEvent[]
+	): void {
+		const timed: Array<{ at: number; render: () => void }> = [];
+		dayEvents.forEach(ev => {
+			if (ev.allDay || !ev.start?.dateTime) {
+				this.renderEventChip(list, ev, variant, day);
+				return;
+			}
+			const s = localParts(ev.start.dateTime);
+			const at = s.date < day ? -1 : Number(s.time.slice(0, 2)) * 60 + Number(s.time.slice(3, 5));
+			timed.push({ at, render: () => this.renderEventChip(list, ev, variant, day) });
+		});
+		this.dayEntries(day).forEach(entry => timed.push({ at: entry.start, render: () => this.renderEntryChip(list, entry, variant) }));
+		timed.sort((a, b) => a.at - b.at).forEach(t => t.render());
+		dayTasks.forEach(t => this.renderChip(list, t, variant));
+	}
+
 	/* ======================================================================
-	   Vue Semaine
+	   Grille horaire (vues Jour et Semaine)
 	   ====================================================================== */
 
-	private renderWeek(container: HTMLElement, buckets: Map<string, ObsidianTask[]>): void {
-		const wrap = container.createDiv({ cls: 'sbm-tcal-week' });
-		CalendarDate.weekDays(this.state.anchor).forEach(day => {
+	private gridHours(): { startH: number; endH: number } {
+		const s = this.plugin.settings;
+		const startH = Math.max(0, Math.min(23, Math.floor(Number(s.calendarGridStartHour) || 0)));
+		const rawEnd = Number(s.calendarGridEndHour);
+		const endH = Math.max(startH + 1, Math.min(24, Math.floor(Number.isFinite(rawEnd) && rawEnd > 0 ? rawEnd : 24)));
+		return { startH, endH };
+	}
+
+	private renderTimeGrid(container: HTMLElement, days: string[], buckets: Map<string, ObsidianTask[]>): void {
+		const { startH, endH } = this.gridHours();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		const single = days.length === 1;
+		const wrap = container.createDiv({ cls: `sbm-tcal-tg ${single ? 'is-single' : 'is-multi'}` });
+		wrap.style.setProperty('--tg-hour', `${hh}px`);
+		wrap.style.setProperty('--tg-cols', String(days.length));
+
+		// En-têtes des jours
+		const head = wrap.createDiv({ cls: 'sbm-tcal-tg-head' });
+		const corner = head.createDiv({ cls: 'sbm-tcal-tg-gutter sbm-tcal-tg-corner' });
+		if (!single) corner.setText(`S${CalendarDate.isoWeekNumber(days[0])}`);
+		days.forEach(day => {
 			const dayTasks = buckets.get(day) || [];
-			const dayEvents = this.eventBuckets.get(day) || [];
-			const col = wrap.createDiv({ cls: 'sbm-tcal-week-col' });
-			this.decorateDayCell(col, day);
-
-			const head = col.createDiv({ cls: 'sbm-tcal-week-head' });
-			head.createDiv({ cls: 'sbm-tcal-week-dayname', text: CalendarDate.format(day, { weekday: 'long' }) });
-			const line = head.createDiv({ cls: 'sbm-tcal-week-dateline' });
-			line.createSpan({ cls: 'sbm-tcal-week-daynum', text: String(Number(day.slice(8))) });
-			line.createSpan({ cls: 'sbm-tcal-week-month', text: CalendarDate.format(day, { month: 'short' }) });
+			const h = head.createDiv({ cls: 'sbm-tcal-tg-dayhead' });
+			this.decorateDayCell(h, day);
+			const line = h.createDiv({ cls: 'sbm-tcal-tg-dayline' });
+			line.createSpan({ cls: 'sbm-tcal-tg-dayname', text: CalendarDate.format(day, { weekday: single ? 'long' : 'short' }).replace('.', '') });
+			const num = line.createSpan({ cls: 'sbm-tcal-tg-daynum', text: String(Number(day.slice(8))) });
+			if (!single) {
+				num.title = 'Voir la journée';
+				num.addEventListener('click', () => {
+					this.state.anchor = day;
+					this.setMode('day');
+				});
+			}
 			this.addQuickAddButton(line, day);
-			const stats = head.createDiv({ cls: 'sbm-tcal-week-stats' });
-			const open = dayTasks.filter(isTaskOpen).length;
-			const parts: string[] = [];
-			if (dayEvents.length) parts.push(`${dayEvents.length} évén.`);
-			if (dayTasks.length) parts.push(`${open} à faire`, `${dayTasks.length - open} faite${dayTasks.length - open > 1 ? 's' : ''}`);
-			stats.createSpan({ text: parts.length ? parts.join(' · ') : 'Libre' });
-			this.renderLoadMeter(head, dayTasks, true);
+			this.renderLoadMeter(h, dayTasks, true);
+		});
 
-			const list = col.createDiv({ cls: 'sbm-tcal-week-list' });
-			list.dataset.scrollId = `week-${CalendarDate.weekdayIndex(day)}`;
-			dayEvents.forEach(ev => this.renderEventChip(list, ev, 'card', day));
-			dayTasks.forEach(t => this.renderChip(list, t, 'card'));
-			if (dayTasks.length === 0 && dayEvents.length === 0) list.createDiv({ cls: 'sbm-tcal-empty-hint', text: 'Déposer une tâche ici' });
-
-			col.addEventListener('dblclick', (e) => {
+		// Bandeau « journée » : événements sur la journée entière et tâches
+		const allday = wrap.createDiv({ cls: 'sbm-tcal-tg-allday' });
+		allday.dataset.scrollId = 'tg-allday';
+		allday.createDiv({ cls: 'sbm-tcal-tg-gutter sbm-tcal-tg-allday-label', text: 'Journée' });
+		days.forEach(day => {
+			const cell = allday.createDiv({ cls: 'sbm-tcal-tg-allday-cell' });
+			this.decorateDayCell(cell, day);
+			const variant = single && this.layout !== 'compact' ? 'card' : 'mini';
+			(this.eventBuckets.get(day) || []).forEach(ev => {
+				if (ev.allDay || !ev.start?.dateTime) this.renderEventChip(cell, ev, 'mini', day);
+			});
+			(buckets.get(day) || []).forEach(t => this.renderChip(cell, t, variant));
+			cell.addEventListener('dblclick', (e) => {
 				if ((e.target as HTMLElement).closest('.sbm-tcal-chip')) return;
-				this.promptNewTask(day, head);
+				this.promptNewTask(day, cell);
 			});
 		});
+
+		// Grille
+		const scroller = wrap.createDiv({ cls: 'sbm-tcal-tg-scroll' });
+		scroller.dataset.scrollId = 'tg';
+		const grid = scroller.createDiv({ cls: 'sbm-tcal-tg-grid' });
+		grid.style.height = `${(endH - startH) * hh}px`;
+		grid.dataset.startHour = String(startH);
+		const gutter = grid.createDiv({ cls: 'sbm-tcal-tg-gutter sbm-tcal-tg-hours' });
+		for (let h = startH; h < endH; h++) {
+			const label = gutter.createDiv({ cls: 'sbm-tcal-tg-hour', text: `${String(h).padStart(2, '0')}:00` });
+			label.style.top = `${(h - startH) * hh}px`;
+		}
+
+		days.forEach(day => {
+			const col = grid.createDiv({ cls: 'sbm-tcal-tg-col' });
+			this.decorateDayCell(col, day);
+			col.dataset.gridDay = day;
+			const items = this.layoutTimedItems(this.timedItemsFor(day), hh);
+			items.forEach(item => this.renderGridItem(col, item, startH, endH, hh));
+			if (day === this.today) col.createDiv({ cls: 'sbm-tcal-tg-now' });
+			col.addEventListener('pointerdown', (e) => this.onGridPointerDown(e, col, day));
+		});
+		this.updateNowLine(wrap);
+
+		scroller.addEventListener('scroll', () => {
+			if (scroller.clientHeight > 0) this.gridScroll = { top: scroller.scrollTop, hourHeight: hh };
+		}, { passive: true });
+		scroller.addEventListener('wheel', (e) => {
+			if (!e.ctrlKey) return;
+			e.preventDefault();
+			this.zoomGrid(e.deltaY < 0 ? 1 : -1);
+		}, { passive: false });
+
+		// Position : celle de la période précédente, sinon l'heure d'ouverture (ou maintenant)
+		const remembered = this.gridScroll && this.gridScroll.hourHeight === hh ? this.gridScroll.top : null;
+		const focusHour = days.includes(this.today)
+			? Math.max(startH, new Date().getHours() - 1)
+			: Math.max(startH, Number(this.plugin.settings.calendarScrollToHour) || 7);
+		const target = remembered ?? Math.max(0, (Math.min(focusHour, endH - 1) - startH) * hh);
+		scroller.scrollTop = target;
+		if (scroller.clientHeight > 0) this.gridScroll = { top: target, hourHeight: hh };
+	}
+
+	/** Événements minutés et entrées d'un jour, en minutes sur ce jour. */
+	private timedItemsFor(day: string): TimedItem[] {
+		const items: TimedItem[] = [];
+		(this.eventBuckets.get(day) || []).forEach(ev => {
+			if (ev.allDay || !ev.start?.dateTime) return;
+			const s = localParts(ev.start.dateTime);
+			const e = ev.end?.dateTime ? localParts(ev.end.dateTime) : null;
+			const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+			const clippedStart = s.date < day;
+			const start = clippedStart ? 0 : toMin(s.time);
+			let end: number;
+			let clippedEnd = false;
+			if (!e) end = start + 60;
+			else if (e.date > day) {
+				end = 1440;
+				clippedEnd = !(e.time === '00:00' && CalendarDate.addDays(day, 1) === e.date);
+			} else end = toMin(e.time);
+			if (end <= start) end = Math.min(1440, start + GRID_SNAP);
+			items.push({ kind: 'event', key: eventKey(ev), day, start, end, clippedStart, clippedEnd, point: false, event: ev, col: 0, cols: 1 });
+		});
+		this.dayEntries(day).forEach(entry => {
+			const b = entryBounds(entry, this.entryDuration());
+			items.push({ kind: 'entry', key: entryKey(entry), day, start: b.start, end: b.end, clippedStart: false, clippedEnd: entry.end !== null && entry.end < entry.start, point: b.point, entry, col: 0, cols: 1 });
+		});
+		return items;
+	}
+
+	/** Répartit les éléments qui se chevauchent en colonnes côte à côte. */
+	private layoutTimedItems(items: TimedItem[], hourHeight: number): TimedItem[] {
+		// Hauteur minimale visible : deux éléments très courts proches ne se recouvrent pas
+		const minSpan = Math.ceil(20 / hourHeight * 60);
+		const visualEnd = (i: TimedItem) => Math.max(i.end, i.start + minSpan);
+		const sorted = [...items].sort((a, b) => a.start - b.start || visualEnd(b) - visualEnd(a));
+		let cluster: TimedItem[] = [];
+		let clusterEnd = -1;
+		let colEnds: number[] = [];
+		const flush = () => {
+			cluster.forEach(i => { i.cols = colEnds.length; });
+			cluster = [];
+			colEnds = [];
+		};
+		for (const item of sorted) {
+			if (cluster.length && item.start >= clusterEnd) flush();
+			let col = colEnds.findIndex(end => end <= item.start);
+			if (col === -1) {
+				col = colEnds.length;
+				colEnds.push(visualEnd(item));
+			} else {
+				colEnds[col] = visualEnd(item);
+			}
+			item.col = col;
+			cluster.push(item);
+			clusterEnd = Math.max(clusterEnd, visualEnd(item));
+		}
+		flush();
+		return sorted;
+	}
+
+	private renderGridItem(col: HTMLElement, item: TimedItem, startH: number, endH: number, hh: number): HTMLElement {
+		const rangeStart = startH * 60;
+		const rangeEnd = endH * 60;
+		const top = Math.max(rangeStart, Math.min(item.start, rangeEnd - GRID_SNAP));
+		const bottom = Math.max(top + GRID_SNAP, Math.min(item.end, rangeEnd));
+		const heightPx = Math.max(18, (bottom - top) / 60 * hh - 2);
+
+		const el = col.createDiv({ cls: `sbm-tcal-tg-item kind-${item.kind}` });
+		el.dataset.key = item.key;
+		el.style.top = `${(top - rangeStart) / 60 * hh + 1}px`;
+		el.style.height = `${heightPx}px`;
+		el.style.left = `calc(${(item.col / item.cols) * 100}% + 2px)`;
+		el.style.width = `calc(${100 / item.cols}% - 4px)`;
+		if (heightPx < 34) el.addClass('is-short');
+		if (item.point) el.addClass('is-point');
+		if (item.clippedStart) el.addClass('is-clipped-start');
+		if (item.clippedEnd) el.addClass('is-clipped-end');
+		if (this.flash && this.flash.key === item.key && Date.now() < this.flash.until) el.addClass('is-landed');
+
+		if (item.event) {
+			const ev = item.event;
+			el.style.setProperty('--chip-accent', this.calendarColor(ev.calendarId));
+			const role = this.legend.find(l => l.id === ev.calendarId)?.role || 'primary';
+			el.addClass(`role-${role}`);
+			const endMs = ev.end?.dateTime ? new Date(ev.end.dateTime).getTime() : null;
+			if (endMs !== null && endMs < Date.now()) el.addClass('is-past-event');
+			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: item.clippedStart ? '↳' : formatClock(item.start) });
+			el.createSpan({ cls: 'sbm-tcal-tg-item-title', text: ev.summary || '(Sans titre)' });
+			if (ev.location && heightPx >= 52) el.createDiv({ cls: 'sbm-tcal-tg-item-sub', text: `📍 ${ev.location}` });
+			this.attachPeek(el, this.fillEventPeek(ev));
+			el.addEventListener('click', () => {
+				if (Date.now() < this.suppressClickUntil) return;
+				this.hidePeek();
+				this.openEventModal(ev);
+			});
+			el.addEventListener('contextmenu', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.hidePeek();
+				this.openEventMenu(e, ev, item.day);
+			});
+		} else if (item.entry) {
+			const entry = item.entry;
+			if (entry.statusChar !== undefined) {
+				const type = TaskStatusRegistry.typeOf(entry.statusChar);
+				if (type === 'DONE' || type === 'CANCELLED') el.addClass('is-done');
+				const task = this.taskForEntry(entry);
+				const check = el.createEl('button', { cls: 'sbm-tcal-check' });
+				if (type === 'DONE') setIcon(check, 'check');
+				else if (type === 'CANCELLED') check.addClass('is-cancelled');
+				else if (entry.statusChar !== ' ') check.createSpan({ cls: 'sbm-tcal-check-symbol', text: entry.statusChar });
+				check.title = `${TaskStatusRegistry.nameOf(entry.statusChar)} → ${TaskStatusRegistry.nameOf(TaskStatusRegistry.nextSymbol(entry.statusChar))}`;
+				check.addEventListener('pointerdown', (e) => e.stopPropagation());
+				check.addEventListener('click', (e) => {
+					e.stopPropagation();
+					if (task) this.toggleTask(task, el, check);
+				});
+				if (!task) check.disabled = true;
+			}
+			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: formatClock(entry.start) });
+			el.createSpan({ cls: 'sbm-tcal-tg-item-title', text: this.entryTitle(entry) });
+			this.attachPeek(el, this.fillEntryPeek(entry));
+			el.addEventListener('click', (e) => {
+				if (Date.now() < this.suppressClickUntil) return;
+				if (e.ctrlKey || e.metaKey) void this.openEntryNote(entry, true);
+				else this.openEntryModal(entry);
+			});
+			el.addEventListener('contextmenu', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.hidePeek();
+				this.openEntryMenu(e, entry);
+			});
+		}
+
+		// Déplacement et redimensionnement (pas pour les événements qui débordent sur d'autres jours)
+		const movable = !(item.clippedStart || (item.kind === 'event' && item.clippedEnd));
+		if (movable) {
+			el.addClass('is-movable');
+			const handle = el.createDiv({ cls: 'sbm-tcal-tg-resize' });
+			handle.addEventListener('pointerdown', (e) => this.onGridItemPointerDown(e, item, el, 'resize'));
+			el.addEventListener('pointerdown', (e) => this.onGridItemPointerDown(e, item, el, 'move'));
+		} else {
+			el.addEventListener('pointerdown', (e) => e.stopPropagation());
+		}
+		return el;
+	}
+
+	/** Place la ligne « maintenant » de la colonne du jour. */
+	private updateNowLine(scope: HTMLElement = this.rootEl): void {
+		if (!scope) return;
+		const line = scope.querySelector<HTMLElement>('.sbm-tcal-tg-now');
+		if (!line) return;
+		const { startH, endH } = this.gridHours();
+		const now = new Date();
+		const minutes = now.getHours() * 60 + now.getMinutes();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		line.toggleClass('is-hidden', minutes < startH * 60 || minutes > endH * 60);
+		line.style.top = `${(minutes - startH * 60) / 60 * hh}px`;
+	}
+
+	/** Minute (aimantée) sous le pointeur dans une colonne de la grille. */
+	private minuteAt(col: HTMLElement, clientY: number, snap = GRID_SNAP, mode: 'round' | 'floor' = 'round'): number {
+		const { startH, endH } = this.gridHours();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		const rect = col.getBoundingClientRect();
+		const raw = startH * 60 + (clientY - rect.top) / hh * 60;
+		const snapped = (mode === 'floor' ? Math.floor(raw / snap) : Math.round(raw / snap)) * snap;
+		return Math.max(startH * 60, Math.min(endH * 60, snapped));
+	}
+
+	/* ----- Glisser un élément de la grille (déplacer / redimensionner) ----- */
+
+	private onGridItemPointerDown(e: PointerEvent, item: TimedItem, el: HTMLElement, mode: 'move' | 'resize'): void {
+		e.stopPropagation();
+		if (e.button !== 0 || this.gridDrag || this.drag) return;
+		this.hidePeek();
+		const col = el.parentElement as HTMLElement;
+		const grabbed = this.minuteAt(col, e.clientY, 1);
+		this.gridDrag = {
+			item, el, mode,
+			pointerId: e.pointerId,
+			pointerType: e.pointerType,
+			startX: e.clientX,
+			startY: e.clientY,
+			lastX: e.clientX,
+			lastY: e.clientY,
+			grabOffset: Math.max(0, grabbed - item.start),
+			active: false
+		};
+		if (e.pointerType !== 'mouse') {
+			// Tactile : appui long pour saisir, sinon la grille défile normalement
+			this.gridDrag.holdTimer = window.setTimeout(() => {
+				if (this.gridDrag && !this.gridDrag.active) this.startGridDrag();
+			}, 280);
+		}
+		document.addEventListener('pointermove', this.onGridPointerMove, { passive: false });
+		document.addEventListener('pointerup', this.onGridPointerUp);
+		document.addEventListener('pointercancel', this.onGridPointerCancel);
+		document.addEventListener('keydown', this.onGridKey, true);
+		document.addEventListener('touchmove', this.onGridTouchMove, { passive: false });
+	}
+
+	private onGridTouchMove = (e: TouchEvent): void => {
+		if (this.gridDrag?.active || this.gridSelection?.moved) e.preventDefault();
+	};
+
+	private startGridDrag(): void {
+		const d = this.gridDrag;
+		if (!d) return;
+		d.active = true;
+		d.el.addClass('is-grid-source');
+		this.rootEl.addClass('is-grid-dragging');
+		document.body.addClass('sbm-tcal-dragging');
+		const preview = d.el.cloneNode(true) as HTMLElement;
+		preview.removeClass('is-grid-source', 'is-landed');
+		preview.addClass('is-preview');
+		preview.querySelector('.sbm-tcal-tg-resize')?.remove();
+		const label = preview.createDiv({ cls: 'sbm-tcal-tg-preview-label' });
+		label.setText('');
+		d.preview = preview;
+		if (navigator.vibrate && d.pointerType === 'touch') {
+			try { navigator.vibrate(12); } catch { /* ignore */ }
+		}
+		this.updateGridDrag();
+	}
+
+	private onGridPointerMove = (e: PointerEvent): void => {
+		const d = this.gridDrag;
+		if (!d || e.pointerId !== d.pointerId) return;
+		d.lastX = e.clientX;
+		d.lastY = e.clientY;
+		const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
+		if (!d.active) {
+			if (d.pointerType === 'mouse') {
+				if (dist > 4) this.startGridDrag();
+			} else if (dist > 10) {
+				this.cancelGridDrag();
+			}
+			return;
+		}
+		e.preventDefault();
+		this.updateGridDrag();
+		this.autoScrollGrid();
+	};
+
+	private updateGridDrag(): void {
+		const d = this.gridDrag;
+		if (!d?.active || !d.preview) return;
+		const { startH, endH } = this.gridHours();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		const sourceCol = d.el.parentElement as HTMLElement;
+		let col = sourceCol;
+		if (d.mode === 'move') {
+			const under = document.elementFromPoint(d.lastX, d.lastY) as HTMLElement | null;
+			const found = under?.closest<HTMLElement>('.sbm-tcal-tg-col');
+			if (found && this.rootEl.contains(found)) col = found;
+		}
+		const day = col.dataset.gridDay as string;
+		const duration = d.item.end - d.item.start;
+		let start = d.item.start;
+		let end = d.item.end;
+		if (d.mode === 'move') {
+			const pointer = this.minuteAt(col, d.lastY, 1);
+			start = Math.round((pointer - d.grabOffset) / GRID_SNAP) * GRID_SNAP;
+			start = Math.max(0, Math.min(1440 - Math.min(duration, 1440), start));
+			end = start + duration;
+		} else {
+			end = Math.max(d.item.start + GRID_SNAP, this.minuteAt(col, d.lastY));
+		}
+		d.targetDay = day;
+		d.targetStart = start;
+		d.targetEnd = end;
+
+		if (d.preview.parentElement !== col) col.appendChild(d.preview);
+		const top = Math.max(startH * 60, start);
+		const bottom = Math.min(endH * 60, Math.max(top + GRID_SNAP, end));
+		d.preview.style.top = `${(top - startH * 60) / 60 * hh + 1}px`;
+		d.preview.style.height = `${Math.max(18, (bottom - top) / 60 * hh - 2)}px`;
+		d.preview.style.left = '2px';
+		d.preview.style.width = 'calc(100% - 4px)';
+		const time = d.preview.querySelector('.sbm-tcal-tg-item-time');
+		time?.setText(formatClock(start));
+		const label = d.preview.querySelector('.sbm-tcal-tg-preview-label');
+		const dayLabel = day !== d.item.day ? ` · ${CalendarDate.format(day, { weekday: 'short', day: 'numeric' })}` : '';
+		const showEnd = !(d.item.point && d.mode === 'move');
+		label?.setText(`${formatClock(start)}${showEnd ? ` – ${formatClock(end)}` : ''}${dayLabel}`);
+	}
+
+	private autoScrollGrid(): void {
+		const d = this.gridDrag;
+		if (!d || d.scrollRaf) return;
+		const step = () => {
+			const drag = this.gridDrag;
+			if (!drag?.active) return;
+			drag.scrollRaf = undefined;
+			const scroller = this.rootEl.querySelector<HTMLElement>('.sbm-tcal-tg-scroll');
+			if (!scroller) return;
+			const rect = scroller.getBoundingClientRect();
+			const edge = 40;
+			let dy = 0;
+			if (drag.lastY < rect.top + edge) dy = -Math.ceil((rect.top + edge - drag.lastY) / 3);
+			else if (drag.lastY > rect.bottom - edge) dy = Math.ceil((drag.lastY - (rect.bottom - edge)) / 3);
+			if (dy !== 0) {
+				scroller.scrollTop += dy;
+				this.updateGridDrag();
+				drag.scrollRaf = window.requestAnimationFrame(step);
+			}
+		};
+		d.scrollRaf = window.requestAnimationFrame(step);
+	}
+
+	private onGridPointerUp = (e: PointerEvent): void => {
+		const d = this.gridDrag;
+		if (!d || e.pointerId !== d.pointerId) return;
+		const wasActive = d.active;
+		const { item, mode, targetDay, targetStart, targetEnd } = d;
+		this.cleanupGridDrag();
+		if (!wasActive) return;
+		this.suppressClickUntil = Date.now() + 250;
+		if (targetDay === undefined || targetStart === undefined || targetEnd === undefined) {
+			if (this.pendingRender) this.renderPreservingScroll();
+			return;
+		}
+		if (item.entry) {
+			const entry = item.entry;
+			// Une entrée ponctuelle déplacée reste ponctuelle ; redimensionnée, elle reçoit une heure de fin
+			const end = mode === 'move' && entry.end === null ? null : targetEnd >= 1440 ? 1440 : targetEnd;
+			void this.moveEntry(entry, targetDay, targetStart, end === targetStart ? null : end);
+		} else if (item.event) {
+			void this.moveEventTo(item.event, targetDay, targetStart, targetEnd);
+		}
+		if (this.pendingRender) this.renderPreservingScroll();
+	};
+
+	private onGridPointerCancel = (): void => this.cancelGridDrag();
+
+	private onGridKey = (e: KeyboardEvent): void => {
+		if (e.key !== 'Escape') return;
+		if (this.gridDrag || this.gridSelection) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.cancelGridDrag();
+			this.clearGridSelection();
+		}
+	};
+
+	private cancelGridDrag(): void {
+		if (!this.gridDrag) return;
+		const wasActive = this.gridDrag.active;
+		this.cleanupGridDrag();
+		if (wasActive) this.suppressClickUntil = Date.now() + 250;
+		if (this.pendingRender) this.renderPreservingScroll();
+	}
+
+	private cleanupGridDrag(): void {
+		const d = this.gridDrag;
+		if (!d) return;
+		if (d.holdTimer) window.clearTimeout(d.holdTimer);
+		if (d.scrollRaf) window.cancelAnimationFrame(d.scrollRaf);
+		d.preview?.remove();
+		d.el.removeClass('is-grid-source');
+		this.rootEl?.removeClass('is-grid-dragging');
+		document.body.removeClass('sbm-tcal-dragging');
+		document.removeEventListener('pointermove', this.onGridPointerMove);
+		document.removeEventListener('pointerup', this.onGridPointerUp);
+		document.removeEventListener('pointercancel', this.onGridPointerCancel);
+		document.removeEventListener('keydown', this.onGridKey, true);
+		document.removeEventListener('touchmove', this.onGridTouchMove);
+		this.gridDrag = null;
+	}
+
+	/** Déplace un événement Google à un jour et une heure donnés (optimiste). */
+	private async moveEventTo(ev: GoogleCalendarEvent, day: string, start: number, end: number): Promise<void> {
+		const startDate = CalendarDate.fromISO(day);
+		startDate.setHours(Math.floor(start / 60), start % 60, 0, 0);
+		const endDate = CalendarDate.fromISO(day);
+		endDate.setHours(0, 0, 0, 0);
+		endDate.setMinutes(end);
+		const previous = { start: ev.start, end: ev.end };
+		const newStart = toLocalIsoWithOffset(startDate);
+		const newEnd = toLocalIsoWithOffset(endDate);
+		if (newStart === toLocalIsoWithOffset(new Date(ev.start.dateTime as string)) && ev.end?.dateTime && newEnd === toLocalIsoWithOffset(new Date(ev.end.dateTime))) return;
+		ev.start = { ...ev.start, dateTime: newStart };
+		ev.end = { ...ev.end, dateTime: newEnd };
+		this.flash = { key: eventKey(ev), until: Date.now() + 900 };
+		this.renderPreservingScroll();
+		const s = localParts(newStart);
+		const e = localParts(newEnd);
+		try {
+			await GoogleCalendarService.updateEvent(this.plugin.settings, ev.id, {
+				calendarId: ev.calendarId,
+				startDate: s.date,
+				startTime: s.time,
+				endDate: e.date,
+				endTime: e.time
+			});
+			new Notice(`📅 ${ev.summary} → ${CalendarDate.relativeLabel(s.date, this.today)} ${s.time}`, 2500);
+		} catch (err) {
+			ev.start = previous.start;
+			ev.end = previous.end;
+			new Notice(`Impossible de déplacer l’événement : ${err instanceof Error ? err.message : String(err)}`);
+			this.renderPreservingScroll();
+		}
+	}
+
+	/* ----- Sélection d'un créneau vide pour créer ----- */
+
+	private onGridPointerDown(e: PointerEvent, col: HTMLElement, day: string): void {
+		if (e.button !== 0 || this.drag || this.gridDrag) return;
+		if ((e.target as HTMLElement).closest('.sbm-tcal-tg-item, .sbm-tcal-chip')) return;
+		this.clearGridSelection();
+		const anchor = this.minuteAt(col, e.clientY, GRID_SNAP, 'floor');
+		this.gridSelection = {
+			day, col,
+			pointerId: e.pointerId,
+			pointerType: e.pointerType,
+			anchor,
+			current: anchor,
+			startY: e.clientY,
+			moved: false
+		};
+		document.addEventListener('pointermove', this.onSelectMove, { passive: false });
+		document.addEventListener('pointerup', this.onSelectUp);
+		document.addEventListener('pointercancel', this.onSelectCancel);
+		document.addEventListener('keydown', this.onGridKey, true);
+	}
+
+	private onSelectMove = (e: PointerEvent): void => {
+		const sel = this.gridSelection;
+		if (!sel || e.pointerId !== sel.pointerId || sel.box?.dataset.locked) return;
+		if (!sel.moved) {
+			if (Math.abs(e.clientY - sel.startY) < 6) return;
+			// Au doigt, glisser fait défiler la grille : seule une touche simple crée
+			if (sel.pointerType !== 'mouse') {
+				this.clearGridSelection();
+				return;
+			}
+			sel.moved = true;
+		}
+		e.preventDefault();
+		sel.current = this.minuteAt(sel.col, e.clientY);
+		this.drawSelection();
+	};
+
+	private onSelectUp = (e: PointerEvent): void => {
+		const sel = this.gridSelection;
+		if (!sel || e.pointerId !== sel.pointerId || sel.box?.dataset.locked) return;
+		this.detachSelectListeners();
+		let start: number;
+		let end: number;
+		if (sel.moved) {
+			start = Math.min(sel.anchor, sel.current);
+			end = Math.max(sel.anchor, sel.current);
+			if (end - start < GRID_SNAP) end = start + GRID_SNAP;
+		} else {
+			start = sel.anchor;
+			end = Math.min(1440, start + this.entryDuration());
+		}
+		sel.anchor = start;
+		sel.current = end;
+		this.drawSelection();
+		if (sel.box) sel.box.dataset.locked = '1';
+		this.openCreateMenu(e, sel.day, start, end, sel.moved);
+	};
+
+	private onSelectCancel = (): void => this.clearGridSelection();
+
+	private detachSelectListeners(): void {
+		document.removeEventListener('pointermove', this.onSelectMove);
+		document.removeEventListener('pointerup', this.onSelectUp);
+		document.removeEventListener('pointercancel', this.onSelectCancel);
+		if (!this.gridDrag) document.removeEventListener('keydown', this.onGridKey, true);
+	}
+
+	private drawSelection(): void {
+		const sel = this.gridSelection;
+		if (!sel) return;
+		const { startH } = this.gridHours();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		const start = Math.min(sel.anchor, sel.current);
+		const end = Math.max(sel.anchor, sel.current, start + GRID_SNAP);
+		if (!sel.box) sel.box = sel.col.createDiv({ cls: 'sbm-tcal-tg-selection' });
+		sel.box.style.top = `${(start - startH * 60) / 60 * hh}px`;
+		sel.box.style.height = `${(end - start) / 60 * hh}px`;
+		sel.box.setText(`${formatClock(start)} – ${formatClock(end)}`);
+	}
+
+	private clearGridSelection(): void {
+		if (!this.gridSelection) return;
+		this.gridSelection.box?.remove();
+		this.gridSelection = null;
+		this.detachSelectListeners();
+		if (this.pendingRender) this.scheduleRender();
+	}
+
+	/** Menu de création sur un créneau : entrée de note quotidienne, événement Google ou tâche. */
+	private openCreateMenu(e: MouseEvent, day: string, start: number, end: number, explicitEnd: boolean): void {
+		const entriesOn = this.plugin.settings.dailyEntriesEnabled !== false;
+		const menu = new Menu();
+		const label = `${formatClock(start)} – ${formatClock(end)}`;
+		if (entriesOn) {
+			menu.addItem(i => i.setTitle(`Entrée dans la note quotidienne (${label})`).setIcon('clock').onClick(() =>
+				this.openEntryModal(undefined, { date: day, start, end: explicitEnd ? end : null })));
+		}
+		if (this.googleReady()) {
+			menu.addItem(i => i.setTitle(`Événement Google (${label})`).setIcon('calendar-plus').onClick(() =>
+				this.openEventModal(undefined, day, formatClock(start), formatClock(Math.min(end, 1439)))));
+		}
+		menu.addItem(i => i.setTitle('Tâche ce jour-là').setIcon('check-square').onClick(() => {
+			const anchor = this.rootEl.querySelector<HTMLElement>(`.sbm-tcal-tg-dayhead[data-drop-date="${day}"]`) || this.rootEl;
+			this.promptNewTask(day, anchor);
+		}));
+		menu.onHide(() => window.setTimeout(() => this.clearGridSelection(), 0));
+		menu.showAtPosition({ x: e.clientX, y: e.clientY });
 	}
 
 	/* ======================================================================
@@ -1123,11 +2150,12 @@ export class TaskCalendarView extends ItemView {
 		{
 			const dayTasks = buckets.get(day) || [];
 			const dayEvents = this.eventBuckets.get(day) || [];
+			const entryCount = this.dayEntries(day).length;
 			const section = createDiv({ cls: 'sbm-tcal-agenda-day' });
 			parent.insertBefore(section, before ?? null);
 			section.dataset.day = day;
 			this.decorateDayCell(section, day);
-			if (dayTasks.length === 0 && dayEvents.length === 0) section.addClass('is-empty');
+			if (dayTasks.length === 0 && dayEvents.length === 0 && entryCount === 0) section.addClass('is-empty');
 			if (CalendarDate.weekdayIndex(day) === 0) section.addClass('is-week-start');
 			if (day.endsWith('-01')) {
 				const monthLabel = createDiv({ cls: 'sbm-tcal-agenda-month', text: CalendarDate.format(day, { month: 'long', year: 'numeric' }) });
@@ -1144,10 +2172,11 @@ export class TaskCalendarView extends ItemView {
 				cls: 'sbm-tcal-agenda-rel',
 				text: Math.abs(diff) <= 1 ? CalendarDate.relativeLabel(day, this.today) : CalendarDate.format(day, { weekday: 'long', day: 'numeric', month: 'long' })
 			});
-			if (dayTasks.length || dayEvents.length) {
+			if (dayTasks.length || dayEvents.length || entryCount) {
 				const open = dayTasks.filter(isTaskOpen).length;
 				const parts: string[] = [];
 				if (dayEvents.length) parts.push(`${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}`);
+				if (entryCount) parts.push(`${entryCount} entrée${entryCount > 1 ? 's' : ''}`);
 				if (dayTasks.length) parts.push(open ? `${open} à faire` : 'tout est fait ✨');
 				label.createSpan({ cls: 'sbm-tcal-agenda-count', text: parts.join(' · ') });
 			}
@@ -1155,8 +2184,7 @@ export class TaskCalendarView extends ItemView {
 			this.addQuickAddButton(head, day);
 
 			const items = section.createDiv({ cls: 'sbm-tcal-agenda-items' });
-			dayEvents.forEach(ev => this.renderEventChip(items, ev, variant, day));
-			dayTasks.forEach(t => this.renderChip(items, t, variant));
+			this.renderDayItems(items, day, variant, dayTasks, dayEvents);
 		}
 	}
 
@@ -1236,6 +2264,7 @@ export class TaskCalendarView extends ItemView {
 		}
 		this.agendaExtending = false;
 		this.ensureEvents();
+		this.ensureEntries();
 	}
 
 	/** Le titre (et l'ancre) suivent les jours visibles de l'agenda. */
@@ -1265,6 +2294,11 @@ export class TaskCalendarView extends ItemView {
 		const undated = tasks.filter(t => isTaskOpen(t) && !getTaskDate(t, this.state.dateField) && t.indentLevel === 0).sort(compareTasks);
 		this.renderTray(trays, 'undated', 'Sans date', undated, 'card', 'inbox', true);
 
+		if (this.state.compactMode === 'day') {
+			const gridWrap = this.bodyEl.createDiv({ cls: 'sbm-tcal-compact-grid' });
+			this.renderTimeGrid(gridWrap, [this.state.anchor], buckets);
+			return;
+		}
 		const scroll = this.bodyEl.createDiv({ cls: 'sbm-tcal-compact-scroll' });
 		scroll.dataset.scrollId = 'compact';
 		this.renderAgenda(scroll, buckets, AGENDA_DAYS_COMPACT, 'card', CalendarDate.startOfWeek(this.state.anchor));
@@ -1381,13 +2415,15 @@ export class TaskCalendarView extends ItemView {
 		else if (ratio >= 0.7) meter.addClass('is-high');
 	}
 
-	private renderDots(container: HTMLElement, dayTasks: ObsidianTask[], dayEvents: GoogleCalendarEvent[] = []): void {
+	private renderDots(container: HTMLElement, dayTasks: ObsidianTask[], dayEvents: GoogleCalendarEvent[] = [], entryCount = 0): void {
 		const dots = container.createDiv({ cls: 'sbm-tcal-dots' });
 		dayEvents.slice(0, 2).forEach(ev => {
 			const dot = dots.createSpan({ cls: 'sbm-tcal-dot is-event' });
 			dot.style.setProperty('--sbm-cal-color', this.calendarColor(ev.calendarId));
 		});
-		dayTasks.slice(0, Math.max(0, 4 - Math.min(2, dayEvents.length))).forEach(t => {
+		const ringCount = Math.min(2, dayEvents.length) + (entryCount ? 1 : 0);
+		if (entryCount) dots.createSpan({ cls: 'sbm-tcal-dot is-event is-entry' });
+		dayTasks.slice(0, Math.max(0, 4 - ringCount)).forEach(t => {
 			const dot = dots.createSpan({ cls: 'sbm-tcal-dot' });
 			if (!isTaskOpen(t)) dot.addClass('is-done');
 			const q = this.quadrantOf(t);
@@ -1399,16 +2435,23 @@ export class TaskCalendarView extends ItemView {
 		const btn = container.createEl('button', { cls: 'sbm-tcal-add clickable-icon' });
 		setIcon(btn, 'plus');
 		const label = CalendarDate.format(day, { day: 'numeric', month: 'long' });
-		btn.title = this.googleReady() ? `Ajouter le ${label}` : `Nouvelle tâche le ${label}`;
+		const entriesOn = this.plugin.settings.dailyEntriesEnabled !== false;
+		btn.title = this.googleReady() || entriesOn ? `Ajouter le ${label}` : `Nouvelle tâche le ${label}`;
+		btn.addEventListener('pointerdown', (e) => e.stopPropagation());
 		btn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			if (!this.googleReady()) {
+			if (!this.googleReady() && !entriesOn) {
 				this.promptNewTask(day, btn);
 				return;
 			}
 			const menu = new Menu();
 			menu.addItem(i => i.setTitle('Nouvelle tâche').setIcon('check-square').onClick(() => this.promptNewTask(day, btn)));
-			menu.addItem(i => i.setTitle('Nouvel événement Google').setIcon('calendar-plus').onClick(() => this.openEventModal(undefined, day)));
+			if (entriesOn) {
+				menu.addItem(i => i.setTitle('Nouvelle entrée dans la note quotidienne').setIcon('clock').onClick(() => this.openEntryModal(undefined, { date: day })));
+			}
+			if (this.googleReady()) {
+				menu.addItem(i => i.setTitle('Nouvel événement Google').setIcon('calendar-plus').onClick(() => this.openEventModal(undefined, day)));
+			}
 			menu.showAtMouseEvent(e);
 		});
 	}
@@ -1563,6 +2606,61 @@ export class TaskCalendarView extends ItemView {
 			this.cancelDrag();
 			this.hidePeek();
 			this.openEventMenu(e, ev, day);
+		});
+		return chip;
+	}
+
+	/** Puce d'une entrée de note quotidienne : heure, texte, case à cocher s'il s'agit d'une tâche. */
+	private renderEntryChip(container: HTMLElement, entry: DailyEntry, variant: 'mini' | 'card' | 'row'): HTMLElement {
+		const key = entryKey(entry);
+		const chip = container.createDiv({ cls: `sbm-tcal-chip sbm-tcal-event sbm-tcal-entry variant-${variant}` });
+		chip.dataset.key = key;
+		if (this.flash && this.flash.key === key && Date.now() < this.flash.until) chip.addClass('is-landed');
+		const bounds = entryBounds(entry, this.entryDuration());
+		if (entry.date < this.today || (entry.date === this.today && bounds.end <= new Date().getHours() * 60 + new Date().getMinutes())) {
+			chip.addClass('is-past-event');
+		}
+
+		if (entry.statusChar !== undefined) {
+			const type = TaskStatusRegistry.typeOf(entry.statusChar);
+			if (type === 'DONE' || type === 'CANCELLED') chip.addClass('is-done');
+			const task = this.taskForEntry(entry);
+			const check = chip.createEl('button', { cls: 'sbm-tcal-check' });
+			if (type === 'DONE') setIcon(check, 'check');
+			else if (type === 'CANCELLED') check.addClass('is-cancelled');
+			else if (entry.statusChar !== ' ') check.createSpan({ cls: 'sbm-tcal-check-symbol', text: entry.statusChar });
+			check.addEventListener('pointerdown', (e) => e.stopPropagation());
+			check.addEventListener('click', (e) => {
+				e.stopPropagation();
+				if (task) this.toggleTask(task, chip, check);
+			});
+			if (!task) check.disabled = true;
+		}
+
+		chip.createSpan({ cls: 'sbm-tcal-event-time', text: formatClock(entry.start) });
+		const content = chip.createDiv({ cls: 'sbm-tcal-chip-content' });
+		content.createDiv({ cls: 'sbm-tcal-chip-title', text: this.entryTitle(entry) });
+		if (variant !== 'mini') {
+			const meta = content.createDiv({ cls: 'sbm-tcal-chip-meta' });
+			if (entry.end !== null && entry.end !== entry.start) meta.createSpan({ cls: 'sbm-tcal-meta', text: this.entryRangeLabel(entry) });
+			meta.createSpan({ cls: 'sbm-tcal-meta calendar', text: 'Note du jour' });
+		}
+
+		this.attachPeek(chip, this.fillEntryPeek(entry));
+		chip.addEventListener('pointerdown', (e) => this.onChipPointerDown(e, { entry }, chip));
+		chip.addEventListener('click', (e) => {
+			if (Date.now() < this.suppressClickUntil) return;
+			this.hidePeek();
+			if (e.ctrlKey || e.metaKey) void this.openEntryNote(entry, true);
+			else this.openEntryModal(entry);
+		});
+		chip.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.drag?.active) return;
+			this.cancelDrag();
+			this.hidePeek();
+			this.openEntryMenu(e, entry);
 		});
 		return chip;
 	}
@@ -1894,13 +2992,23 @@ export class TaskCalendarView extends ItemView {
 			return;
 		}
 		const target = d.target;
-		const { task, event, eventDay } = d;
+		const { task, event, eventDay, entry } = d;
 		this.suppressClickUntil = Date.now() + 250;
 		this.cleanupDrag();
 
 		if (target && target.dataset.dropDate !== undefined) {
 			const date = target.dataset.dropDate || null;
 			if (event && eventDay && date) void this.moveEvent(event, CalendarDate.diffDays(eventDay, date));
+			else if (entry && date) {
+				// Déposée dans la grille horaire : l'entrée prend l'heure visée
+				if (target.dataset.gridDay) {
+					const start = Math.min(1440 - GRID_SNAP, this.minuteAt(target, d.lastY));
+					const duration = entry.end !== null && entry.end > entry.start ? entry.end - entry.start : null;
+					void this.moveEntry(entry, date, start, duration !== null ? Math.min(1440, start + duration) : null);
+				} else {
+					void this.moveEntry(entry, date, entry.start, entry.end);
+				}
+			}
 			else if (task) void this.moveTask(task, date);
 		} else if (this.pendingRender) {
 			this.renderPreservingScroll();
@@ -1987,15 +3095,15 @@ export class TaskCalendarView extends ItemView {
 		}
 		target.addClass('is-drop-target');
 		const date = target.dataset.dropDate || null;
-		// Un événement ne peut pas être « sans date »
-		if (d.event && !date) {
+		// Un événement ou une entrée de note quotidienne ne peut pas être « sans date »
+		if ((d.event || d.entry) && !date) {
 			target.removeClass('is-drop-target');
 			d.target = null;
 			d.ghostLabel?.setText('');
 			d.ghost?.removeClass('has-target');
 			return;
 		}
-		const current = d.event ? d.eventDay || null : getTaskDate(d.task as ObsidianTask, this.state.dateField);
+		const current = d.event ? d.eventDay || null : d.entry ? d.entry.date : getTaskDate(d.task as ObsidianTask, this.state.dateField);
 		const same = date === current;
 		d.ghost?.toggleClass('has-target', !same);
 		d.ghostLabel?.setText(same ? '' : date ? `→ ${CalendarDate.relativeLabel(date, this.today)}` : '→ Sans date');
@@ -2008,7 +3116,7 @@ export class TaskCalendarView extends ItemView {
 		d.target = null;
 		this.shift(dir);
 		// La source a été détruite par le rendu : on la remplace si elle est encore visible
-		const key = d.event ? eventKey(d.event) : taskKey(d.task as ObsidianTask);
+		const key = d.event ? eventKey(d.event) : d.entry ? entryKey(d.entry) : taskKey(d.task as ObsidianTask);
 		const fresh = this.rootEl.querySelector<HTMLElement>(`.sbm-tcal-chip[data-key="${CSS.escape(key)}"]`);
 		if (fresh) {
 			fresh.addClass('is-drag-source');
@@ -2139,13 +3247,13 @@ export class TaskCalendarView extends ItemView {
 				: CalendarDate.format(day, { weekday: 'narrow' });
 			pill.createDiv({ cls: 'sbm-tcal-pill-name', text: name });
 			pill.createDiv({ cls: 'sbm-tcal-pill-num', text: String(Number(day.slice(8))) });
-			this.renderDots(pill, dayTasks, this.eventBuckets.get(day) || []);
+			this.renderDots(pill, dayTasks, this.eventBuckets.get(day) || [], this.dayEntries(day).length);
 			pill.addEventListener('click', () => {
 				if (Date.now() < this.suppressClickUntil) return;
 				this.state.anchor = day;
 				this.saveState();
 				this.renderPreservingScroll();
-				this.scrollToDay(day);
+				if (this.state.compactMode !== 'day') this.scrollToDay(day);
 			});
 		}
 	}
