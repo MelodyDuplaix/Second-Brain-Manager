@@ -28,13 +28,18 @@
 - **Calendrier unifié tâches + Google Agenda (`TaskCalendarView`)** :
   - Vues Jour et Semaine avec grille horaire (déplacer / redimensionner à la souris, cliquer-glisser sur un créneau vide pour créer, zoom avec Ctrl + molette ou `+` / `-`), Mois et Agenda continu, dans la barre latérale ou la zone principale (en barre latérale étroite : liste ou grille du jour).
   - Tâches et événements Google réunis, plusieurs agendas avec couleurs, dédoublonnage des événements présents dans plusieurs agendas.
+  - **Couleurs au choix** : tâches par quadrant (ou par priorité quand les quadrants sont désactivés), tâches sans catégorie, entrées de note quotidienne, jour courant, agenda principal, agendas des autres ; couleur propre à chaque agenda Google ou reprise des couleurs de Google Agenda.
+  - **Filtres** (bouton Filtres ou touche `F`) : types affichés (tâches, terminées, entrées, événements), agendas par rôle en un clic (ex. masquer tous les agendas secondaires) ou un par un (« Seulement »), quadrants ou priorités. Filtres actifs résumés sur une ligne sous la barre d'outils.
+  - **Préréglages de filtres** : Tout, Mon agenda, Tâches, Rendez-vous, À faire et les vôtres ; tous renommables, modifiables, réordonnables et rétablissables, avec un préréglage appliqué à l'ouverture du calendrier au choix.
+  - L'agenda reste sur le même jour quand le calendrier se met à jour (tâche cochée, synchronisation).
   - **Entrées des notes quotidiennes** : les lignes horodatées (`- 11:30 - 12:00 Dentiste`, `- 13:16 [[Projet]]`, cases à cocher comprises) s'affichent à leur heure. Section lue, formes de ligne (`{start}`, `{end}`, `{text}`), format d'heure, modèle d'écriture et position d'insertion sont réglables, avec un champ d'essai. Ajout, modification, déplacement et suppression depuis le calendrier.
+  - **Autocomplétion dans la saisie** (entrée de note quotidienne, tâche rapide) : `[[` propose les notes et leurs alias, `#` les tags du coffre ; `Ctrl+Entrée` enregistre l'entrée.
   - Glisser-déposer pour replanifier, menus contextuels, ajout rapide d'une tâche, d'une entrée de note quotidienne ou d'un événement.
   - Bacs « En retard » et « Sans date » fixés en haut de la barre latérale.
   - Vue Mois : tout reste visible (les semaines chargées s'agrandissent), sans bouton pour déplier une journée.
 
 - **Gamification & Portefeuille de Pièces d'Or** :
-  - Écouteur automatique de complétion de tâches (`app.vault.on('modify')`).
+  - Écouteur automatique de complétion de tâches (`app.vault.on('modify')`), y compris pour les cases cochées dans les requêtes du plugin Tasks.
   - Portefeuille persistant avec détection d'unicité et barème automatique ou explicite.
   - Les anciennes tâches déjà cochées (date ✅ passée) ne sont jamais recomptées, même quand des lignes sont ajoutées dans la note.
   - **45 trophées** regroupés par famille (régularité, volume, moments de la journée, effort, variété, matrice, boutique…), calculés rétroactivement.
@@ -49,12 +54,14 @@
 
 - **Briefing du matin** :
   - Zone de réponse identique à celle du chat pour dialoguer avec l'assistant pendant le briefing.
+  - Les tâches proposées et acceptées sont écrites dans le corps de la note (jamais dans les propriétés), à la fin de la section de tâches, ou de la section choisie dans les réglages (« Section des nouvelles tâches »).
 
 - **Assistant IA Conversationnel & Streaming en Temps Réel (`ChatView`)** :
   - Multi-fournisseurs : Google Gemini (1.5 / 2.0 Flash / Pro), OpenAI ChatGPT (GPT-4o), Ollama & LM Studio (Local).
   - Déroulement fluide mot à mot (Typewriter Queue à 16ms) avec curseur actif (`▌`).
   - Rendu Markdown soigné et compact.
   - Prompt de correction qui corrige le texte sans jamais le surligner ni le mettre en forme.
+  - Pas de défilement forcé quand on relit plus haut : le suivi reprend en bas, avec un bouton « revenir en bas ».
 
 - **Interface** :
   - Densité réglable (Confortable, Compacte, Très compacte) appliquée à toutes les vues du plugin.
@@ -62,7 +69,9 @@
 
 - **Paramètres Natifs & Secret Storage** :
   - Architecture modulaire inspirée du plugin officiel *Spaced Repetition* (`SettingsPageManager`).
-  - Réglages déclaratifs regroupés par section, avec **barre de recherche** pour retrouver un réglage instantanément.
+  - **Six sections navigables** (Général, Tâches, Calendrier, Intelligence artificielle, Dictée vocale, Gamification & boutique), chacune en sous-page native d'Obsidian avec retour et valeur courante affichée ; sous-page dédiée à Google Agenda. Blocs repliables sur Obsidian < 1.13.
+  - Réglages déclaratifs avec **barre de recherche** pour retrouver un réglage instantanément, sous-pages comprises.
+  - Boutique de récompenses gérée directement dans la section Gamification.
   - Navigation 100% accessible au clavier (`Tab`, `Entrée`, `Espace`).
   - Intégration officielle de l'API `SecretStorage` d'Obsidian pour sécuriser les clés d'API.
 
