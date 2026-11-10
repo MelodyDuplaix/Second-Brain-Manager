@@ -1,6 +1,6 @@
 import { Setting, setIcon, Notice, normalizePath, debounce } from 'obsidian';
 import { BaseSettingsPage } from '../baseSettingsPage';
-import { SettingGroup } from '../settingGroup';
+import { SettingGroup, SectionOptions } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
 import { FileSuggest } from '../../suggesters/fileSuggest';
 import { SecretsManagementModal, SUPPORTED_PROVIDERS } from '../../modals/secretsManagementModal';
@@ -23,7 +23,7 @@ export class MainPage extends BaseSettingsPage {
 	private renderCalendarEntriesSettings(): void {
 		const s = this.plugin.settings;
 		const group = new SettingGroup(this.containerEl).setHeading(
-			'Calendrier & entrées de la note quotidienne',
+			'Grille horaire & entrées de la note quotidienne',
 			'calendar-clock',
 			'Grille horaire des vues Jour et Semaine, et lignes horodatées des notes quotidiennes (ex. « - 11:30 - 12:00 Dentiste ») affichées et ajoutées depuis le calendrier'
 		);
@@ -305,12 +305,99 @@ export class MainPage extends BaseSettingsPage {
 	render(): void {
 		this.containerEl.empty();
 		this.containerEl.addClass('sbm-main-settings-page');
+		const s = this.plugin.settings;
 
+		this.section({
+			id: 'general',
+			name: 'Général',
+			icon: 'settings-2',
+			desc: 'Apparence, vues ouvertes au démarrage, dossiers et modèles de notes.',
+			displayValue: () => ({ comfortable: 'Confortable', compact: 'Compacte', dense: 'Très compacte' } as Record<string, string>)[s.uiDensity || 'compact'] || ''
+		}, () => {
+			this.renderAppearanceSettings();
+			this.renderStartupSettings();
+			this.renderVaultSettings();
+		});
+
+		this.section({
+			id: 'tasks',
+			name: 'Tâches',
+			icon: 'list-checks',
+			desc: 'Syntaxe des métadonnées, statuts, mise en pause, matrice d’Eisenhower et exclusions.',
+			displayValue: () => s.matrixEnabled === false ? 'Sans quadrants' : 'Avec quadrants'
+		}, () => {
+			this.renderTaskSyntaxSettings();
+			this.renderStatusSettings();
+			this.renderPauseSettings();
+			this.renderMatrixSettings();
+			this.renderExclusionSettings();
+		});
+
+		this.section({
+			id: 'calendar',
+			name: 'Calendrier',
+			icon: 'calendar-days',
+			desc: 'Grille horaire, entrées des notes quotidiennes, couleurs et Google Agenda.',
+			displayValue: () => s.googleRefreshToken ? 'Google connecté' : ''
+		}, () => {
+			this.renderCalendarEntriesSettings();
+			this.section({
+				id: 'google',
+				name: 'Google Agenda',
+				icon: 'calendar',
+				desc: 'Connexion OAuth, agendas lus, rôle et couleur de chaque agenda.',
+				displayValue: () => s.googleRefreshToken ? 'Connecté' : 'Non connecté'
+			}, () => this.renderGoogleSettings());
+		});
+
+		this.section({
+			id: 'ai',
+			name: 'Intelligence artificielle',
+			icon: 'bot',
+			desc: 'Fournisseur et modèle, prompts de l’éditeur, confidentialité et règles de priorité du briefing.',
+			displayValue: () => s.llmModel || ''
+		}, () => {
+			this.renderAiSettings();
+			this.renderAiPrivacySettings();
+			this.renderAiPrioritySettings();
+		});
+
+		this.section({
+			id: 'voice',
+			name: 'Dictée vocale',
+			icon: 'mic',
+			desc: 'Moteur de reconnaissance vocale, modèle Whisper et langue.',
+			displayValue: () => s.sttEngine === 'web-speech' ? 'Navigateur' : 'Whisper local'
+		}, () => this.renderVoiceSettings());
+
+		this.section({
+			id: 'gamification',
+			name: 'Gamification & boutique',
+			icon: 'gift',
+			desc: 'Énergie de base et boutique de récompenses.',
+		}, () => this.renderGamificationSettings());
+	}
+
+	/** Section : sous-page native (Obsidian ≥ 1.13) ou bloc repliable (affichage classique). */
+	private section(opts: SectionOptions, build: () => void): void {
+		const previous = this.containerEl;
+		SettingGroup.section(this.containerEl, opts, (contentEl) => {
+			this.containerEl = contentEl;
+			try {
+				build();
+			} finally {
+				this.containerEl = previous;
+			}
+		});
+	}
+
+
+	private renderAiSettings(): void {
 		// =========================================================================
 		// 1. Intelligence Artificielle & Fournisseurs
 		// =========================================================================
 		const aiGroup = new SettingGroup(this.containerEl).setHeading(
-			'Intelligence Artificielle & Fournisseurs',
+			'Fournisseur & modèle',
 			'bot',
 			'Configuration des clés d\'API, sélection du modèle actif et instructions système'
 		);
@@ -511,7 +598,9 @@ export class MainPage extends BaseSettingsPage {
 			icon: 'sparkles',
 			open: () => this.openPage('prompts-page')
 		});
+	}
 
+	private renderAppearanceSettings(): void {
 		// =========================================================================
 		// Apparence : densité de l'interface
 		// =========================================================================
@@ -538,7 +627,9 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+	}
 
+	private renderStartupSettings(): void {
 		// =========================================================================
 		// Démarrage : vues ouvertes automatiquement dans la barre latérale
 		// =========================================================================
@@ -584,12 +675,14 @@ export class MainPage extends BaseSettingsPage {
 					});
 				});
 		});
+	}
 
+	private renderVaultSettings(): void {
 		// =========================================================================
 		// 2. Structure du Coffre & Modèles de Notes (Templates)
 		// =========================================================================
 		const foldersGroup = new SettingGroup(this.containerEl).setHeading(
-			'Structure du Coffre & Modèles (Templates)',
+			'Dossiers & modèles de notes',
 			'folder',
 			'Dossiers de stockage, répertoire des modèles/templates et gestion du journal quotidien'
 		);
@@ -671,12 +764,14 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+	}
 
+	private renderTaskSyntaxSettings(): void {
 		// =========================================================================
 		// 3. Gestion des Tâches & Syntaxes de Métadonnées
 		// =========================================================================
 		const syntaxGroup = new SettingGroup(this.containerEl).setHeading(
-			'Gestion des Tâches & Syntaxes de Métadonnées',
+			'Syntaxe des métadonnées',
 			'check-square',
 			'Format des échéances, des priorités, des niveaux d\'énergie et des récompenses'
 		);
@@ -794,12 +889,14 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+	}
 
+	private renderPauseSettings(): void {
 		// =========================================================================
 		// 4. Mise en Pause des Tâches (On Hold)
 		// =========================================================================
 		const pauseGroup = new SettingGroup(this.containerEl).setHeading(
-			'Mise en Pause des Tâches (On Hold)',
+			'Mise en pause',
 			'pause-circle',
 			'Mise en veille temporaire des tâches et filtrage lors des briefings'
 		);
@@ -856,12 +953,14 @@ export class MainPage extends BaseSettingsPage {
 					});
 			});
 		}
+	}
 
+	private renderMatrixSettings(): void {
 		// =========================================================================
 		// 5. Matrice Eisenhower
 		// =========================================================================
 		const matrixGroup = new SettingGroup(this.containerEl).setHeading(
-			'Matrice Eisenhower',
+			'Matrice d’Eisenhower',
 			'layout-grid',
 			'Organisation et classification des tâches selon l\'urgence et l\'importance'
 		);
@@ -900,7 +999,9 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+	}
 
+	private renderStatusSettings(): void {
 		// =========================================================================
 		// Statuts de tâche du plugin Tasks
 		// =========================================================================
@@ -955,7 +1056,9 @@ export class MainPage extends BaseSettingsPage {
 				row.createSpan({ cls: 'sbm-status-next', text: `→ [${st.nextStatusSymbol}]` });
 			});
 		});
+	}
 
+	private renderExclusionSettings(): void {
 		// =========================================================================
 		// Exclusion de tâches (toutes les requêtes du plugin)
 		// =========================================================================
@@ -1059,12 +1162,14 @@ export class MainPage extends BaseSettingsPage {
 				});
 			setting.descEl.appendChild(resultEl);
 		});
+	}
 
+	private renderAiPrivacySettings(): void {
 		// =========================================================================
 		// 6. Confidentialité & Filtres d'Exclusion IA
 		// =========================================================================
 		const filtersGroup = new SettingGroup(this.containerEl).setHeading(
-			'Confidentialité & Filtres d\'Exclusion IA',
+			'Confidentialité de l’IA',
 			'shield',
 			'Notes, dossiers, tags et métadonnées protégés ne devant jamais être envoyés à l\'IA'
 		);
@@ -1132,12 +1237,14 @@ export class MainPage extends BaseSettingsPage {
 					textarea.inputEl.rows = 2;
 				});
 		});
+	}
 
+	private renderAiPrioritySettings(): void {
 		// =========================================================================
 		// 7. Règles de Priorité & Valorisation IA (Briefing)
 		// =========================================================================
 		const priorityGroup = new SettingGroup(this.containerEl).setHeading(
-			'Règles de Priorité & Valorisation IA (Briefing)',
+			'Priorités du briefing',
 			'sparkles',
 			'Tags et propriétés frontmatter accordant une priorité maximale lors du briefing matinal'
 		);
@@ -1173,12 +1280,14 @@ export class MainPage extends BaseSettingsPage {
 					textarea.inputEl.rows = 2;
 				});
 		});
+	}
 
+	private renderVoiceSettings(): void {
 		// =========================================================================
 		// 8. Reconnaissance Vocale & Dictée (Voice-to-Text)
 		// =========================================================================
 		const sttGroup = new SettingGroup(this.containerEl).setHeading(
-			'Reconnaissance Vocale & Dictée (Voice-to-Text)',
+			'Reconnaissance vocale',
 			'mic',
 			'Transcription vocale locale Whisper WebAssembly ou reconnaissance système'
 		);
@@ -1249,14 +1358,14 @@ export class MainPage extends BaseSettingsPage {
 						});
 				});
 		});
+	}
 
-		this.renderCalendarEntriesSettings();
-
+	private renderGoogleSettings(): void {
 		// =========================================================================
 		// 9. Google Calendar & Synchronisation Agendas
 		// =========================================================================
 		const calGroup = new SettingGroup(this.containerEl).setHeading(
-			'Google Calendar & Synchronisation Agendas',
+			'Connexion',
 			'calendar',
 			'Connexion OAuth, synchronisation des calendriers et distinction des rôles'
 		);
@@ -1449,7 +1558,9 @@ export class MainPage extends BaseSettingsPage {
 					});
 			});
 		}
+	}
 
+	private renderGamificationSettings(): void {
 		// =========================================================================
 		// 10. Gamification & Boutique de Récompenses
 		// =========================================================================

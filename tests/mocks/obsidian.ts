@@ -93,9 +93,13 @@ export class FuzzySuggestModal<T = unknown> extends Modal {
 }
 
 export class Setting {
+	nameEl: any = { textContent: '' };
+	descEl: any = { textContent: '' };
+	controlEl: any = { querySelectorAll: () => [] };
+	settingEl: any = createMockElement();
 	constructor(public containerEl?: HTMLElement) {}
-	setName() { return this; }
-	setDesc() { return this; }
+	setName(name?: string) { this.nameEl.textContent = name ?? ''; return this; }
+	setDesc(desc?: string) { this.descEl.textContent = desc ?? ''; return this; }
 	setHeading() { return this; }
 	addText() { return this; }
 	addTextArea() { return this; }

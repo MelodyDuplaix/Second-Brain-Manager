@@ -9492,3 +9492,86 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	min-height: 64px;
 	font-family: var(--font-monospace);
 }
+
+/* ==========================================================================
+   Réglages : sections repliables (affichage classique, Obsidian < 1.13)
+   Sur Obsidian ≥ 1.13, chaque section est une sous-page native.
+   ========================================================================== */
+.sbm-settings-section {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l, 10px);
+	margin-bottom: calc(10px * var(--sbm-density, 1));
+	background: var(--background-primary);
+}
+
+.sbm-settings-section-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: calc(12px * var(--sbm-density, 1)) 14px;
+	cursor: pointer;
+	border-radius: var(--radius-l, 10px);
+	outline: none;
+}
+
+.sbm-settings-section-header:hover,
+.sbm-settings-section-header:focus-visible {
+	background: var(--background-modifier-hover);
+}
+
+.sbm-settings-section-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	flex-shrink: 0;
+	border-radius: 8px;
+	color: var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.sbm-settings-section-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.sbm-settings-section-name {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.sbm-settings-section-desc {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.sbm-settings-section-value {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+.sbm-settings-section-chevron {
+	display: flex;
+	color: var(--text-faint);
+	transition: transform 0.15s ease;
+}
+
+.sbm-settings-section.is-open .sbm-settings-section-chevron {
+	transform: rotate(90deg);
+}
+
+.sbm-settings-section-content {
+	display: none;
+	padding: 4px 14px 2px;
+}
+
+.sbm-settings-section.is-open .sbm-settings-section-content {
+	display: block;
+}
+
+.sbm-settings-section-content .sbm-setting-group {
+	margin-bottom: calc(14px * var(--sbm-density, 1));
+}
+

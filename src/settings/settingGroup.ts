@@ -20,6 +20,21 @@ interface CollectedGroup {
 	afterRenderDone: boolean;
 }
 
+/** Section de réglages : sous-page native (Obsidian ≥ 1.13) ou bloc repliable (affichage classique). */
+export interface SectionOptions {
+	id: string;
+	name: string;
+	desc: string;
+	icon: string;
+	/** Valeur courante affichée sur l'entrée de la sous-page (Obsidian ≥ 1.13.1) */
+	displayValue?: () => string;
+	status?: () => 'warning' | null;
+}
+
+type CollectedEntry =
+	| { kind: 'group'; group: CollectedGroup }
+	| { kind: 'page'; opts: SectionOptions; entries: CollectedEntry[] };
+
 /**
  * Groupe de réglages à double mode :
  * - affichage classique : dessine directement les réglages dans le conteneur ;
@@ -28,7 +43,10 @@ interface CollectedGroup {
  *   le même code impératif, exécuté par Obsidian au moment de l'affichage.
  */
 export class SettingGroup {
-	private static collector: CollectedGroup[] | null = null;
+	/** Pile des sections en cours de collecte (la dernière reçoit les nouveaux groupes) */
+	private static collector: CollectedEntry[][] | null = null;
+	/** Sections ouvertes dans l'affichage classique (gardées d'un rendu à l'autre) */
+	private static openSections = new Set<string>();
 	private static probing = false;
 	private static pageFactory: SubPageFactory | null = null;
 
@@ -41,8 +59,8 @@ export class SettingGroup {
 	 * Utilisé par `getSettingDefinitions()` de l'onglet de réglages.
 	 */
 	public static collect(build: () => void, pageFactory: SubPageFactory): SettingDefinitionItem[] {
-		const groups: CollectedGroup[] = [];
-		SettingGroup.collector = groups;
+		const root: CollectedEntry[] = [];
+		SettingGroup.collector = [root];
 		SettingGroup.pageFactory = pageFactory;
 		try {
 			build();
@@ -50,9 +68,98 @@ export class SettingGroup {
 			SettingGroup.collector = null;
 			SettingGroup.pageFactory = null;
 		}
-		return groups
-			.filter(g => g.items.length > 0)
-			.map(g => ({ type: 'group' as const, heading: g.heading || undefined, cls: 'sbm-native-group', items: g.items }));
+		return SettingGroup.toDefinitions(root);
+	}
+
+	/**
+	 * Regroupe des groupes de réglages dans une section. En collecte, la section devient une
+	 * sous-page native (navigation, retour, recherche) ; sinon, un bloc repliable.
+	 * `build` reçoit le conteneur dans lequel créer les groupes de la section.
+	 */
+	public static section(containerEl: HTMLElement, opts: SectionOptions, build: (contentEl: HTMLElement) => void): void {
+		const stack = SettingGroup.collector;
+		if (stack) {
+			const entries: CollectedEntry[] = [];
+			stack[stack.length - 1].push({ kind: 'page', opts, entries });
+			stack.push(entries);
+			try {
+				build(containerEl);
+			} finally {
+				stack.pop();
+			}
+			return;
+		}
+
+		const sectionEl = containerEl.createDiv({ cls: 'sbm-settings-section' });
+		const headerEl = sectionEl.createDiv({ cls: 'sbm-settings-section-header' });
+		headerEl.setAttribute('role', 'button');
+		headerEl.setAttribute('tabindex', '0');
+		const iconEl = headerEl.createDiv({ cls: 'sbm-settings-section-icon' });
+		setIcon(iconEl, opts.icon);
+		const textEl = headerEl.createDiv({ cls: 'sbm-settings-section-text' });
+		textEl.createDiv({ cls: 'sbm-settings-section-name', text: opts.name });
+		textEl.createDiv({ cls: 'sbm-settings-section-desc', text: opts.desc });
+		const value = opts.displayValue?.();
+		if (value) headerEl.createDiv({ cls: 'sbm-settings-section-value', text: value });
+		const chevronEl = headerEl.createDiv({ cls: 'sbm-settings-section-chevron' });
+		setIcon(chevronEl, 'chevron-right');
+		const contentEl = sectionEl.createDiv({ cls: 'sbm-settings-section-content' });
+
+		let built = false;
+		const apply = (open: boolean) => {
+			sectionEl.toggleClass('is-open', open);
+			headerEl.setAttribute('aria-expanded', String(open));
+			if (open && !built) {
+				built = true;
+				build(contentEl);
+			}
+		};
+		const toggle = () => {
+			const open = !sectionEl.hasClass('is-open');
+			if (open) SettingGroup.openSections.add(opts.id);
+			else SettingGroup.openSections.delete(opts.id);
+			apply(open);
+		};
+		headerEl.addEventListener('click', toggle);
+		headerEl.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				toggle();
+			}
+		});
+		apply(SettingGroup.openSections.has(opts.id));
+	}
+
+	/** Convertit les entrées collectées en définitions déclaratives (pages imbriquées comprises). */
+	private static toDefinitions(entries: CollectedEntry[]): SettingDefinitionItem[] {
+		const out: SettingDefinitionItem[] = [];
+		let pageRun: SettingGroupItem[] | null = null;
+		for (const entry of entries) {
+			if (entry.kind === 'page') {
+				const { opts } = entry;
+				const page = {
+					type: 'page' as const,
+					id: opts.id,
+					name: opts.name,
+					desc: opts.desc,
+					displayValue: opts.displayValue,
+					status: opts.status,
+					items: SettingGroup.toDefinitions(entry.entries)
+				};
+				// Les entrées de sous-pages consécutives forment un même bloc
+				if (!pageRun) {
+					pageRun = [];
+					out.push({ type: 'group', cls: 'sbm-native-group sbm-native-sections', items: pageRun });
+				}
+				pageRun.push(page as SettingGroupItem);
+				continue;
+			}
+			pageRun = null;
+			const g = entry.group;
+			if (g.items.length === 0) continue;
+			out.push({ type: 'group', heading: g.heading || undefined, cls: 'sbm-native-group', items: g.items });
+		}
+		return out;
 	}
 
 	/** Vrai pendant l'extraction du nom et de la description d'un réglage (rendu factice). */
@@ -64,7 +171,8 @@ export class SettingGroup {
 		this.containerEl = containerEl;
 		if (SettingGroup.collector) {
 			this.collected = { heading: '', items: [], afterRender: [], afterRenderDone: false };
-			SettingGroup.collector.push(this.collected);
+			const stack = SettingGroup.collector;
+			stack[stack.length - 1].push({ kind: 'group', group: this.collected });
 			this.groupEl = createDiv();
 		} else {
 			this.groupEl = this.containerEl.createDiv({ cls: `sbm-setting-group ${customClass || ''}`.trim() });
