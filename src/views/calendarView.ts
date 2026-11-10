@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, Notice, setIcon, Modal, App } from 'obsidian';
 import { GoogleCalendarEvent, CalendarViewType } from '../models/googleCalendar';
 import { GoogleCalendarService } from '../services/googleCalendarService';
+import { addMinutesToClock, resolveEventEnd } from '../services/calendarEventsService';
 import SecondBrainPlugin from '../main';
 
 export const VIEW_TYPE_CALENDAR = 'sbm-calendar-view';
@@ -676,27 +677,34 @@ export class CalendarEventModal extends Modal {
 		this.presetEndTime = presetEndTime;
 	}
 
-	/** Fin de l'événement : durée d'origine conservée en modification, plage choisie dans la grille en création. */
-	private computeEnd(startDate: string, startTime: string): { endDate?: string; endTime?: string } {
-		const pad = (n: number) => String(n).padStart(2, '0');
-		const toParts = (d: Date) => ({
-			endDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-			endTime: `${pad(d.getHours())}:${pad(d.getMinutes())}`
-		});
-		const start = new Date(`${startDate}T${startTime}:00`);
-		if (isNaN(start.getTime())) return {};
+	/** Durée proposée par défaut pour un nouvel événement (minutes). */
+	private static readonly DEFAULT_DURATION = 60;
+
+	/**
+	 * Heure de fin proposée à l'ouverture : celle de l'événement en modification, la plage choisie
+	 * dans la grille en création, sinon une heure après le début.
+	 */
+	private defaultEndTime(startTime: string): string {
 		const ev = this.existingEvent;
-		if (ev?.start?.dateTime && ev.end?.dateTime) {
-			const duration = new Date(ev.end.dateTime).getTime() - new Date(ev.start.dateTime).getTime();
-			if (duration > 0) return toParts(new Date(start.getTime() + duration));
+		if (ev?.end?.dateTime) {
+			const end = new Date(ev.end.dateTime);
+			if (!isNaN(end.getTime())) {
+				return `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+			}
 		}
-		if (!ev && this.presetTime && this.presetEndTime && startTime === this.presetTime) {
-			const [h, m] = this.presetEndTime.split(':').map(Number);
-			const [sh, sm] = this.presetTime.split(':').map(Number);
-			const minutes = h * 60 + m - (sh * 60 + sm);
-			if (minutes > 0) return toParts(new Date(start.getTime() + minutes * 60000));
-		}
-		return {};
+		if (!ev && this.presetEndTime) return this.presetEndTime;
+		return addMinutesToClock(startTime, CalendarEventModal.DEFAULT_DURATION);
+	}
+
+	/** Écart en minutes entre deux heures HH:MM (négatif si la seconde précède la première). */
+	private static clockDiff(from: string, to: string): number | null {
+		const parse = (v: string) => {
+			const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+			return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+		};
+		const a = parse(from);
+		const b = parse(to);
+		return a === null || b === null ? null : b - a;
 	}
 
 	onOpen(): void {
@@ -739,10 +747,46 @@ export class CalendarEventModal extends Modal {
 		const startTimeGroup = startRow.createDiv({ cls: 'sbm-form-group' });
 		startTimeGroup.createEl('label', { text: 'Heure de début' });
 		this.startTimeInput = startTimeGroup.createEl('input', { type: 'time', value: defaultStartTime });
-		if (isAllDayInit) startTimeGroup.style.display = 'none';
+
+		const endTimeGroup = startRow.createDiv({ cls: 'sbm-form-group' });
+		endTimeGroup.createEl('label', { text: 'Heure de fin' });
+		this.endTimeInput = endTimeGroup.createEl('input', { type: 'time', value: this.defaultEndTime(defaultStartTime) });
+		const endHint = endTimeGroup.createDiv({ cls: 'sbm-form-hint' });
+
+		/** Prévient quand la fin passe au lendemain (ex. 23:00 → 00:30). */
+		const refreshEndHint = () => {
+			const diff = CalendarEventModal.clockDiff(this.startTimeInput.value, this.endTimeInput.value);
+			endHint.toggleClass('is-visible', diff !== null && diff <= 0);
+			endHint.setText(diff !== null && diff <= 0 ? 'Se termine le lendemain' : '');
+		};
+		refreshEndHint();
+
+		// Heure de fin pas encore touchée : elle suit le début pour garder la même durée
+		let endTouched = false;
+		this.endTimeInput.addEventListener('input', () => {
+			endTouched = true;
+			refreshEndHint();
+		});
+		let previousStart = this.startTimeInput.value;
+		this.startTimeInput.addEventListener('input', () => {
+			if (!endTouched) {
+				const duration = CalendarEventModal.clockDiff(previousStart, this.endTimeInput.value);
+				if (duration !== null && duration > 0) {
+					this.endTimeInput.value = addMinutesToClock(this.startTimeInput.value, duration);
+				}
+			}
+			previousStart = this.startTimeInput.value;
+			refreshEndHint();
+		});
+
+		const toggleTimeFields = (allDay: boolean) => {
+			startTimeGroup.style.display = allDay ? 'none' : 'block';
+			endTimeGroup.style.display = allDay ? 'none' : 'block';
+		};
+		toggleTimeFields(isAllDayInit);
 
 		this.allDayToggle.addEventListener('change', () => {
-			startTimeGroup.style.display = this.allDayToggle.checked ? 'none' : 'block';
+			toggleTimeFields(this.allDayToggle.checked);
 		});
 
 		// Lieu
@@ -778,7 +822,17 @@ export class CalendarEventModal extends Modal {
 				const isAllDay = this.allDayToggle.checked;
 				const startDate = this.startDateInput.value;
 				const startTime = isAllDay ? undefined : this.startTimeInput.value;
-				const endParts = startTime ? this.computeEnd(startDate, startTime) : {};
+				let endParts: { endDate?: string; endTime?: string } = {};
+				if (startTime) {
+					const resolved = resolveEventEnd(startDate, startTime, this.endTimeInput.value);
+					if (!resolved) {
+						saveBtn.disabled = false;
+						saveBtn.setText(isEdit ? 'Enregistrer' : 'Créer');
+						new Notice('Heure de début ou de fin invalide.');
+						return;
+					}
+					endParts = resolved;
+				}
 
 				if (this.existingEvent) {
 					await GoogleCalendarService.updateEvent(this.plugin.settings, this.existingEvent.id, {

@@ -4673,6 +4673,17 @@ textarea.sbm-chat-textarea:focus {
 	color: var(--text-normal);
 }
 
+/* Indication sous un champ (ex. « Se termine le lendemain ») : n'occupe la place que si besoin */
+.sbm-form-hint {
+	display: none;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.sbm-form-hint.is-visible {
+	display: block;
+}
+
 .sbm-form-group input,
 .sbm-form-group textarea {
 	width: 100%;

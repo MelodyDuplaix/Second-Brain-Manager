@@ -38,6 +38,42 @@ export function toLocalIsoWithOffset(d: Date): string {
 	return `${CalendarDate.toISO(d)}T${time}${sign}${hh}:${mm}`;
 }
 
+/**
+ * Fin d'un événement à partir des heures saisies. Une fin antérieure ou égale au début passe au
+ * lendemain (ex. 23:00 → 00:30), ce qui évite une plage négative refusée par Google.
+ */
+export function resolveEventEnd(
+	startDate: string,
+	startTime: string,
+	endTime: string
+): { endDate: string; endTime: string } | null {
+	const toMinutes = (value: string): number | null => {
+		const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+		if (!m) return null;
+		const h = Number(m[1]);
+		const min = Number(m[2]);
+		if (h > 23 || min > 59) return null;
+		return h * 60 + min;
+	};
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return null;
+	const start = toMinutes(startTime);
+	const end = toMinutes(endTime);
+	if (start === null || end === null) return null;
+	const nextDay = end <= start;
+	return {
+		endDate: nextDay ? CalendarDate.addDays(startDate, 1) : startDate,
+		endTime: `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`
+	};
+}
+
+/** Heure (HH:MM) obtenue en ajoutant des minutes à une heure, en restant dans la journée. */
+export function addMinutesToClock(time: string, minutes: number): string {
+	const m = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+	if (!m) return time;
+	const total = Math.min(23 * 60 + 59, Number(m[1]) * 60 + Number(m[2]) + minutes);
+	return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 /** Premier et dernier jour (inclus) couverts par l'événement, en dates locales. */
 export function eventDaySpan(ev: GoogleCalendarEvent): { first: string; last: string } | null {
 	if (ev.start?.date && !ev.start.dateTime) {
