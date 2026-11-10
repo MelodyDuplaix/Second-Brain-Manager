@@ -712,6 +712,13 @@ export class DailyEntryIndex {
 		return this.cache.get(path)?.entries || [];
 	}
 
+	/** Toutes les entrées chargées, tous jours confondus (ex. pour recenser les tags utilisés). */
+	public allEntries(): DailyEntry[] {
+		const out: DailyEntry[] = [];
+		this.cache.forEach(c => out.push(...c.entries));
+		return out;
+	}
+
 	/** Clés (format de l'index des tâches) des entrées qui sont des cases à cocher. */
 	public taskKeys(): Set<string> {
 		const keys = new Set<string>();

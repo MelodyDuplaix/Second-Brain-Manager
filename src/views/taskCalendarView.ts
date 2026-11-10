@@ -26,8 +26,11 @@ import {
 	activeTaskGroups,
 	clearFilterChip,
 	describeFilter,
+	extractTags,
 	isCalendarVisible,
+	matchesDescriptionFilter,
 	normalizeFilter,
+	normalizeTagList,
 	sameFilter,
 	taskGroupKey
 } from '../services/calendarFilters';
@@ -133,6 +136,12 @@ interface TaskCalendarState {
 	hiddenRoles: CalendarRole[];
 	/** Catégories de tâches gardées (quadrants ou priorités) ; vide : toutes */
 	taskGroups: string[];
+	/** Texte cherché dans la description (filtre enregistrable dans un préréglage) */
+	searchText: string;
+	/** Tags exigés (au moins un) ; vide : aucun filtre */
+	tags: string[];
+	/** Tags exclus */
+	excludedTags: string[];
 	/** Lignes de titre dans la vue mois : 1, 2 ou 0 (en entier) */
 	titleLines: number;
 	/** Affichage en barre latérale étroite : liste (agenda) ou grille horaire du jour */
@@ -217,6 +226,9 @@ export class TaskCalendarView extends ItemView {
 		showTasks: true,
 		hiddenRoles: [],
 		taskGroups: [],
+		searchText: '',
+		tags: [],
+		excludedTags: [],
 		titleLines: 2,
 		compactMode: 'agenda',
 		showEntries: true,
@@ -341,6 +353,9 @@ export class TaskCalendarView extends ItemView {
 		if (typeof s.showTasks === 'boolean') this.state.showTasks = f.showTasks;
 		if (Array.isArray(s.hiddenRoles)) this.state.hiddenRoles = f.hiddenRoles;
 		if (Array.isArray(s.taskGroups)) this.state.taskGroups = f.taskGroups;
+		if (typeof s.searchText === 'string') this.state.searchText = f.searchText;
+		if (Array.isArray(s.tags)) this.state.tags = f.tags;
+		if (Array.isArray(s.excludedTags)) this.state.excludedTags = f.excludedTags;
 		if (s.titleLines === 0 || s.titleLines === 1 || s.titleLines === 2) this.state.titleLines = s.titleLines;
 		// Première restauration de la vue : le préréglage d'ouverture remplace les derniers filtres
 		if (!this.stateRestored) {
@@ -577,6 +592,7 @@ export class TaskCalendarView extends ItemView {
 		googleReady: () => this.googleReady(),
 		entriesAvailable: () => this.plugin.settings.dailyEntriesEnabled !== false,
 		matrixEnabled: () => this.plugin.settings.matrixEnabled !== false,
+		knownTags: () => this.knownTags(),
 		presets: () => this.plugin.settings.calendarFilterPresets || [],
 		startupPresetId: () => this.plugin.settings.calendarStartupPreset || '',
 		setStartupPresetId: async (id) => {
@@ -611,7 +627,10 @@ export class TaskCalendarView extends ItemView {
 			showDone: s.showDone,
 			hiddenRoles: [...s.hiddenRoles],
 			hiddenCalendars: [...s.hiddenCalendars],
-			taskGroups: [...s.taskGroups]
+			taskGroups: [...s.taskGroups],
+			searchText: s.searchText || '',
+			tags: [...(s.tags || [])],
+			excludedTags: [...(s.excludedTags || [])]
 		};
 	}
 
@@ -625,9 +644,27 @@ export class TaskCalendarView extends ItemView {
 		s.hiddenRoles = f.hiddenRoles;
 		s.hiddenCalendars = f.hiddenCalendars;
 		s.taskGroups = f.taskGroups;
+		s.searchText = f.searchText;
+		s.tags = f.tags;
+		s.excludedTags = f.excludedTags;
 		this.undatedLimit = UNDATED_PAGE;
 		this.saveState();
 		this.renderPreservingScroll();
+	}
+
+	/** Tags présents dans les tâches et les entrées, les plus utilisés d'abord (proposés dans les filtres). */
+	private knownTags(): string[] {
+		const counts = new Map<string, number>();
+		const add = (tags: string[]) => {
+			for (const tag of normalizeTagList(tags)) counts.set(tag, (counts.get(tag) || 0) + 1);
+		};
+		for (const task of this.index.getAll()) add(task.domainTags || []);
+		if (this.entriesEnabled()) {
+			for (const entry of this.entries.allEntries()) add(extractTags(entry.text));
+		}
+		return [...counts.entries()]
+			.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+			.map(([tag]) => tag);
 	}
 
 	private filterContext() {
@@ -698,6 +735,11 @@ export class TaskCalendarView extends ItemView {
 		return this.events.filter(ev => {
 			if (!isCalendarVisible(filter, ev.calendarId, roles.get(ev.calendarId))) return false;
 			if (known.size && !known.has(ev.calendarId)) return false;
+			// Les événements Google n'ont pas de tags : ceux écrits dans le titre ou la note comptent
+			if (!matchesDescriptionFilter(filter, {
+				texts: [ev.summary, ev.location, ev.description],
+				tags: extractTags(ev.summary, ev.description)
+			})) return false;
 			if (!q) return true;
 			return (ev.summary || '').toLowerCase().includes(q)
 				|| (ev.location || '').toLowerCase().includes(q)
@@ -922,11 +964,13 @@ export class TaskCalendarView extends ItemView {
 	private dayEntries(day: string): DailyEntry[] {
 		if (!this.entriesEnabled()) return [];
 		const q = this.query.trim().toLowerCase();
+		const filter = this.getFilter();
 		return this.entries.entriesFor(day).filter(e => {
 			if (!this.state.showDone && e.statusChar !== undefined) {
 				const type = TaskStatusRegistry.typeOf(e.statusChar);
 				if (type === 'DONE' || type === 'CANCELLED') return false;
 			}
+			if (!matchesDescriptionFilter(filter, { texts: [e.text], tags: extractTags(e.text) })) return false;
 			return !q || e.text.toLowerCase().includes(q);
 		});
 	}
@@ -1160,10 +1204,12 @@ export class TaskCalendarView extends ItemView {
 		const q = this.query.trim().toLowerCase();
 		const matrix = this.plugin.settings.matrixEnabled !== false;
 		const groups = activeTaskGroups(this.getFilter(), matrix);
+		const filter = this.getFilter();
 		return this.index.getAll().filter(t => {
 			if (t.status === 'cancelled' && !this.state.showDone) return false;
 			if (groups && !groups.has(taskGroupKey(t.priority, this.quadrantOf(t), matrix))) return false;
 			if (!this.state.showDone && !isTaskOpen(t)) return false;
+			if (!matchesDescriptionFilter(filter, { texts: [t.title, t.cleanText], tags: t.domainTags })) return false;
 			if (!q) return true;
 			return t.title.toLowerCase().includes(q)
 				|| t.filePath.toLowerCase().includes(q)

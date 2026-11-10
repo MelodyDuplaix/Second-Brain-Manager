@@ -1,4 +1,4 @@
-import { Menu, Notice, setIcon } from 'obsidian';
+import { Menu, Notice, debounce, setIcon } from 'obsidian';
 import { CalendarLegendEntry } from '../services/calendarEventsService';
 import {
 	CalendarFilter,
@@ -6,6 +6,9 @@ import {
 	DEFAULT_CALENDAR_FILTER,
 	GOOGLE_ONLY_PRESETS,
 	ROLE_LABELS,
+	copyFilter,
+	normalizeTag,
+	normalizeTagList,
 	isPresetModified,
 	restoreDefaultPreset,
 	activeTaskGroups,
@@ -25,6 +28,8 @@ export interface FilterPopoverHost {
 	googleReady(): boolean;
 	entriesAvailable(): boolean;
 	matrixEnabled(): boolean;
+	/** Tags présents dans le calendrier, les plus utilisés d'abord (proposés dans les filtres) */
+	knownTags(): string[];
 	/** Tous les préréglages, par défaut compris (liste modifiable) */
 	presets(): CalendarFilterPreset[];
 	savePresets(presets: CalendarFilterPreset[]): Promise<void>;
@@ -45,6 +50,15 @@ export class CalendarFilterPopover {
 	/** Mode édition des préréglages : un clic ouvre le menu au lieu d'appliquer */
 	private editingPresets = false;
 	private cleanup: Array<() => void> = [];
+	/** Texte en cours de saisie, pas encore appliqué (null : rien en attente) */
+	private textDraft: string | null = null;
+	/** Tag en cours de saisie */
+	private tagDraft = '';
+	/** Champ à refocaliser après un redessin du panneau */
+	private focusField: 'text' | 'tags' | null = null;
+	private commitText: ((value: string) => void) | null = null;
+	/** Le texte s'applique peu après la frappe, pour ne pas filtrer à chaque lettre */
+	private debouncedText = debounce((value: string) => this.commitText?.(value), 300, false);
 
 	constructor(private host: FilterPopoverHost) {}
 
@@ -94,12 +108,23 @@ export class CalendarFilterPopover {
 	}
 
 	close(): void {
+		// Texte saisi mais pas encore appliqué : on l'applique plutôt que de le perdre
+		this.debouncedText.cancel();
+		if (this.textDraft !== null && this.commitText) {
+			const pending = this.textDraft;
+			this.textDraft = null;
+			this.commitText(pending);
+		}
 		this.cleanup.forEach(fn => fn());
 		this.cleanup = [];
 		this.el?.remove();
 		this.el = null;
 		this.naming = null;
 		this.editingPresets = false;
+		this.textDraft = null;
+		this.tagDraft = '';
+		this.focusField = null;
+		this.commitText = null;
 	}
 
 	/** Le calendrier a été redessiné : nouvelle ancre (bouton recréé) et contenu à jour. */
@@ -145,6 +170,7 @@ export class CalendarFilterPopover {
 
 		this.renderPresets(el, filter);
 		this.renderTypes(el, filter);
+		this.renderDescription(el, filter);
 		if (this.host.googleReady() && this.host.legend().length) this.renderCalendars(el, filter);
 		if (filter.showTasks) this.renderTaskGroups(el, filter);
 
@@ -345,6 +371,162 @@ export class CalendarFilterPopover {
 			input.focus();
 			input.select();
 		}, 0);
+	}
+
+	/**
+	 * Filtres de description : texte libre et tags. Le texte s'applique au fil de la saisie (court
+	 * délai) ; le champ garde le focus et le curseur malgré le redessin du panneau.
+	 */
+	private renderDescription(parent: HTMLElement, filter: CalendarFilter): void {
+		const sec = this.section(parent, 'Description', 'texte et tags');
+
+		const textRow = sec.createDiv({ cls: 'sbm-tcal-filter-search' });
+		setIcon(textRow.createSpan({ cls: 'sbm-tcal-filter-search-icon' }), 'search');
+		const text = textRow.createEl('input', { type: 'text', cls: 'sbm-tcal-filter-search-input' });
+		text.placeholder = 'Contient le texte…';
+		text.value = this.textDraft ?? filter.searchText ?? '';
+		text.title = 'Cherche dans le titre des tâches, le texte des entrées, le titre, le lieu et la note des événements';
+		const commitText = (value: string) => {
+			this.textDraft = null;
+			const current = this.host.getFilter();
+			if ((current.searchText || '') === value.trim()) return;
+			this.apply({ ...copyFilter(current), searchText: value.trim() });
+		};
+		text.addEventListener('input', () => {
+			this.textDraft = text.value;
+			this.focusField = 'text';
+			this.debouncedText(text.value);
+		});
+		text.addEventListener('blur', () => {
+			if (this.textDraft === null) return;
+			this.debouncedText.cancel();
+			commitText(text.value);
+		});
+		text.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				this.debouncedText.cancel();
+				commitText(text.value);
+			} else if (e.key === 'Escape' && (this.textDraft ?? filter.searchText)) {
+				// Échap vide le champ avant de fermer le panneau
+				e.preventDefault();
+				e.stopPropagation();
+				this.debouncedText.cancel();
+				commitText('');
+			}
+		});
+		if (text.value) {
+			const clear = textRow.createEl('button', { cls: 'sbm-tcal-filter-search-clear clickable-icon' });
+			setIcon(clear, 'x');
+			clear.title = 'Effacer le texte';
+			clear.addEventListener('click', () => {
+				this.debouncedText.cancel();
+				this.focusField = 'text';
+				commitText('');
+			});
+		}
+		this.commitText = commitText;
+
+		// Tags retenus et tags exclus, retirables d'un clic
+		const active = sec.createDiv({ cls: 'sbm-tcal-filter-chips' });
+		const setTags = (patch: Partial<Pick<CalendarFilter, 'tags' | 'excludedTags'>>) => {
+			this.apply({ ...copyFilter(this.host.getFilter()), ...patch });
+		};
+		const wanted = filter.tags || [];
+		const excluded = filter.excludedTags || [];
+		for (const tag of wanted) {
+			const chip = this.chip(active, `#${tag}`, {
+				active: true,
+				icon: 'tag',
+				title: 'Ne garder que les éléments portant ce tag — cliquer pour retirer le filtre',
+				onClick: () => setTags({ tags: wanted.filter(t => t !== tag) })
+			});
+			chip.addClass('is-tag');
+		}
+		for (const tag of excluded) {
+			const chip = this.chip(active, `#${tag}`, {
+				active: true,
+				icon: 'tag',
+				title: 'Tag exclu — cliquer pour retirer le filtre',
+				onClick: () => setTags({ excludedTags: excluded.filter(t => t !== tag) })
+			});
+			chip.addClass('is-tag');
+			chip.addClass('is-excluded');
+		}
+
+		const tagRow = sec.createDiv({ cls: 'sbm-tcal-filter-tagform' });
+		const tagInput = tagRow.createEl('input', { type: 'text', cls: 'sbm-tcal-filter-tag-input' });
+		tagInput.placeholder = '#tag… (-tag pour exclure)';
+		tagInput.value = this.tagDraft;
+		tagInput.title = 'Entrée ajoute le tag. Préfixer par « - » pour exclure. Un tag parent garde ses sous-tags.';
+		const addTags = (raw: string) => {
+			const include: string[] = [];
+			const exclude: string[] = [];
+			for (const piece of raw.split(/[\s,;]+/)) {
+				const negative = piece.startsWith('-') || piece.startsWith('!');
+				const tag = normalizeTag(negative ? piece.slice(1) : piece);
+				if (!tag) continue;
+				(negative ? exclude : include).push(tag);
+			}
+			if (!include.length && !exclude.length) return;
+			this.tagDraft = '';
+			this.focusField = 'tags';
+			setTags({
+				tags: normalizeTagList([...wanted.filter(t => !exclude.includes(t)), ...include]),
+				excludedTags: normalizeTagList([...excluded.filter(t => !include.includes(t)), ...exclude])
+			});
+		};
+		tagInput.addEventListener('input', () => {
+			this.tagDraft = tagInput.value;
+		});
+		tagInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				addTags(tagInput.value);
+			} else if (e.key === 'Escape' && tagInput.value) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.tagDraft = '';
+				this.focusField = 'tags';
+				this.render();
+			}
+		});
+
+		// Tags présents dans le calendrier : clic pour garder, Alt+clic (ou clic droit) pour exclure
+		const used = new Set([...wanted, ...excluded]);
+		const suggestions = this.host.knownTags().filter(t => !used.has(t)).slice(0, 12);
+		if (suggestions.length) {
+			const row = sec.createDiv({ cls: 'sbm-tcal-filter-chips is-suggestions' });
+			for (const tag of suggestions) {
+				const chip = this.chip(row, `#${tag}`, {
+					active: false,
+					icon: 'tag',
+					title: 'Clic : ne garder que ce tag · Alt+clic ou clic droit : exclure ce tag',
+					onClick: () => {}
+				});
+				chip.addClass('is-tag');
+				chip.addEventListener('click', (e) => {
+					this.focusField = null;
+					if (e.altKey) setTags({ excludedTags: normalizeTagList([...excluded, tag]) });
+					else setTags({ tags: normalizeTagList([...wanted, tag]) });
+				});
+				chip.addEventListener('contextmenu', (e) => {
+					e.preventDefault();
+					this.focusField = null;
+					setTags({ excludedTags: normalizeTagList([...excluded, tag]) });
+				});
+			}
+		}
+
+		// Focus rendu au champ en cours après le redessin du panneau
+		if (this.focusField === 'text') {
+			window.setTimeout(() => {
+				text.focus();
+				text.setSelectionRange(text.value.length, text.value.length);
+			}, 0);
+		} else if (this.focusField === 'tags') {
+			window.setTimeout(() => tagInput.focus(), 0);
+		}
 	}
 
 	private renderTypes(parent: HTMLElement, filter: CalendarFilter): void {

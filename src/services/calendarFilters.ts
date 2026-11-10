@@ -17,6 +17,12 @@ export interface CalendarFilter {
 	hiddenCalendars: string[];
 	/** Catégories de tâches gardées (quadrants ou priorités) ; vide : toutes */
 	taskGroups: string[];
+	/** Texte cherché dans la description (titre, texte de l'entrée, lieu, note) ; vide : aucun filtre */
+	searchText: string;
+	/** Tags exigés (au moins un) ; vide : aucun filtre. Un tag parent garde ses sous-tags. */
+	tags: string[];
+	/** Tags exclus : tout élément qui en porte un est masqué */
+	excludedTags: string[];
 }
 
 export interface CalendarFilterPreset {
@@ -34,7 +40,10 @@ export const DEFAULT_CALENDAR_FILTER: CalendarFilter = {
 	showDone: true,
 	hiddenRoles: [],
 	hiddenCalendars: [],
-	taskGroups: []
+	taskGroups: [],
+	searchText: '',
+	tags: [],
+	excludedTags: []
 };
 
 const all = (patch: Partial<CalendarFilter>): CalendarFilter => ({ ...DEFAULT_CALENDAR_FILTER, ...patch });
@@ -52,8 +61,20 @@ export const GOOGLE_ONLY_PRESETS = new Set(['builtin:mine', 'builtin:events']);
 
 const copyPreset = (p: CalendarFilterPreset): CalendarFilterPreset => ({
 	...p,
-	filter: { ...p.filter, hiddenRoles: [...p.filter.hiddenRoles], hiddenCalendars: [...p.filter.hiddenCalendars], taskGroups: [...p.filter.taskGroups] }
+	filter: copyFilter(p.filter)
 });
+
+/** Copie indépendante d'un filtre (aucun tableau partagé avec l'original). */
+export function copyFilter(filter: CalendarFilter): CalendarFilter {
+	return {
+		...filter,
+		hiddenRoles: [...filter.hiddenRoles],
+		hiddenCalendars: [...filter.hiddenCalendars],
+		taskGroups: [...filter.taskGroups],
+		tags: [...(filter.tags || [])],
+		excludedTags: [...(filter.excludedTags || [])]
+	};
+}
 
 /**
  * Liste modifiable des préréglages : les préréglages par défaut y sont copiés une seule fois
@@ -117,8 +138,80 @@ export function normalizeFilter(raw: unknown): CalendarFilter {
 		showDone: bool('showDone'),
 		hiddenRoles: strings(r.hiddenRoles).filter((x): x is CalendarRole => (ROLES as string[]).includes(x)),
 		hiddenCalendars: strings(r.hiddenCalendars),
-		taskGroups: strings(r.taskGroups)
+		taskGroups: strings(r.taskGroups),
+		searchText: typeof r.searchText === 'string' ? r.searchText.trim() : '',
+		tags: normalizeTagList(strings(r.tags)),
+		excludedTags: normalizeTagList(strings(r.excludedTags))
 	};
+}
+
+/* ----- Filtres de description : texte libre et tags ----- */
+
+/** Tag comparable : sans `#`, en minuscules, sans espaces autour. */
+export function normalizeTag(tag: string): string {
+	return tag.trim().replace(/^#+/, '').toLowerCase();
+}
+
+/** Liste de tags nettoyée, sans doublon ni valeur vide, dans l'ordre d'origine. */
+export function normalizeTagList(tags: string[]): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const raw of tags) {
+		const tag = normalizeTag(raw);
+		if (!tag || seen.has(tag)) continue;
+		seen.add(tag);
+		out.push(tag);
+	}
+	return out;
+}
+
+/** Tags saisis à la main : séparés par des virgules ou des espaces. */
+export function parseTagInput(value: string): string[] {
+	return normalizeTagList(value.split(/[\s,;]+/));
+}
+
+/** Le tag porté correspond-il au tag demandé (un tag parent garde ses sous-tags) ? */
+function tagMatches(carried: string, wanted: string): boolean {
+	return carried === wanted || carried.startsWith(`${wanted}/`);
+}
+
+const hasAnyTag = (carried: string[], wanted: string[]): boolean => {
+	const list = normalizeTagList(carried);
+	return wanted.some(w => list.some(c => tagMatches(c, w)));
+};
+
+export function hasDescriptionFilter(filter: CalendarFilter): boolean {
+	return Boolean(filter.searchText) || (filter.tags || []).length > 0 || (filter.excludedTags || []).length > 0;
+}
+
+/**
+ * Un élément du calendrier passe-t-il les filtres de description ?
+ * `texts` : tout ce qui est cherché par le texte libre (titre, lieu, note…).
+ * `tags` : tags portés par l'élément (`#` facultatif).
+ */
+export function matchesDescriptionFilter(
+	filter: CalendarFilter,
+	item: { texts: Array<string | undefined>; tags?: string[] }
+): boolean {
+	const wanted = filter.tags || [];
+	const excluded = filter.excludedTags || [];
+	const carried = item.tags || [];
+	if (excluded.length && hasAnyTag(carried, excluded)) return false;
+	if (wanted.length && !hasAnyTag(carried, wanted)) return false;
+	const needle = (filter.searchText || '').trim().toLowerCase();
+	if (!needle) return true;
+	// Les tags comptent aussi comme texte : chercher « santé » trouve #santé
+	return [...item.texts, ...carried].some(t => (t || '').toLowerCase().includes(needle));
+}
+
+/** Tags écrits dans un texte libre (ex. le texte d'une entrée ou la note d'un événement). */
+export function extractTags(...texts: Array<string | undefined>): string[] {
+	const found: string[] = [];
+	for (const text of texts) {
+		if (!text) continue;
+		for (const m of text.matchAll(/#([\p{L}\p{N}_/-]+)/gu)) found.push(m[1]);
+	}
+	return normalizeTagList(found);
 }
 
 const sorted = (list: string[]) => [...new Set(list)].sort().join('\u0000');
@@ -130,7 +223,10 @@ export function sameFilter(a: CalendarFilter, b: CalendarFilter): boolean {
 		&& a.showDone === b.showDone
 		&& sorted(a.hiddenRoles) === sorted(b.hiddenRoles)
 		&& sorted(a.hiddenCalendars) === sorted(b.hiddenCalendars)
-		&& sorted(a.taskGroups) === sorted(b.taskGroups);
+		&& sorted(a.taskGroups) === sorted(b.taskGroups)
+		&& (a.searchText || '').trim().toLowerCase() === (b.searchText || '').trim().toLowerCase()
+		&& sorted(a.tags || []) === sorted(b.tags || [])
+		&& sorted(a.excludedTags || []) === sorted(b.excludedTags || []);
 }
 
 /* ----- Catégories de tâches : quadrants, ou priorités si les quadrants sont désactivés ----- */
@@ -229,6 +325,33 @@ export function describeFilter(
 	ctx: { matrixEnabled: boolean; googleReady: boolean; entriesAvailable: boolean; legend: Array<{ id: string; name: string; role: CalendarRole }> }
 ): FilterChip[] {
 	const chips: FilterChip[] = [];
+	if (filter.searchText) {
+		const text = filter.searchText.trim();
+		chips.push({
+			id: 'text',
+			label: `« ${text.length > 18 ? `${text.slice(0, 17)}…` : text} »`,
+			detail: `Description contenant « ${text} »`,
+			icon: 'search'
+		});
+	}
+	const wanted = filter.tags || [];
+	if (wanted.length) {
+		chips.push({
+			id: 'tags',
+			label: wanted.length <= 2 ? wanted.map(t => `#${t}`).join(', ') : `${wanted.length} tags`,
+			detail: `Au moins un de : ${wanted.map(t => `#${t}`).join(', ')}`,
+			icon: 'tag'
+		});
+	}
+	const excluded = filter.excludedTags || [];
+	if (excluded.length) {
+		chips.push({
+			id: 'tags-excluded',
+			label: excluded.length === 1 ? `Sans #${excluded[0]}` : `${excluded.length} tags exclus`,
+			detail: `Sans : ${excluded.map(t => `#${t}`).join(', ')}`,
+			icon: 'tag'
+		});
+	}
 	if (!filter.showTasks) chips.push({ id: 'tasks', label: 'Sans tâches', icon: 'list-checks' });
 	if (!filter.showDone) chips.push({ id: 'done', label: 'Terminées masquées', icon: 'check-circle-2' });
 	if (filter.showTasks) {
@@ -265,6 +388,9 @@ export function describeFilter(
 /** Retire la partie du filtre correspondant à une pastille. */
 export function clearFilterChip(filter: CalendarFilter, chipId: string, legend: Array<{ id: string; role: CalendarRole }>): CalendarFilter {
 	switch (chipId) {
+		case 'text': return { ...filter, searchText: '' };
+		case 'tags': return { ...filter, tags: [] };
+		case 'tags-excluded': return { ...filter, excludedTags: [] };
 		case 'tasks': return { ...filter, showTasks: true };
 		case 'done': return { ...filter, showDone: true };
 		case 'groups': return { ...filter, taskGroups: [] };

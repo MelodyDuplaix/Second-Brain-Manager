@@ -9865,6 +9865,79 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	box-shadow: inset 0 0 0 1.5px var(--dot-color);
 }
 
+/* ----- Filtres de description : texte libre et tags ----- */
+
+.sbm-tcal-filter-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sbm-tcal-filter-search-icon {
+	display: inline-flex;
+	color: var(--text-faint);
+	flex-shrink: 0;
+}
+
+.sbm-tcal-filter-search-icon .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.sbm-tcal-filter-search-input,
+.sbm-tcal-filter-tag-input {
+	flex: 1;
+	min-width: 0;
+	height: 28px;
+	font-size: var(--font-ui-smaller);
+}
+
+.sbm-tcal-filter-search-clear {
+	flex-shrink: 0;
+	padding: 2px;
+	color: var(--text-muted);
+}
+
+.sbm-tcal-filter-tagform {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.sbm-tcal-filter-chips + .sbm-tcal-filter-tagform,
+.sbm-tcal-filter-search + .sbm-tcal-filter-chips {
+	margin-top: 6px;
+}
+
+.sbm-tcal-filter-chip.is-tag {
+	font-family: var(--font-interface);
+}
+
+.sbm-tcal-filter-chip.is-tag.is-active {
+	border-color: color-mix(in srgb, var(--text-accent) 55%, transparent);
+	background: color-mix(in srgb, var(--text-accent) 14%, var(--background-primary));
+}
+
+/* Tag exclu : barré, teinté d'erreur */
+.sbm-tcal-filter-chip.is-tag.is-excluded.is-active {
+	border-color: color-mix(in srgb, var(--text-error, #e5534b) 50%, transparent);
+	background: color-mix(in srgb, var(--text-error, #e5534b) 12%, var(--background-primary));
+	text-decoration: line-through;
+}
+
+.sbm-tcal-filter-chips.is-suggestions {
+	margin-top: 6px;
+	opacity: 0.85;
+}
+
+.sbm-tcal-filter-chips.is-suggestions .sbm-tcal-filter-chip {
+	height: 24px;
+	padding: 0 8px;
+	border-style: dashed;
+}
+
 .sbm-tcal-filter-save {
 	display: flex;
 	gap: 6px;
