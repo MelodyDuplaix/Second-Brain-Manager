@@ -17,7 +17,19 @@ import {
 	taskKey
 } from '../services/taskCalendarService';
 import { GoogleCalendarService } from '../services/googleCalendarService';
-import { GoogleCalendarEvent } from '../models/googleCalendar';
+import { GoogleCalendarEvent, CalendarRole } from '../models/googleCalendar';
+import { CalendarFilterPopover } from './calendarFilterPopover';
+import {
+	CalendarFilter,
+	DEFAULT_CALENDAR_FILTER,
+	activeTaskGroups,
+	clearFilterChip,
+	describeFilter,
+	isCalendarVisible,
+	normalizeFilter,
+	sameFilter,
+	taskGroupKey
+} from '../services/calendarFilters';
 import {
 	CalendarLegendEntry,
 	bucketEventsByDate,
@@ -114,6 +126,12 @@ interface TaskCalendarState {
 	showEvents: boolean;
 	/** Agendas masqués (identifiants Google) */
 	hiddenCalendars: string[];
+	/** Affiche les tâches */
+	showTasks: boolean;
+	/** Rôles d'agendas masqués d'un coup (ex. secondaires) */
+	hiddenRoles: CalendarRole[];
+	/** Catégories de tâches gardées (quadrants ou priorités) ; vide : toutes */
+	taskGroups: string[];
 	/** Lignes de titre dans la vue mois : 1, 2 ou 0 (en entier) */
 	titleLines: number;
 	/** Affichage en barre latérale étroite : liste (agenda) ou grille horaire du jour */
@@ -195,6 +213,9 @@ export class TaskCalendarView extends ItemView {
 		collapsed: [],
 		showEvents: true,
 		hiddenCalendars: [],
+		showTasks: true,
+		hiddenRoles: [],
+		taskGroups: [],
 		titleLines: 2,
 		compactMode: 'agenda',
 		showEntries: true,
@@ -311,7 +332,16 @@ export class TaskCalendarView extends ItemView {
 		if (Array.isArray(s.collapsed)) this.state.collapsed = s.collapsed.filter(c => typeof c === 'string');
 		if (typeof s.showEvents === 'boolean') this.state.showEvents = s.showEvents;
 		if (Array.isArray(s.hiddenCalendars)) this.state.hiddenCalendars = s.hiddenCalendars.filter(c => typeof c === 'string');
+		const f = normalizeFilter(s);
+		if (typeof s.showTasks === 'boolean') this.state.showTasks = f.showTasks;
+		if (Array.isArray(s.hiddenRoles)) this.state.hiddenRoles = f.hiddenRoles;
+		if (Array.isArray(s.taskGroups)) this.state.taskGroups = f.taskGroups;
 		if (s.titleLines === 0 || s.titleLines === 1 || s.titleLines === 2) this.state.titleLines = s.titleLines;
+		// Première restauration de la vue : le préréglage d'ouverture remplace les derniers filtres
+		if (!this.stateRestored) {
+			this.stateRestored = true;
+			this.applyStartupPreset();
+		}
 		await super.setState(state, result);
 		if (this.loaded) this.render();
 	}
@@ -376,6 +406,7 @@ export class TaskCalendarView extends ItemView {
 		this.app.workspace.onLayoutReady(async () => {
 			await this.index.buildAll();
 			this.entries.rebuild();
+			if (!this.startupPresetApplied) this.applyStartupPreset();
 			this.loaded = true;
 			this.render();
 		});
@@ -383,6 +414,7 @@ export class TaskCalendarView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.popover.close();
+		this.filterPopover.close();
 		this.hidePeek();
 		this.peekEl?.remove();
 		this.peekEl = null;
@@ -529,22 +561,137 @@ export class TaskCalendarView extends ItemView {
 		return this.legend.find(l => l.id === calendarId)?.color || 'var(--interactive-accent)';
 	}
 
-	private toggleCalendar(calendarId: string): void {
-		const hidden = new Set(this.state.hiddenCalendars);
-		if (hidden.has(calendarId)) hidden.delete(calendarId);
-		else hidden.add(calendarId);
-		this.state.hiddenCalendars = [...hidden];
+	/* ======================================================================
+	   Filtres
+	   ====================================================================== */
+
+	private filterPopover = new CalendarFilterPopover({
+		getFilter: () => this.getFilter(),
+		setFilter: (f) => this.setFilter(f),
+		legend: () => this.legend,
+		googleReady: () => this.googleReady(),
+		entriesAvailable: () => this.plugin.settings.dailyEntriesEnabled !== false,
+		matrixEnabled: () => this.plugin.settings.matrixEnabled !== false,
+		presets: () => this.plugin.settings.calendarFilterPresets || [],
+		startupPresetId: () => this.plugin.settings.calendarStartupPreset || '',
+		setStartupPresetId: async (id) => {
+			this.plugin.settings.calendarStartupPreset = id;
+			await this.plugin.saveSettings();
+		},
+		savePresets: async (presets) => {
+			this.plugin.settings.calendarFilterPresets = presets;
+			await this.plugin.saveSettings();
+		}
+	});
+
+	private stateRestored = false;
+	private startupPresetApplied = false;
+
+	/** Applique (une fois) le préréglage choisi pour l'ouverture du calendrier, s'il existe encore. */
+	private applyStartupPreset(): void {
+		this.startupPresetApplied = true;
+		const id = this.plugin.settings.calendarStartupPreset;
+		const preset = id ? (this.plugin.settings.calendarFilterPresets || []).find(p => p.id === id) : undefined;
+		if (!preset) return;
+		const f = normalizeFilter(preset.filter);
+		Object.assign(this.state, f);
+	}
+
+	private getFilter(): CalendarFilter {
+		const s = this.state;
+		return {
+			showTasks: s.showTasks,
+			showEvents: s.showEvents,
+			showEntries: s.showEntries,
+			showDone: s.showDone,
+			hiddenRoles: [...s.hiddenRoles],
+			hiddenCalendars: [...s.hiddenCalendars],
+			taskGroups: [...s.taskGroups]
+		};
+	}
+
+	private setFilter(filter: CalendarFilter): void {
+		const f = normalizeFilter(filter);
+		const s = this.state;
+		s.showTasks = f.showTasks;
+		s.showEvents = f.showEvents;
+		s.showEntries = f.showEntries;
+		s.showDone = f.showDone;
+		s.hiddenRoles = f.hiddenRoles;
+		s.hiddenCalendars = f.hiddenCalendars;
+		s.taskGroups = f.taskGroups;
+		this.undatedLimit = UNDATED_PAGE;
 		this.saveState();
 		this.renderPreservingScroll();
 	}
 
+	private filterContext() {
+		return {
+			matrixEnabled: this.plugin.settings.matrixEnabled !== false,
+			googleReady: this.googleReady(),
+			entriesAvailable: this.plugin.settings.dailyEntriesEnabled !== false,
+			legend: this.legend
+		};
+	}
+
+	/** Préréglage (intégré ou personnel) correspondant exactement aux filtres actuels. */
+	private matchingPresetName(): string | null {
+		const filter = this.getFilter();
+		if (sameFilter(filter, DEFAULT_CALENDAR_FILTER)) return null;
+		const preset = (this.plugin.settings.calendarFilterPresets || []).find(p => sameFilter(filter, p.filter));
+		return preset ? preset.name : null;
+	}
+
+	/** Pastilles des filtres actifs sous la barre d'outils : un clic retire le filtre. */
+	private renderFilterBar(): void {
+		const chips = describeFilter(this.getFilter(), this.filterContext());
+		if (!chips.length) return;
+		// Une seule ligne : un préréglage reconnu se résume à son nom, sinon les pastilles défilent
+		// horizontalement au lieu de s'empiler au-dessus du calendrier.
+		const bar = this.rootEl.createDiv({ cls: 'sbm-tcal-filterbar' });
+		const presetName = this.matchingPresetName();
+		const summary = chips.map(c => c.detail || c.label).join(' · ');
+		const label = bar.createEl('button', { cls: 'sbm-tcal-filterbar-label' });
+		setIcon(label.createSpan(), 'filter');
+		label.createSpan({ text: presetName || 'Filtres' });
+		label.title = `${summary}\nModifier les filtres (F)`;
+		label.addEventListener('click', () => this.openFilters());
+
+		if (!presetName) {
+			const track = bar.createDiv({ cls: 'sbm-tcal-filterbar-track' });
+			chips.forEach(chip => {
+				const el = track.createEl('button', { cls: 'sbm-tcal-filterbar-chip' });
+				setIcon(el.createSpan({ cls: 'sbm-tcal-filterbar-chip-icon' }), chip.icon);
+				el.createSpan({ cls: 'sbm-tcal-filterbar-chip-text', text: chip.label });
+				setIcon(el.createSpan({ cls: 'sbm-tcal-filterbar-chip-x' }), 'x');
+				el.title = `${chip.detail || chip.label} — retirer ce filtre`;
+				el.addEventListener('click', () => this.setFilter(clearFilterChip(this.getFilter(), chip.id, this.legend)));
+			});
+		} else {
+			bar.createDiv({ cls: 'sbm-tcal-filterbar-summary', text: summary }).title = summary;
+		}
+
+		const reset = bar.createEl('button', { cls: 'sbm-tcal-filterbar-reset clickable-icon' });
+		setIcon(reset, 'x');
+		reset.title = 'Tout afficher';
+		reset.setAttribute('aria-label', 'Tout afficher');
+		reset.addEventListener('click', () => this.setFilter({ ...DEFAULT_CALENDAR_FILTER }));
+	}
+
+	private openFilters(): void {
+		const btn = this.rootEl.querySelector<HTMLElement>('.sbm-tcal-filter-btn');
+		if (btn) this.filterPopover.toggle(btn);
+	}
+
+
 	private getVisibleEvents(): GoogleCalendarEvent[] {
 		if (!this.state.showEvents || !this.googleReady()) return [];
 		const q = this.query.trim().toLowerCase();
-		const hidden = new Set(this.state.hiddenCalendars);
+		const filter = this.getFilter();
+		const roles = new Map(this.legend.map(l => [l.id, l.role]));
 		const known = new Set(this.legend.map(l => l.id));
 		return this.events.filter(ev => {
-			if (hidden.has(ev.calendarId)) return false;
+			if (!isCalendarVisible(filter, ev.calendarId, roles.get(ev.calendarId))) return false;
 			if (known.size && !known.has(ev.calendarId)) return false;
 			if (!q) return true;
 			return (ev.summary || '').toLowerCase().includes(q)
@@ -1003,9 +1150,13 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	private getVisibleTasks(): ObsidianTask[] {
+		if (!this.state.showTasks) return [];
 		const q = this.query.trim().toLowerCase();
+		const matrix = this.plugin.settings.matrixEnabled !== false;
+		const groups = activeTaskGroups(this.getFilter(), matrix);
 		return this.index.getAll().filter(t => {
 			if (t.status === 'cancelled' && !this.state.showDone) return false;
+			if (groups && !groups.has(taskGroupKey(t.priority, this.quadrantOf(t), matrix))) return false;
 			if (!this.state.showDone && !isTaskOpen(t)) return false;
 			if (!q) return true;
 			return t.title.toLowerCase().includes(q)
@@ -1065,6 +1216,8 @@ export class TaskCalendarView extends ItemView {
 		this.agendaScroller = null;
 
 		this.renderToolbar();
+		this.renderFilterBar();
+		this.filterPopover.refresh(this.rootEl.querySelector<HTMLElement>('.sbm-tcal-filter-btn'));
 		this.bodyEl = this.rootEl.createDiv({ cls: 'sbm-tcal-body' });
 
 		if (this.layout === 'compact') {
@@ -1174,6 +1327,16 @@ export class TaskCalendarView extends ItemView {
 			this.updateSyncIndicator();
 		}
 
+		const activeFilters = describeFilter(this.getFilter(), this.filterContext()).length;
+		const filterBtn = this.iconButton(tools, 'filter', activeFilters ? `Filtres (${activeFilters} actif${activeFilters > 1 ? 's' : ''}) — F` : 'Filtres (F)', () => this.openFilters());
+		filterBtn.addClass('sbm-tcal-filter-btn');
+		filterBtn.setAttribute('aria-haspopup', 'dialog');
+		if (activeFilters) {
+			filterBtn.addClass('is-filtered');
+			filterBtn.createSpan({ cls: 'sbm-tcal-filter-badge', text: String(activeFilters) });
+		}
+		if (this.filterPopover.isOpen()) filterBtn.addClass('is-open');
+
 		this.iconButton(tools, 'more-horizontal', 'Options', (e) => this.openOptionsMenu(e));
 	}
 
@@ -1208,11 +1371,7 @@ export class TaskCalendarView extends ItemView {
 
 	private openOptionsMenu(e: MouseEvent): void {
 		const menu = new Menu();
-		menu.addItem(i => i.setTitle('Afficher les tâches terminées').setIcon('check-circle-2').setChecked(this.state.showDone).onClick(() => {
-			this.state.showDone = !this.state.showDone;
-			this.saveState();
-			this.render();
-		}));
+		menu.addItem(i => i.setTitle('Filtres…').setIcon('filter').onClick(() => this.openFilters()));
 		menu.addSeparator();
 		const lineChoices: Array<[number, string]> = [[1, 'Titres sur 1 ligne'], [2, 'Titres sur 2 lignes'], [0, 'Titres en entier']];
 		lineChoices.forEach(([n, label]) => {
@@ -1222,39 +1381,11 @@ export class TaskCalendarView extends ItemView {
 				this.render();
 			}));
 		});
-		if (this.plugin.settings.dailyEntriesEnabled !== false) {
-			menu.addSeparator();
-			menu.addItem(i => i.setTitle('Afficher les entrées des notes quotidiennes').setIcon('clock').setChecked(this.state.showEntries).onClick(() => {
-				this.state.showEntries = !this.state.showEntries;
-				this.saveState();
-				this.render();
-			}));
-		}
 		if (this.isGridMode()) {
 			menu.addSeparator();
 			const idx = HOUR_HEIGHTS.indexOf(this.closestHourHeight());
 			menu.addItem(i => i.setTitle('Grille horaire plus aérée').setIcon('zoom-in').setDisabled(idx >= HOUR_HEIGHTS.length - 1).onClick(() => this.zoomGrid(1)));
 			menu.addItem(i => i.setTitle('Grille horaire plus compacte').setIcon('zoom-out').setDisabled(idx <= 0).onClick(() => this.zoomGrid(-1)));
-		}
-		if (this.googleReady()) {
-			menu.addSeparator();
-			menu.addItem(i => i.setTitle('Afficher l’agenda Google').setIcon('calendar').setChecked(this.state.showEvents).onClick(() => {
-				this.state.showEvents = !this.state.showEvents;
-				this.saveState();
-				this.render();
-			}));
-			if (this.state.showEvents) {
-				this.legend.forEach(cal => {
-					const visible = !this.state.hiddenCalendars.includes(cal.id);
-					menu.addItem(i => {
-						const suffix = cal.role === 'primary' ? ' · principal' : cal.role === 'other_person' && cal.ownerName ? ` · ${cal.ownerName}` : '';
-						i.setTitle(`● ${cal.name}${suffix}`).setChecked(visible).onClick(() => this.toggleCalendar(cal.id));
-						const dom = (i as unknown as { dom?: HTMLElement }).dom;
-						dom?.style.setProperty('--sbm-cal-color', cal.color);
-						dom?.addClass('sbm-tcal-menu-calendar');
-					});
-				});
-			}
 		}
 		menu.addSeparator();
 		menu.addItem(i => i.setTitle('Placer selon l\'échéance 📅').setIcon('calendar').setChecked(this.state.dateField === 'due').onClick(() => this.setDateField('due')));
@@ -1387,6 +1518,7 @@ export class TaskCalendarView extends ItemView {
 			case '-': if (this.isGridMode()) this.zoomGrid(-1); break;
 			case 's': case 'S': case 'w': case 'W': if (this.layout !== 'compact') this.setMode('week'); break;
 			case 'a': case 'A': if (this.layout !== 'compact') this.setMode('agenda'); break;
+			case 'f': case 'F': this.openFilters(); break;
 			case '/': {
 				const input = this.rootEl.querySelector<HTMLInputElement>('.sbm-tcal-search');
 				input?.focus();

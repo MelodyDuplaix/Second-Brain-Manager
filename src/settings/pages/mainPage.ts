@@ -14,6 +14,8 @@ import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
 import { DailyEntryParser, DailyEntryInsertPosition, formatClock } from '../../services/dailyEntriesService';
 import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEventsService';
+import { describeFilter, isPresetModified, restoreDefaultPreset, restoreAllDefaultPresets, BUILTIN_FILTER_PRESETS } from '../../services/calendarFilters';
+import type { CalendarFilterPreset } from '../../services/calendarFilters';
 import { renderRewardsGroups } from './rewardsPage';
 
 export class MainPage extends BaseSettingsPage {
@@ -126,6 +128,113 @@ export class MainPage extends BaseSettingsPage {
 							s.taskInsertHeading = val.replace(/^#+\s*/, '').trim();
 							await this.plugin.saveSettings();
 						});
+				});
+		});
+	}
+
+	/** Préréglages de filtres créés depuis le bouton Filtres du calendrier : renommer, supprimer. */
+	private renderCalendarFilterPresetSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Préréglages de filtres',
+			'filter',
+			'Préréglages proposés par le bouton Filtres du calendrier (touche F), par défaut compris. Pour changer les filtres d’un préréglage : appliquez-le, ajustez les filtres, puis « Modifier » › « Remplacer par les filtres actuels » dans le panneau.'
+		);
+		const save = async (next: CalendarFilterPreset[]) => {
+			s.calendarFilterPresets = next;
+			await this.plugin.saveSettings();
+			this.refreshCalendarViews();
+			this.rerender();
+		};
+		const presets = s.calendarFilterPresets || [];
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Préréglage à l’ouverture')
+				.setDesc('Filtres appliqués à chaque ouverture du calendrier (y compris au démarrage d’Obsidian). Aussi réglable depuis le menu d’un préréglage dans le panneau Filtres.')
+				.addDropdown((dropdown) => {
+					dropdown.addOption('', 'Derniers filtres utilisés');
+					presets.forEach(p => dropdown.addOption(p.id, p.name));
+					const current = presets.some(p => p.id === s.calendarStartupPreset) ? s.calendarStartupPreset : '';
+					dropdown.setValue(current).onChange(async (val) => {
+						s.calendarStartupPreset = val;
+						await this.plugin.saveSettings();
+					});
+				});
+		});
+
+		const legend = Object.values(s.calendarsConfig || {}).map(c => ({ id: c.id, name: c.summary || c.id, role: c.role }));
+
+		if (!presets.length) {
+			group.addSetting((setting: Setting) => {
+				setting
+					.setName('Aucun préréglage')
+					.setDesc('Rétablissez les préréglages par défaut ci-dessous, ou enregistrez-en depuis le panneau Filtres du calendrier.');
+			});
+		}
+
+		presets.forEach((preset, index) => {
+			group.addSetting((setting: Setting) => {
+				const chips = describeFilter(preset.filter, {
+					matrixEnabled: s.matrixEnabled !== false,
+					googleReady: true,
+					entriesAvailable: s.dailyEntriesEnabled !== false,
+					legend
+				});
+				const summary = chips.length ? chips.map(c => c.detail || c.label).join(' · ') : 'Tout afficher';
+				const origin = preset.builtin ? (isPresetModified(preset) ? 'Par défaut, modifié' : 'Par défaut') : 'Personnel';
+				setting
+					.setName(preset.name)
+					.setDesc(`${origin} — ${summary}`)
+					.addText((text) => {
+						text.setPlaceholder('Nom').setValue(preset.name).onChange(async (val) => {
+							const name = val.trim();
+							if (!name) return;
+							preset.name = name;
+							setting.setName(name);
+							await this.plugin.saveSettings();
+							this.refreshCalendarViews();
+						});
+						text.inputEl.style.width = '150px';
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('arrow-up').setTooltip('Monter').setDisabled(index === 0).onClick(() => {
+							const next = [...presets];
+							[next[index - 1], next[index]] = [next[index], next[index - 1]];
+							void save(next);
+						});
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('arrow-down').setTooltip('Descendre').setDisabled(index === presets.length - 1).onClick(() => {
+							const next = [...presets];
+							[next[index + 1], next[index]] = [next[index], next[index + 1]];
+							void save(next);
+						});
+					});
+				if (preset.builtin && isPresetModified(preset)) {
+					setting.addExtraButton((btn) => {
+						btn.setIcon('rotate-ccw').setTooltip('Rétablir le préréglage d’origine').onClick(() => void save(restoreDefaultPreset(presets, preset.id)));
+					});
+				}
+				setting.addExtraButton((btn) => {
+					btn.setIcon('trash-2').setTooltip('Supprimer ce préréglage').onClick(() => {
+						if (s.calendarStartupPreset === preset.id) s.calendarStartupPreset = '';
+						void save(presets.filter(p => p.id !== preset.id));
+					});
+				});
+			});
+		});
+
+		group.addSetting((setting: Setting) => {
+			const missing = BUILTIN_FILTER_PRESETS.filter(b => !presets.some(p => p.id === b.id)).length;
+			const modified = presets.filter(p => p.builtin && isPresetModified(p)).length;
+			setting
+				.setName('Rétablir les préréglages par défaut')
+				.setDesc(missing || modified
+					? `Remet Tout, Mon agenda, Tâches, Rendez-vous et À faire dans leur état d’origine (${[missing ? `${missing} supprimé${missing > 1 ? 's' : ''}` : '', modified ? `${modified} modifié${modified > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')}). Vos préréglages personnels sont conservés.`
+					: 'Les préréglages par défaut sont dans leur état d’origine.')
+				.addButton((btn) => {
+					btn.setButtonText('Rétablir').setDisabled(!missing && !modified).onClick(() => void save(restoreAllDefaultPresets(presets)));
 				});
 		});
 	}
@@ -435,6 +544,7 @@ export class MainPage extends BaseSettingsPage {
 		}, () => {
 			this.renderCalendarEntriesSettings();
 			this.renderCalendarColorSettings();
+			this.renderCalendarFilterPresetSettings();
 			this.section({
 				id: 'google',
 				name: 'Google Agenda',

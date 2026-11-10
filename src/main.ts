@@ -28,6 +28,8 @@ import { CalendarTaskSyncService } from './services/calendarTaskSyncService';
 import { TaskStatusRegistry } from './models/taskStatusRegistry';
 import { TaskExclusionSettings, DEFAULT_TASK_EXCLUSION_SETTINGS, getTaskExclusionRules } from './services/taskExclusionService';
 import { DailyEntriesSettings, DEFAULT_DAILY_ENTRIES_SETTINGS } from './services/dailyEntriesService';
+import { seedFilterPresets } from './services/calendarFilters';
+import type { CalendarFilterPreset } from './services/calendarFilters';
 
 export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings {
 	energyLevel: number;
@@ -61,6 +63,13 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	taskColorPrioLowest: string;
 	taskColorDefault: string;
 	calendarTodayColor: string;
+
+	// Préréglages de filtres du calendrier créés par l'utilisateur
+	calendarFilterPresets: CalendarFilterPreset[];
+	/** Vrai une fois les préréglages par défaut copiés dans la liste modifiable */
+	calendarFilterPresetsSeeded: boolean;
+	/** Préréglage appliqué à l'ouverture du calendrier (vide : derniers filtres utilisés) */
+	calendarStartupPreset: string;
 
 	// Titre de la section où l'IA ajoute les tâches acceptées (vide : détection automatique)
 	taskInsertHeading: string;
@@ -152,6 +161,10 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	taskColorPrioLowest: '',
 	taskColorDefault: '',
 	calendarTodayColor: '',
+
+	calendarFilterPresets: [],
+	calendarFilterPresetsSeeded: false,
+	calendarStartupPreset: '',
 
 	taskInsertHeading: '',
 
@@ -1099,6 +1112,11 @@ export default class SecondBrainPlugin extends Plugin {
 	async loadPluginData() {
 		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, await this.loadData());
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings);
+		// Préréglages de filtres par défaut copiés une fois dans la liste, pour pouvoir les modifier
+		if (!this.settings.calendarFilterPresetsSeeded) {
+			this.settings.calendarFilterPresets = seedFilterPresets(this.settings.calendarFilterPresets);
+			this.settings.calendarFilterPresetsSeeded = true;
+		}
 		if (Array.isArray(this.settings.startupSidebarViews) && this.settings.startupSidebarViews.includes(VIEW_TYPE_CALENDAR)) {
 			const merged = new Set(this.settings.startupSidebarViews.map(t => t === VIEW_TYPE_CALENDAR ? VIEW_TYPE_TASK_CALENDAR : t));
 			this.settings.startupSidebarViews = [...merged];
