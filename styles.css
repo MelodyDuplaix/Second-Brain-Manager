@@ -10096,6 +10096,45 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	color: var(--text-faint);
 }
 
+/* ==========================================================================
+   Autocomplétion des liens [[…]] et des #tags (popup d'entrée, saisie de tâche)
+   ========================================================================== */
+.sbm-linktag-suggestion {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sbm-linktag-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.sbm-linktag-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sbm-linktag-path {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sbm-linktag-count {
+	flex-shrink: 0;
+	min-width: 20px;
+	padding: 0 6px;
+	border-radius: 8px;
+	font-size: var(--font-ui-smaller);
+	text-align: center;
+	color: var(--text-muted);
+	background: var(--background-modifier-hover);
+}
+
 /* Préréglage appliqué à l'ouverture du calendrier : petit repère */
 .sbm-tcal-filter-chip.is-startup {
 	position: relative;

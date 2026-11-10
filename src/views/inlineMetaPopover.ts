@@ -7,12 +7,15 @@ export interface PopoverFieldConfig {
 	max?: number;
 	options?: { label: string; value: string }[];
 	onSubmit: (value: string) => void;
+	/** Champ texte : branche une autocomplétion (ex. liens et tags) ; isBusy() vrai quand Entrée/Échap lui reviennent */
+	attachSuggest?: (input: HTMLInputElement) => { isBusy(): boolean; close(): void };
 }
 
 export class InlineMetaPopover {
 	private popoverEl: HTMLElement | null = null;
 	private outsideClickListener: ((e: MouseEvent) => void) | null = null;
 	private keyListener: ((e: KeyboardEvent) => void) | null = null;
+	private suggest: { isBusy(): boolean; close(): void } | null = null;
 
 	public open(targetEl: HTMLElement, config: PopoverFieldConfig): void {
 		this.close();
@@ -80,6 +83,8 @@ export class InlineMetaPopover {
 			input.value = config.initialValue;
 			if (config.placeholder) input.placeholder = config.placeholder;
 
+			if (config.type === 'text' && config.attachSuggest) this.suggest = config.attachSuggest(input);
+
 			if (config.min !== undefined) input.min = config.min.toString();
 			if (config.max !== undefined) input.max = config.max.toString();
 
@@ -107,6 +112,7 @@ export class InlineMetaPopover {
 
 			form.addEventListener('submit', (e) => {
 				e.preventDefault();
+				if (this.suggest?.isBusy()) return;
 				this.close();
 				config.onSubmit(input.value);
 			});
@@ -118,6 +124,8 @@ export class InlineMetaPopover {
 		this.popoverEl = popover;
 
 		this.outsideClickListener = (e: MouseEvent) => {
+			// Un clic dans la liste de suggestions ne ferme pas le popover
+			if ((e.target as HTMLElement | null)?.closest?.('.suggestion-container')) return;
 			if (this.popoverEl && !this.popoverEl.contains(e.target as Node) && !targetEl.contains(e.target as Node)) {
 				this.close();
 			}
@@ -125,6 +133,8 @@ export class InlineMetaPopover {
 
 		this.keyListener = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
+				// Échap ferme d'abord la liste de suggestions
+				if (this.suggest?.isBusy()) return;
 				this.close();
 			}
 		};
@@ -134,6 +144,8 @@ export class InlineMetaPopover {
 	}
 
 	public close(): void {
+		this.suggest?.close();
+		this.suggest = null;
 		if (this.popoverEl) {
 			this.popoverEl.remove();
 			this.popoverEl = null;

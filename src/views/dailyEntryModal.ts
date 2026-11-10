@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from 'obsidian';
 import { formatClock, parseClock } from '../services/dailyEntriesService';
+import { LinkTagSuggest } from '../suggesters/linkTagSuggest';
 
 export interface DailyEntryDraft {
 	date: string;
@@ -13,6 +14,8 @@ export interface DailyEntryModalOptions {
 	draft: DailyEntryDraft;
 	/** Libellé du fichier (affiché sous le titre) */
 	fileLabel?: string;
+	/** Chemin de la note quotidienne : liens [[…]] proposés au plus court depuis cette note */
+	sourcePath?: string;
 	onSubmit: (draft: DailyEntryDraft) => unknown;
 	onDelete?: () => unknown;
 	onOpenNote?: () => void;
@@ -20,6 +23,8 @@ export interface DailyEntryModalOptions {
 
 /** Saisie d'une entrée horodatée de note quotidienne (création ou modification). */
 export class DailyEntryModal extends Modal {
+	private suggest: LinkTagSuggest | null = null;
+
 	constructor(app: App, private opts: DailyEntryModalOptions) {
 		super(app);
 	}
@@ -37,6 +42,9 @@ export class DailyEntryModal extends Modal {
 		textRow.createEl('label', { text: 'Texte' });
 		const text = textRow.createEl('input', { type: 'text', value: opts.draft.text });
 		text.placeholder = 'Ex. Rendez-vous dentiste, [[Projet]] #tag…';
+		// Autocomplétion : [[ propose les notes, # propose les tags du coffre
+		const suggest = new LinkTagSuggest(this.app, text, opts.sourcePath || '');
+		this.suggest = suggest;
 
 		const row = form.createDiv({ cls: 'sbm-entry-row' });
 		const dateField = row.createDiv({ cls: 'sbm-entry-field' });
@@ -77,10 +85,12 @@ export class DailyEntryModal extends Modal {
 		}
 		const cancel = actions.createEl('button', { type: 'button', text: 'Annuler' });
 		cancel.addEventListener('click', () => this.close());
-		actions.createEl('button', { type: 'submit', text: 'Enregistrer', cls: 'mod-cta' });
+		const saveBtn = actions.createEl('button', { type: 'submit', text: 'Enregistrer', cls: 'mod-cta' });
+		saveBtn.title = 'Enregistrer (Ctrl+Entrée)';
 
-		form.addEventListener('submit', (e) => {
-			e.preventDefault();
+		let saved = false;
+		const save = () => {
+			if (saved) return;
 			const value = text.value.trim();
 			if (!value) {
 				new Notice('Le texte de l’entrée est vide.');
@@ -93,8 +103,30 @@ export class DailyEntryModal extends Modal {
 				return;
 			}
 			const en = hasEnd.checked ? parseClock(end.value) : null;
+			saved = true;
 			this.close();
 			void opts.onSubmit({ date: date.value, start: s, end: en, text: value });
+		};
+
+		form.addEventListener('submit', (e) => {
+			e.preventDefault();
+			// Entrée sert à choisir une suggestion, pas à enregistrer
+			if (suggest.isBusy()) return;
+			save();
+		});
+
+		// Ctrl+Entrée (Cmd+Entrée sur Mac) enregistre depuis n'importe quel champ, suggestions ouvertes ou non
+		form.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.isComposing) return;
+			e.preventDefault();
+			e.stopPropagation();
+			suggest.close();
+			save();
+		}, true);
+		this.scope.register(['Mod'], 'Enter', () => {
+			suggest.close();
+			save();
+			return false;
 		});
 
 		window.setTimeout(() => {
@@ -104,6 +136,8 @@ export class DailyEntryModal extends Modal {
 	}
 
 	onClose(): void {
+		this.suggest?.close();
+		this.suggest = null;
 		this.contentEl.empty();
 	}
 }

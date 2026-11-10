@@ -19,6 +19,7 @@ import {
 import { GoogleCalendarService } from '../services/googleCalendarService';
 import { GoogleCalendarEvent, CalendarRole } from '../models/googleCalendar';
 import { CalendarFilterPopover } from './calendarFilterPopover';
+import { LinkTagSuggest } from '../suggesters/linkTagSuggest';
 import {
 	CalendarFilter,
 	DEFAULT_CALENDAR_FILTER,
@@ -1062,6 +1063,7 @@ export class TaskCalendarView extends ItemView {
 			new DailyEntryModal(this.app, {
 				title: 'Modifier l’entrée',
 				fileLabel: `${entry.filePath.replace(/\.md$/, '')} · ligne ${entry.line + 1}`,
+				sourcePath: entry.filePath,
 				draft: { date: entry.date, start: entry.start, end: entry.end, text: entry.text },
 				onSubmit: (d) => this.updateEntry(entry, d),
 				onDelete: () => this.confirmDeleteEntry(entry),
@@ -3086,8 +3088,9 @@ export class TaskCalendarView extends ItemView {
 		this.popover.open(anchorEl, {
 			title: `Nouvelle tâche · ${CalendarDate.relativeLabel(day, this.today)}`,
 			type: 'text',
-			placeholder: 'Que faut-il faire ?',
+			placeholder: 'Que faut-il faire ? [[note]] #tag',
 			initialValue: '',
+			attachSuggest: (input) => new LinkTagSuggest(this.app, input),
 			onSubmit: (val) => this.createTask(val, day)
 		});
 	}
