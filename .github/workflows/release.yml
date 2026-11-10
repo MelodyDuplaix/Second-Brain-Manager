@@ -40,7 +40,15 @@ jobs:
         run: |
           tag="${GITHUB_REF#refs/tags/}"
 
+          # Notes rédigées dans docs/releases/<tag>.md si elles existent, sinon générées par GitHub
+          notes_file="docs/releases/${tag}.md"
+          if [ -f "$notes_file" ]; then
+            notes_args=(--notes-file "$notes_file")
+          else
+            notes_args=(--generate-notes)
+          fi
+
           gh release create "$tag" \
             --title="$tag" \
-            --generate-notes \
+            "${notes_args[@]}" \
             main.js manifest.json styles.css
