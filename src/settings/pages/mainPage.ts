@@ -14,6 +14,7 @@ import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
 import { DailyEntryParser, DailyEntryInsertPosition, formatClock } from '../../services/dailyEntriesService';
 import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEventsService';
+import { renderRewardsGroups } from './rewardsPage';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
@@ -443,6 +444,10 @@ export class MainPage extends BaseSettingsPage {
 			name: 'Gamification & boutique',
 			icon: 'gift',
 			desc: 'Énergie de base et boutique de récompenses.',
+			displayValue: () => {
+				const n = this.plugin.pluginData.rewards.filter(r => r.enabled).length;
+				return n ? `${n} récompense${n > 1 ? 's' : ''}` : '';
+			}
 		}, () => this.renderGamificationSettings());
 	}
 
@@ -1644,9 +1649,8 @@ export class MainPage extends BaseSettingsPage {
 		// 10. Gamification & Boutique de Récompenses
 		// =========================================================================
 		const gamificationGroup = new SettingGroup(this.containerEl).setHeading(
-			'Gamification, Énergie & Boutique',
-			'gift',
-			'Niveau d\'énergie de base et accès à la boutique de récompenses déblocables'
+			'Énergie',
+			'zap'
 		);
 
 		gamificationGroup.addSetting((setting: Setting) => {
@@ -1665,12 +1669,7 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		gamificationGroup.addPageLink({
-			pageType: 'rewards-page',
-			name: 'Récompenses de boutique',
-			desc: 'Gérer le catalogue des récompenses, leurs coûts en pièces et les ajouts',
-			icon: 'gift',
-			open: () => this.openPage('rewards-page')
-		});
+		// Boutique affichée directement dans la section (plus de sous-page à un seul lien)
+		renderRewardsGroups(this.containerEl, this.plugin, () => this.rerender());
 	}
 }
