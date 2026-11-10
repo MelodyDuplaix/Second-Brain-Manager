@@ -17,6 +17,7 @@ import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEv
 import { describeFilter, isPresetModified, restoreDefaultPreset, restoreAllDefaultPresets, BUILTIN_FILTER_PRESETS } from '../../services/calendarFilters';
 import type { CalendarFilterPreset } from '../../services/calendarFilters';
 import { renderRewardsGroups } from './rewardsPage';
+import { FEATURE_DEFINITIONS, isFeatureEnabled } from '../../models/features';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
@@ -509,6 +510,17 @@ export class MainPage extends BaseSettingsPage {
 		const s = this.plugin.settings;
 
 		this.section({
+			id: 'features',
+			name: 'Fonctionnalités',
+			icon: 'toggle-left',
+			desc: 'Activez seulement ce que vous utilisez : calendrier, IA, briefings, gamification.',
+			displayValue: () => {
+				const off = FEATURE_DEFINITIONS.filter(f => !isFeatureEnabled(s, f.key)).length;
+				return off ? `${off} désactivée${off > 1 ? 's' : ''}` : 'Toutes actives';
+			}
+		}, () => this.renderFeatureSettings());
+
+		this.section({
 			id: 'general',
 			name: 'Général',
 			icon: 'settings-2',
@@ -535,7 +547,7 @@ export class MainPage extends BaseSettingsPage {
 			this.renderExclusionSettings();
 		});
 
-		this.section({
+		if (isFeatureEnabled(s, 'calendar')) this.section({
 			id: 'calendar',
 			name: 'Calendrier',
 			icon: 'calendar-days',
@@ -554,7 +566,7 @@ export class MainPage extends BaseSettingsPage {
 			}, () => this.renderGoogleSettings());
 		});
 
-		this.section({
+		if (isFeatureEnabled(s, 'ai')) this.section({
 			id: 'ai',
 			name: 'Intelligence artificielle',
 			icon: 'bot',
@@ -566,7 +578,8 @@ export class MainPage extends BaseSettingsPage {
 			this.renderAiPrioritySettings();
 		});
 
-		this.section({
+		// La dictée ne sert que dans l'assistant IA
+		if (isFeatureEnabled(s, 'ai')) this.section({
 			id: 'voice',
 			name: 'Dictée vocale',
 			icon: 'mic',
@@ -574,12 +587,14 @@ export class MainPage extends BaseSettingsPage {
 			displayValue: () => s.sttEngine === 'web-speech' ? 'Navigateur' : 'Whisper local'
 		}, () => this.renderVoiceSettings());
 
+		const gamificationOn = isFeatureEnabled(s, 'gamification');
 		this.section({
 			id: 'gamification',
-			name: 'Gamification & boutique',
-			icon: 'gift',
-			desc: 'Énergie de base et boutique de récompenses.',
+			name: gamificationOn ? 'Gamification & boutique' : 'Énergie',
+			icon: gamificationOn ? 'gift' : 'zap',
+			desc: gamificationOn ? 'Énergie de base et boutique de récompenses.' : 'Énergie de base (gamification désactivée).',
 			displayValue: () => {
+				if (!gamificationOn) return `${s.energyLevel}/10`;
 				const n = this.plugin.pluginData.rewards.filter(r => r.enabled).length;
 				return n ? `${n} récompense${n > 1 ? 's' : ''}` : '';
 			}
@@ -1779,6 +1794,38 @@ export class MainPage extends BaseSettingsPage {
 		}
 	}
 
+	/**
+	 * Activation des grandes fonctionnalités. Couper une fonctionnalité retire aussitôt ses vues,
+	 * ses icônes du ruban, ses commandes et sa section de réglages.
+	 */
+	private renderFeatureSettings(): void {
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Fonctionnalités actives',
+			'toggle-left',
+			'Ce qui est décoché disparaît du ruban, de la palette de commandes et des réglages. Rien n’est supprimé : réactiver remet tout en place.'
+		);
+
+		for (const feature of FEATURE_DEFINITIONS) {
+			group.addSetting((setting: Setting) => {
+				setting
+					.setName(feature.name)
+					.setDesc(feature.desc)
+					.addToggle((toggle) => {
+						toggle
+							.setValue(isFeatureEnabled(this.plugin.settings, feature.key))
+							.onChange(async (value) => {
+								this.plugin.settings[feature.setting] = value;
+								await this.plugin.saveSettings();
+								this.plugin.syncFeatureUi();
+								// Les sections concernées apparaissent ou disparaissent tout de suite
+								this.rerender();
+							});
+					});
+				setting.descEl.createDiv({ cls: 'sbm-feature-includes', text: feature.includes });
+			});
+		}
+	}
+
 	private renderGamificationSettings(): void {
 		// =========================================================================
 		// 10. Gamification & Boutique de Récompenses
@@ -1804,6 +1851,7 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
+		if (!isFeatureEnabled(this.plugin.settings, 'gamification')) return;
 		// Boutique affichée directement dans la section (plus de sous-page à un seul lien)
 		renderRewardsGroups(this.containerEl, this.plugin, () => this.rerender());
 	}

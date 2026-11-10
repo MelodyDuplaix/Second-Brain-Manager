@@ -832,7 +832,8 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et 
 			await app.vault.create(dailyPath, initialContent);
 		}
 
-		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+		// Trophées de régularité : seulement quand la gamification est active
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function' && plugin.isFeatureEnabled?.('gamification') !== false) {
 			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'recovery');
 			await plugin.savePluginData();
 			if (newlyUnlocked && newlyUnlocked.length > 0) {

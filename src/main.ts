@@ -1,4 +1,4 @@
-import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView, WorkspaceLeaf, setIcon, debounce } from 'obsidian';
+import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView, WorkspaceLeaf, setIcon, debounce, Command } from 'obsidian';
 import { TaskParser } from './parsers/taskParser';
 import { CustomMatrixTagMapping, MatrixFeature } from './adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from './models/syntaxConfig';
@@ -30,9 +30,16 @@ import { TaskStatusRegistry } from './models/taskStatusRegistry';
 import { TaskExclusionSettings, DEFAULT_TASK_EXCLUSION_SETTINGS, getTaskExclusionRules } from './services/taskExclusionService';
 import { DailyEntriesSettings, DEFAULT_DAILY_ENTRIES_SETTINGS } from './services/dailyEntriesService';
 import { seedFilterPresets } from './services/calendarFilters';
+import {
+	FeatureKey,
+	FeatureSettings,
+	DEFAULT_FEATURE_SETTINGS,
+	featureDefinition,
+	isFeatureEnabled
+} from './models/features';
 import type { CalendarFilterPreset } from './services/calendarFilters';
 
-export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings {
+export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings, FeatureSettings {
 	energyLevel: number;
 	defaultCoinsPerTask: number;
 	/** Active la fonctionnalité des quadrants (matrice d'Eisenhower) dans tout le plugin */
@@ -131,6 +138,7 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
 	...DEFAULT_TASK_EXCLUSION_SETTINGS,
 	...DEFAULT_DAILY_ENTRIES_SETTINGS,
+	...DEFAULT_FEATURE_SETTINGS,
 	energyLevel: 5,
 	defaultCoinsPerTask: 1,
 	matrixEnabled: true,
@@ -275,6 +283,10 @@ export default class SecondBrainPlugin extends Plugin {
 	private settingsUpdatedAt: string | undefined;
 	/** Empreinte du dernier état de gamification affiché, pour ne rafraîchir qu'en cas de changement. */
 	private lastGamificationSignature: string | null = null;
+	/** Icônes du ruban créées pour une fonctionnalité (clé « fonctionnalité:icône ») */
+	private featureRibbons = new Map<string, HTMLElement>();
+	/** Identifiants courts des commandes de fonctionnalités actuellement enregistrées */
+	private featureCommandIds = new Set<string>();
 
 	public getPrompts(): ConfiguredPrompt[] {
 		if (!this.settings.configuredPrompts || this.settings.configuredPrompts.length === 0) {
@@ -300,6 +312,7 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	public registerCustomPromptCommands(): void {
+		if (!this.isFeatureEnabled('ai')) return;
 		const prompts = this.getPrompts();
 		for (const prompt of prompts) {
 			if (prompt.actionType === 'custom' && prompt.enabled && prompt.showInCommandPalette) {
@@ -406,30 +419,12 @@ export default class SecondBrainPlugin extends Plugin {
 			this.activateDashboardView();
 		});
 
-		this.addRibbonIcon('sun', 'Briefing du matin (avec tri & reprise)', () => {
-			this.activateBriefingView();
-		});
-
-		this.addRibbonIcon('moon', 'Revue du soir', () => {
-			this.activateEveningReviewView();
-		});
-
-
-		this.addRibbonIcon('calendar-check-2', 'Calendrier (tâches & agenda Google)', (evt: MouseEvent) => {
-			// Ctrl/Cmd + clic : ouverture en grand dans la vue principale
-			this.activateTaskCalendarView(evt.ctrlKey || evt.metaKey ? 'main' : 'sidebar');
-		});
-
-		this.addRibbonIcon('coins', 'Historique des pièces et statistiques', () => {
-			this.activateHistoryView();
-		});
-
-		this.addRibbonIcon('bot', 'Assistant IA', () => {
-			this.activateChatView();
-		});
+		// Icônes et commandes des fonctionnalités activables (calendrier, IA, briefings, gamification)
+		this.syncFeatureUi();
 
 		// Ouverture des vues choisies dans la barre latérale, en arrière-plan
 		this.app.workspace.onLayoutReady(() => {
+			this.closeDisabledFeatureViews();
 			void this.mergeLegacyCalendarLeaves();
 			void this.openStartupSidebarViews();
 			// Après un rechargement du plugin, les onglets restés en arrière-plan perdent leur icône :
@@ -521,82 +516,6 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'ouvrir-briefing',
-			name: 'Ouvrir le briefing du matin',
-			callback: () => {
-				this.activateBriefingView();
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-revue-soir',
-			name: 'Ouvrir la revue du soir',
-			callback: () => {
-				this.activateEveningReviewView();
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-reprise-pause',
-			name: 'Reprendre après une pause',
-			callback: () => {
-				this.activateBriefingView();
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-chat-ia',
-			name: 'Ouvrir le chat IA',
-			callback: () => {
-				this.activateChatView();
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-calendrier-taches',
-			name: 'Ouvrir le calendrier (barre latérale)',
-			callback: () => {
-				this.activateTaskCalendarView('sidebar');
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-calendrier-taches-grand',
-			name: 'Ouvrir le calendrier en grand (vue principale)',
-			callback: () => {
-				this.activateTaskCalendarView('main');
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-historique-pieces',
-			name: 'Ouvrir l\'historique des pièces et statistiques',
-			callback: () => {
-				this.activateHistoryView();
-			}
-		});
-
-		this.addCommand({
-			id: 'ouvrir-agenda-google',
-			name: 'Ouvrir l\'agenda Google Calendar (calendrier unifié)',
-			callback: () => {
-				this.activateCalendarView();
-			}
-		});
-
-		this.addCommand({
-			id: 'inclure-dossier-exclu-chat',
-			name: 'Inclure temporairement un dossier exclu dans le chat',
-			callback: async () => {
-				await this.activateChatView();
-				const chatLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
-				if (chatLeaf && chatLeaf.view instanceof ChatView) {
-					chatLeaf.view.openIncludeExcludedFolderModal();
-				}
-			}
-		});
-
-		this.addCommand({
 			id: 'analyser-taches',
 			name: 'Analyser les tâches du coffre',
 			callback: async () => {
@@ -615,73 +534,11 @@ export default class SecondBrainPlugin extends Plugin {
 			}
 		});
 
-		this.addCommand({
-			id: 'importer-rdv-note-quotidienne',
-			name: 'Importer les RDV de l\'agenda en tâches dans la note quotidienne',
-			callback: async () => {
-				const res = await CalendarTaskSyncService.syncCalendarEventsToDailyNote(this.app, this, { openDailyNote: true });
-				if (!res.success) {
-					new Notice(`[Second Brain] ${res.error || 'Erreur lors de l\'importation de l\'agenda.'}`);
-					return;
-				}
-				if (res.eventsFound === 0) {
-					new Notice(`[Second Brain] Aucun rendez-vous trouvé dans votre agenda pour aujourd'hui (${res.date}).`);
-					return;
-				}
-				if (res.tasksCreated === 0) {
-					new Notice(`[Second Brain] Tous les rendez-vous (${res.eventsFound}) sont déjà présents dans votre note quotidienne.`);
-					return;
-				}
-				const plural = res.tasksCreated > 1 ? 's' : '';
-				const alreadyText = res.tasksAlreadyExisting > 0 ? ` (${res.tasksAlreadyExisting} déjà présent${res.tasksAlreadyExisting > 1 ? 's' : ''})` : '';
-				new Notice(`📅 ${res.tasksCreated} rendez-vous importé${plural} en tâche${plural} dans votre note quotidienne${alreadyText} !`);
-			}
-		});
-
 		// Commandes contextuelles d'édition IA sur les notes
-		this.addCommand({
-			id: 'extraire-taches-note',
-			name: 'Extraire les tâches de la note ou de la sélection',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view);
-			}
-		});
-
-		this.addCommand({
-			id: 'decomposer-tache-curseur',
-			name: 'Décomposer la tâche sous le curseur',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view);
-			}
-		});
-
-		this.addCommand({
-			id: 'resumer-note-selection',
-			name: 'Résumer la note ou la sélection',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				NoteActionsService.handleSummarizeCommand(this.app, this, editor, view);
-			}
-		});
-
-		this.addCommand({
-			id: 'reformuler-selection',
-			name: 'Reformuler la sélection pour améliorer la clarté',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				NoteActionsService.handleRephraseCommand(this.app, this, editor, view);
-			}
-		});
-
-		this.addCommand({
-			id: 'corriger-sans-reformuler',
-			name: 'Corriger sans reformuler',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				NoteActionsService.handleCorrectCommand(this.app, this, editor, view);
-			}
-		});
-
 		// Intégration dynamique des Prompts & Actions IA dans le menu contextuel clic-droit
 		this.registerEvent(
 			this.app.workspace.on('editor-menu', (menu, editor, view) => {
+				if (!this.isFeatureEnabled('ai')) return;
 				const prompts = this.getPrompts();
 				const cursor = editor.getCursor();
 				const line = editor.getLine(cursor.line);
@@ -813,6 +670,175 @@ export default class SecondBrainPlugin extends Plugin {
 		this.refreshCoinViews();
 	}
 
+	/* ======================================================================
+	   Fonctionnalités activables (calendrier, IA, briefings, gamification)
+	   ====================================================================== */
+
+	/** Vues propres à chaque fonctionnalité : fermées dès qu’elle est désactivée. */
+	private static readonly FEATURE_VIEWS: Record<FeatureKey, string[]> = {
+		calendar: [VIEW_TYPE_TASK_CALENDAR, VIEW_TYPE_CALENDAR],
+		ai: [VIEW_TYPE_CHAT],
+		briefings: [VIEW_TYPE_BRIEFING, VIEW_TYPE_EVENING_REVIEW, VIEW_TYPE_RECOVERY],
+		gamification: [VIEW_TYPE_GAMIFICATION_HISTORY]
+	};
+
+	public isFeatureEnabled(key: FeatureKey): boolean {
+		return isFeatureEnabled(this.settings, key);
+	}
+
+	/** Fonctionnalité dont dépend une vue (null : vue toujours disponible, ex. tableau de bord). */
+	public featureOfViewType(viewType: string): FeatureKey | null {
+		for (const [key, views] of Object.entries(SecondBrainPlugin.FEATURE_VIEWS)) {
+			if (views.includes(viewType)) return key as FeatureKey;
+		}
+		return null;
+	}
+
+	public isViewTypeEnabled(viewType: string): boolean {
+		const feature = this.featureOfViewType(viewType);
+		return !feature || this.isFeatureEnabled(feature);
+	}
+
+	/** Vue d’une fonctionnalité désactivée : on prévient au lieu d’ouvrir. */
+	private featureUnavailable(key: FeatureKey): boolean {
+		if (this.isFeatureEnabled(key)) return false;
+		const def = featureDefinition(key);
+		new Notice(`« ${def.name} » est désactivé dans les réglages de Second Brain Manager.`);
+		return true;
+	}
+
+	/** Icônes du ruban qui dépendent d’une fonctionnalité. */
+	private featureRibbonDefs(): Array<{ feature: FeatureKey; icon: string; title: string; click: (evt: MouseEvent) => void }> {
+		return [
+			{ feature: 'briefings', icon: 'sun', title: 'Briefing du matin (avec tri & reprise)', click: () => this.activateBriefingView() },
+			{ feature: 'briefings', icon: 'moon', title: 'Revue du soir', click: () => this.activateEveningReviewView() },
+			{
+				feature: 'calendar',
+				icon: 'calendar-check-2',
+				title: 'Calendrier (tâches & agenda Google)',
+				// Ctrl/Cmd + clic : ouverture en grand dans la vue principale
+				click: (evt: MouseEvent) => this.activateTaskCalendarView(evt.ctrlKey || evt.metaKey ? 'main' : 'sidebar')
+			},
+			{ feature: 'gamification', icon: 'coins', title: 'Historique des pièces et statistiques', click: () => this.activateHistoryView() },
+			{ feature: 'ai', icon: 'bot', title: 'Assistant IA', click: () => this.activateChatView() }
+		];
+	}
+
+	/** Commandes qui dépendent d’une fonctionnalité (retirées de la palette quand elle est désactivée). */
+	private featureCommandDefs(): Array<{ feature: FeatureKey; command: Command }> {
+		return [
+			{ feature: 'briefings', command: { id: 'ouvrir-briefing', name: 'Ouvrir le briefing du matin', callback: () => void this.activateBriefingView() } },
+			{ feature: 'briefings', command: { id: 'ouvrir-revue-soir', name: 'Ouvrir la revue du soir', callback: () => void this.activateEveningReviewView() } },
+			{ feature: 'briefings', command: { id: 'ouvrir-reprise-pause', name: 'Reprendre après une pause', callback: () => void this.activateBriefingView() } },
+			{ feature: 'ai', command: { id: 'ouvrir-chat-ia', name: 'Ouvrir le chat IA', callback: () => void this.activateChatView() } },
+			{
+				feature: 'ai',
+				command: {
+					id: 'inclure-dossier-exclu-chat',
+					name: 'Inclure temporairement un dossier exclu dans le chat',
+					callback: async () => {
+						await this.activateChatView();
+						const chatLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+						if (chatLeaf && chatLeaf.view instanceof ChatView) {
+							chatLeaf.view.openIncludeExcludedFolderModal();
+						}
+					}
+				}
+			},
+			{ feature: 'calendar', command: { id: 'ouvrir-calendrier-taches', name: 'Ouvrir le calendrier (barre latérale)', callback: () => void this.activateTaskCalendarView('sidebar') } },
+			{ feature: 'calendar', command: { id: 'ouvrir-calendrier-taches-grand', name: 'Ouvrir le calendrier en grand (vue principale)', callback: () => void this.activateTaskCalendarView('main') } },
+			{ feature: 'calendar', command: { id: 'ouvrir-agenda-google', name: 'Ouvrir l’agenda Google Calendar (calendrier unifié)', callback: () => void this.activateCalendarView() } },
+			{
+				feature: 'calendar',
+				command: {
+					id: 'importer-rdv-note-quotidienne',
+					name: 'Importer les RDV de l’agenda en tâches dans la note quotidienne',
+					callback: async () => {
+						const res = await CalendarTaskSyncService.syncCalendarEventsToDailyNote(this.app, this, { openDailyNote: true });
+						if (!res.success) {
+							new Notice(`[Second Brain] ${res.error || 'Erreur lors de l’importation de l’agenda.'}`);
+							return;
+						}
+						if (res.eventsFound === 0) {
+							new Notice(`[Second Brain] Aucun rendez-vous trouvé dans votre agenda pour aujourd’hui (${res.date}).`);
+							return;
+						}
+						if (res.tasksCreated === 0) {
+							new Notice(`[Second Brain] Tous les rendez-vous (${res.eventsFound}) sont déjà présents dans votre note quotidienne.`);
+							return;
+						}
+						const plural = res.tasksCreated > 1 ? 's' : '';
+						const alreadyText = res.tasksAlreadyExisting > 0 ? ` (${res.tasksAlreadyExisting} déjà présent${res.tasksAlreadyExisting > 1 ? 's' : ''})` : '';
+						new Notice(`📅 ${res.tasksCreated} rendez-vous importé${plural} en tâche${plural} dans votre note quotidienne${alreadyText} !`);
+					}
+				}
+			},
+			{ feature: 'gamification', command: { id: 'ouvrir-historique-pieces', name: 'Ouvrir l’historique des pièces et statistiques', callback: () => void this.activateHistoryView() } },
+			// Commandes contextuelles d’édition IA sur les notes
+			{ feature: 'ai', command: { id: 'extraire-taches-note', name: 'Extraire les tâches de la note ou de la sélection', editorCallback: (editor: Editor, view: MarkdownView) => NoteActionsService.handleExtractTasksCommand(this.app, this, editor, view) } },
+			{ feature: 'ai', command: { id: 'decomposer-tache-curseur', name: 'Décomposer la tâche sous le curseur', editorCallback: (editor: Editor, view: MarkdownView) => NoteActionsService.handleBreakdownTaskCommand(this.app, this, editor, view) } },
+			{ feature: 'ai', command: { id: 'resumer-note-selection', name: 'Résumer la note ou la sélection', editorCallback: (editor: Editor, view: MarkdownView) => NoteActionsService.handleSummarizeCommand(this.app, this, editor, view) } },
+			{ feature: 'ai', command: { id: 'reformuler-selection', name: 'Reformuler la sélection pour améliorer la clarté', editorCallback: (editor: Editor, view: MarkdownView) => NoteActionsService.handleRephraseCommand(this.app, this, editor, view) } },
+			{ feature: 'ai', command: { id: 'corriger-sans-reformuler', name: 'Corriger sans reformuler', editorCallback: (editor: Editor, view: MarkdownView) => NoteActionsService.handleCorrectCommand(this.app, this, editor, view) } }
+		];
+	}
+
+	/**
+	 * Aligne l’interface sur les fonctionnalités actives : icônes du ruban, commandes de la palette,
+	 * vues ouvertes et barre d’état. Appelée au chargement et à chaque changement de réglage.
+	 */
+	public syncFeatureUi(): void {
+		for (const def of this.featureRibbonDefs()) {
+			const key = `${def.feature}:${def.icon}`;
+			const existing = this.featureRibbons.get(key);
+			const enabled = this.isFeatureEnabled(def.feature);
+			if (enabled && !existing) {
+				this.featureRibbons.set(key, this.addRibbonIcon(def.icon, def.title, def.click));
+			} else if (!enabled && existing) {
+				existing.remove();
+				this.featureRibbons.delete(key);
+			}
+		}
+
+		for (const def of this.featureCommandDefs()) {
+			const enabled = this.isFeatureEnabled(def.feature);
+			const registered = this.featureCommandIds.has(def.command.id);
+			if (enabled && !registered) {
+				this.addCommand(def.command);
+				this.featureCommandIds.add(def.command.id);
+			} else if (!enabled && registered) {
+				this.removeCommandById(def.command.id);
+				this.featureCommandIds.delete(def.command.id);
+			}
+		}
+
+		if (!this.isFeatureEnabled('ai')) {
+			for (const id of this.registeredPromptCommandIds) this.removeCommandById(id);
+			this.registeredPromptCommandIds.clear();
+		} else {
+			this.registerCustomPromptCommands();
+		}
+
+		this.closeDisabledFeatureViews();
+		this.updateStatusBar();
+	}
+
+	/** Retire une commande de la palette (API interne : absente des types publics d’Obsidian). */
+	private removeCommandById(id: string): void {
+		const commands = (this.app as unknown as { commands?: { removeCommand?: (fullId: string) => void } }).commands;
+		commands?.removeCommand?.(`${this.manifest.id}:${id}`);
+	}
+
+	/** Ferme les vues des fonctionnalités désactivées (elles resteraient ouvertes après un changement). */
+	private closeDisabledFeatureViews(): void {
+		for (const [key, views] of Object.entries(SecondBrainPlugin.FEATURE_VIEWS)) {
+			if (this.isFeatureEnabled(key as FeatureKey)) continue;
+			for (const viewType of views) {
+				this.app.workspace.getLeavesOfType(viewType).forEach(leaf => leaf.detach());
+			}
+		}
+	}
+
 	/** Applique la densité choisie via une classe sur <body> (lue par styles.css). */
 	public applyUiDensity(): void {
 		const density = this.settings.uiDensity || 'compact';
@@ -858,6 +884,8 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	public async checkFileForCompletedTasks(file: TFile): Promise<void> {
+		// Gamification désactivée : aucune pièce distribuée, aucun historique enregistré
+		if (!this.isFeatureEnabled('gamification')) return;
 		const isLocal = this.isLocalUserTaskCheck(file.path);
 		const content = await this.app.vault.read(file);
 		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
@@ -931,6 +959,7 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async activateBriefingView(requestedEnergy?: number) {
+		if (this.featureUnavailable('briefings')) return;
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_BRIEFING)[0];
 
@@ -966,6 +995,7 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async activateEveningReviewView() {
+		if (this.featureUnavailable('briefings')) return;
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_EVENING_REVIEW)[0];
 
@@ -983,11 +1013,13 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async activateRecoveryView() {
+		if (this.featureUnavailable('briefings')) return;
 		// La reprise après pause et le tri large sont intégrés directement dans le Briefing du matin
 		await this.activateBriefingView();
 	}
 
 	async activateHistoryView() {
+		if (this.featureUnavailable('gamification')) return;
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_GAMIFICATION_HISTORY)[0];
 
@@ -1067,7 +1099,9 @@ export default class SecondBrainPlugin extends Plugin {
 	async openStartupSidebarViews(): Promise<void> {
 		const { workspace } = this.app;
 		const wanted = (this.settings.startupSidebarViews || [])
-			.filter(type => STARTUP_SIDEBAR_VIEWS.some(v => v.type === type));
+			.filter(type => STARTUP_SIDEBAR_VIEWS.some(v => v.type === type))
+			// Une vue dont la fonctionnalité est désactivée ne s'ouvre pas au démarrage
+			.filter(type => this.isViewTypeEnabled(type));
 		const ordered = STARTUP_SIDEBAR_VIEWS.filter(v => wanted.includes(v.type));
 		if (ordered.length === 0) return;
 
@@ -1108,6 +1142,7 @@ export default class SecondBrainPlugin extends Plugin {
 	 * Réutilise une vue existante au même emplacement plutôt que d'en créer une seconde.
 	 */
 	async activateTaskCalendarView(location: 'sidebar' | 'main' = 'sidebar') {
+		if (this.featureUnavailable('calendar')) return;
 		const { workspace } = this.app;
 		const isSide = (leaf: WorkspaceLeaf) => {
 			const root = leaf.getRoot();
@@ -1128,10 +1163,12 @@ export default class SecondBrainPlugin extends Plugin {
 
 	/** L'agenda Google est désormais intégré au calendrier unifié. */
 	async activateCalendarView() {
+		if (this.featureUnavailable('calendar')) return;
 		await this.activateTaskCalendarView('sidebar');
 	}
 
 	async activateChatView() {
+		if (this.featureUnavailable('ai')) return;
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
 
@@ -1360,6 +1397,8 @@ export default class SecondBrainPlugin extends Plugin {
 			this.lastWrittenData = mergedSerialized;
 		}
 
+		// Réglages venus de l'autre appareil : fonctionnalités activées ou coupées là-bas
+		this.syncFeatureUi();
 		// Données venues d'un autre appareil : on réaffiche même si l'empreinte semble identique
 		// (l'historique peut avoir changé sans que le solde bouge).
 		this.notifyGamificationChanged(true);
@@ -1372,7 +1411,10 @@ export default class SecondBrainPlugin extends Plugin {
 	/** Barre d'état : énergie et solde de pièces courants. */
 	public updateStatusBar(): void {
 		if (!this.statusBarItemEl || !this.pluginData) return;
-		this.statusBarItemEl.setText(`Énergie: ${this.settings.energyLevel}/10 | 🪙 ${this.pluginData.wallet.balance}`);
+		const energy = `Énergie: ${this.settings.energyLevel}/10`;
+		this.statusBarItemEl.setText(this.isFeatureEnabled('gamification')
+			? `${energy} | 🪙 ${this.pluginData.wallet.balance}`
+			: energy);
 	}
 
 	public async touchActiveSession(): Promise<void> {

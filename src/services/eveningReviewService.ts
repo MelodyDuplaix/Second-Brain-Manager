@@ -336,7 +336,8 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 			await app.vault.create(filePath, initialContent);
 		}
 
-		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+		// Trophées de régularité : seulement quand la gamification est active
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function' && plugin.isFeatureEnabled?.('gamification') !== false) {
 			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'evening_review');
 			await plugin.savePluginData();
 			if (newlyUnlocked && newlyUnlocked.length > 0) {

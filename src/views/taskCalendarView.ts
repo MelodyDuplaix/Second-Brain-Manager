@@ -842,7 +842,7 @@ export class TaskCalendarView extends ItemView {
 			if (quad) meta.createSpan({ text: quad.toUpperCase() });
 			if (task.priority && PRIORITY_ICONS[task.priority]) meta.createSpan({ text: PRIORITY_ICONS[task.priority] as string });
 			if (task.energy) meta.createSpan({ text: `⚡${task.energy}` });
-			if (task.pieces) meta.createSpan({ text: `🪙${task.pieces}` });
+			if (task.pieces && this.plugin.isFeatureEnabled('gamification')) meta.createSpan({ text: `🪙${task.pieces}` });
 			if (task.recurrence) meta.createSpan({ text: `🔁 ${task.recurrence}` });
 			if (task.statusChar !== ' ') meta.createSpan({ text: `[${task.statusChar}] ${TaskStatusRegistry.nameOf(task.statusChar)}` });
 			if (task.domainTags.length) {
@@ -2716,7 +2716,7 @@ export class TaskCalendarView extends ItemView {
 			}
 			if (quad) meta.createSpan({ cls: `sbm-tcal-meta quad quad-${quad}`, text: quad.toUpperCase() });
 			if (task.energy) meta.createSpan({ cls: 'sbm-tcal-meta', text: `⚡${task.energy}` });
-			if (task.pieces) meta.createSpan({ cls: 'sbm-tcal-meta', text: `🪙${task.pieces}` });
+			if (task.pieces && this.plugin.isFeatureEnabled('gamification')) meta.createSpan({ cls: 'sbm-tcal-meta', text: `🪙${task.pieces}` });
 			if (task.recurrence) {
 				const rec = meta.createSpan({ cls: 'sbm-tcal-meta', text: '🔁' });
 				rec.title = task.recurrence;
@@ -3046,7 +3046,7 @@ export class TaskCalendarView extends ItemView {
 				}
 			});
 		}));
-		menu.addItem(i => i.setTitle(`Pièces…${task.pieces ? ` (🪙${task.pieces})` : ''}`).setIcon('coins').onClick(() => {
+		if (this.plugin.isFeatureEnabled('gamification')) menu.addItem(i => i.setTitle(`Pièces…${task.pieces ? ` (🪙${task.pieces})` : ''}`).setIcon('coins').onClick(() => {
 			this.popover.open(chip, {
 				title: 'Récompense en pièces',
 				type: 'number',

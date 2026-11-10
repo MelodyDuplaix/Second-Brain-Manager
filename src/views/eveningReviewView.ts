@@ -176,10 +176,12 @@ export class EveningReviewView extends ItemView {
 		c1.createSpan({ cls: 'sbm-stat-value', text: `${completedCount}` });
 		c1.createSpan({ cls: 'sbm-stat-label', text: `faite${completedCount > 1 ? 's' : ''}` });
 
-		const c2 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-coins' });
-		c2.createSpan({ cls: 'sbm-stat-icon', text: '🪙' });
-		c2.createSpan({ cls: 'sbm-stat-value', text: `+${coinsCount}` });
-		c2.createSpan({ cls: 'sbm-stat-label', text: `pièce${coinsCount > 1 ? 's' : ''}` });
+		if (this.plugin.isFeatureEnabled('gamification')) {
+			const c2 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-coins' });
+			c2.createSpan({ cls: 'sbm-stat-icon', text: '🪙' });
+			c2.createSpan({ cls: 'sbm-stat-value', text: `+${coinsCount}` });
+			c2.createSpan({ cls: 'sbm-stat-label', text: `pièce${coinsCount > 1 ? 's' : ''}` });
+		}
 
 		const c3 = statsGrid.createDiv({ cls: 'sbm-evening-preflight-stat-card is-pending' });
 		c3.createSpan({ cls: 'sbm-stat-icon', text: '⏳' });
@@ -214,8 +216,10 @@ export class EveningReviewView extends ItemView {
 			const compBadge = this.badgesContainerEl.createSpan({ cls: 'sbm-evening-badge completed' });
 			compBadge.setText(`✅ ${completedCount} faite${completedCount > 1 ? 's' : ''}`);
 
-			const coinsBadge = this.badgesContainerEl.createSpan({ cls: 'sbm-evening-badge coins' });
-			coinsBadge.setText(`🪙 +${coinsCount}`);
+			if (this.plugin.isFeatureEnabled('gamification')) {
+				const coinsBadge = this.badgesContainerEl.createSpan({ cls: 'sbm-evening-badge coins' });
+				coinsBadge.setText(`🪙 +${coinsCount}`);
+			}
 
 			if (remainingCount > 0) {
 				const remBadge = this.badgesContainerEl.createSpan({ cls: 'sbm-evening-badge remaining' });

@@ -139,6 +139,8 @@ export class TaskCardWidget {
 			text: piecesText
 		});
 		piecesBadge.title = 'Cliquer pour modifier la récompense en pièces';
+		// Gamification désactivée : la récompense n'a plus de sens sur la carte
+		if (plugin.isFeatureEnabled?.('gamification') === false) piecesBadge.style.display = 'none';
 		piecesBadge.addEventListener('click', (e) => {
 			const current = (task.pieces || 1).toString();
 			TaskCardWidget.popover.open(e.currentTarget as HTMLElement, {

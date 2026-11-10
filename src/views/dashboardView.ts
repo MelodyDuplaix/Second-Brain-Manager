@@ -201,6 +201,8 @@ export class DashboardView extends ItemView {
 	}
 
 	private renderGamificationStatsCard(container: Element): void {
+		// Gamification désactivée : pas de carte des pièces
+		if (!this.plugin.isFeatureEnabled('gamification')) return;
 		try {
 			const statsCard = container.createEl('div', { cls: 'sbm-gamification-card' });
 
@@ -588,6 +590,8 @@ export class DashboardView extends ItemView {
 			this.plugin.recordUserCheckboxInteraction(task.filePath);
 			await this.mutateTaskLine(task, (line) => TaskMutator.setCompleted(line, true, todayStr, this.plugin.settings));
 
+			// Sans gamification, la tâche est cochée mais ne rapporte rien
+			if (!this.plugin.isFeatureEnabled('gamification')) return;
 			const res = GamificationService.processCompletion(task, this.plugin.pluginData, this.plugin.settings.matrixProvider);
 			if (res.rewardGranted) {
 				await this.plugin.savePluginData();

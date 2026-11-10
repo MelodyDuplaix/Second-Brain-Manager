@@ -842,7 +842,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 			await app.vault.create(filePath, initialContent);
 		}
 
-		if (plugin?.pluginData && typeof plugin.savePluginData === 'function') {
+		// Trophées de régularité : seulement quand la gamification est active
+		if (plugin?.pluginData && typeof plugin.savePluginData === 'function' && plugin.isFeatureEnabled?.('gamification') !== false) {
 			const newlyUnlocked = GamificationService.recordWorkflowEvent(plugin.pluginData, 'morning_briefing');
 			await plugin.savePluginData();
 			if (newlyUnlocked && newlyUnlocked.length > 0) {
