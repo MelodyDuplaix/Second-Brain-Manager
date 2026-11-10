@@ -268,6 +268,10 @@ export class TaskCalendarView extends ItemView {
 	private agendaExtending = false;
 	/** L'agenda a déjà été placé sur son jour de départ (les rendus suivants gardent la position) */
 	private agendaPositioned = false;
+	/** Jour en haut de l'agenda avant un nouveau rendu, et son décalage : l'agenda reprend au même endroit */
+	private agendaAnchor: { day: string; offset: number } | null = null;
+	/** Vrai quand le rendu a replacé l'agenda sur son jour (la restauration en pixels ne doit pas l'écraser) */
+	private agendaAnchorRestored = false;
 	private agendaScrollRaf: number | undefined;
 	/** Pendant un défilement programmé, l'agenda ne s'agrandit pas (cela interromprait l'animation) */
 	private agendaScrollLockUntil = 0;
@@ -1189,6 +1193,8 @@ export class TaskCalendarView extends ItemView {
 		const positions = new Map(scrollers.map(el => [el.dataset.scrollId as string, el.scrollTop]));
 		this.render();
 		this.rootEl.querySelectorAll<HTMLElement>('[data-scroll-id]').forEach(el => {
+			// L'agenda s'est déjà replacé sur son jour : une position en pixels le décalerait
+			if (this.agendaAnchorRestored && (el === this.agendaScroller || el === this.agendaEl)) return;
 			const top = positions.get(el.dataset.scrollId as string);
 			if (top !== undefined) el.scrollTop = top;
 		});
@@ -1203,6 +1209,9 @@ export class TaskCalendarView extends ItemView {
 
 		this.hidePeek();
 		this.clearGridSelection();
+		// Mémorise le jour en haut de l'agenda avant de tout redessiner (modification, synchronisation…)
+		this.agendaAnchor = this.captureAgendaAnchor();
+		this.agendaAnchorRestored = false;
 		this.rootEl.empty();
 		this.rootEl.className = `sbm-tcal is-${this.layout} mode-${this.effectiveMode()} titles-${this.state.titleLines || 'full'}`;
 
@@ -2278,7 +2287,41 @@ export class TaskCalendarView extends ItemView {
 			this.agendaFocus = null;
 			this.agendaPositioned = true;
 			window.requestAnimationFrame(() => this.scrollAgendaTo(target, false));
+		} else if (this.agendaAnchor) {
+			// Simple mise à jour : on reprend exactement au même jour, même si des journées ont changé de hauteur
+			this.restoreAgendaAnchor(this.agendaAnchor);
 		}
+	}
+
+	/** Jour visible en haut de l'agenda et son décalage par rapport au haut de la zone qui défile. */
+	private captureAgendaAnchor(): { day: string; offset: number } | null {
+		const scroller = this.agendaScroller;
+		const list = this.agendaEl;
+		if (!scroller || !list || !scroller.isConnected) return null;
+		const top = scroller.getBoundingClientRect().top;
+		for (const section of Array.from(list.querySelectorAll<HTMLElement>('.sbm-tcal-agenda-day'))) {
+			const rect = section.getBoundingClientRect();
+			if (rect.bottom > top + 1 && section.dataset.day) return { day: section.dataset.day, offset: rect.top - top };
+		}
+		return null;
+	}
+
+	private restoreAgendaAnchor(anchor: { day: string; offset: number }): void {
+		const scroller = this.agendaScroller;
+		const section = this.agendaEl?.querySelector<HTMLElement>(`.sbm-tcal-agenda-day[data-day="${anchor.day}"]`);
+		if (!scroller || !section) return;
+		const apply = () => {
+			const delta = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+			if (Math.abs(delta) >= 1) {
+				// Pas d'extension de la fenêtre déclenchée par ce repositionnement
+				this.agendaScrollLockUntil = Date.now() + 150;
+				scroller.scrollTop += delta;
+			}
+		};
+		apply();
+		this.agendaAnchorRestored = true;
+		// Les intégrations (bases, images) peuvent changer la hauteur juste après : on recale une fois
+		window.requestAnimationFrame(apply);
 	}
 
 	private renderAgendaDay(
