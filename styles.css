@@ -9594,3 +9594,59 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	margin-bottom: calc(14px * var(--sbm-density, 1));
 }
 
+/* ==========================================================================
+   Chat : suivi de la fin de conversation et bouton « revenir en bas »
+   ========================================================================== */
+.sbm-messages-wrap {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.sbm-chat-jump-bottom {
+	position: absolute;
+	left: 50%;
+	bottom: calc(22px * var(--sbm-density, 1));
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border-radius: 50%;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	box-shadow: var(--shadow-s, 0 2px 8px rgba(0, 0, 0, 0.15));
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(-50%, 6px);
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.sbm-chat-jump-bottom.is-visible {
+	opacity: 1;
+	pointer-events: auto;
+	transform: translate(-50%, 0);
+}
+
+.sbm-chat-jump-bottom:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+/* Réponse en cours d'écriture plus bas : point d'accent sur le bouton */
+.sbm-chat-jump-bottom.has-new::after {
+	content: '';
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+}
+

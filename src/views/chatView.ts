@@ -22,6 +22,9 @@ export class ChatView extends ItemView {
 	private messages: ChatMessage[] = [];
 	private isGenerating = false;
 	private messagesContainerEl: HTMLElement | null = null;
+	/** Suit automatiquement la fin de la conversation (faux quand l'utilisateur lit plus haut) */
+	private stickToBottom = true;
+	private jumpToBottomEl: HTMLElement | null = null;
 	private sendBtnEl: HTMLButtonElement | null = null;
 	private textareaEl: HTMLTextAreaElement | null = null;
 	private cardTopContextEl: HTMLElement | null = null;
@@ -101,7 +104,7 @@ export class ChatView extends ItemView {
 	public async setConversation(messages: ChatMessage[], autoTrigger = false): Promise<void> {
 		this.cancelCurrentGeneration();
 		this.messages = [...messages];
-		this.renderFullMessages();
+		this.renderFullMessages(true);
 		if (autoTrigger) {
 			await this.triggerAssistantGeneration();
 		}
@@ -148,8 +151,25 @@ export class ChatView extends ItemView {
 			this.renderContextInsideCard();
 		});
 
-		// Zone de messages scrollable
-		this.messagesContainerEl = container.createEl('div', { cls: 'sbm-messages-area' });
+		// Zone de messages scrollable (le bouton « revenir en bas » flotte au-dessus)
+		const messagesWrapEl = container.createEl('div', { cls: 'sbm-messages-wrap' });
+		this.messagesContainerEl = messagesWrapEl.createEl('div', { cls: 'sbm-messages-area' });
+		const messagesEl = this.messagesContainerEl;
+		this.jumpToBottomEl = messagesWrapEl.createEl('button', { cls: 'sbm-chat-jump-bottom' });
+		setIcon(this.jumpToBottomEl, 'arrow-down');
+		this.jumpToBottomEl.title = 'Revenir en bas';
+		this.jumpToBottomEl.setAttribute('aria-label', 'Revenir en bas');
+		this.jumpToBottomEl.addEventListener('click', () => {
+			this.stickToBottom = true;
+			messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+			this.updateJumpButton();
+		});
+		// Défiler vers le haut suspend le suivi automatique ; revenir en bas le rétablit
+		messagesEl.addEventListener('scroll', () => {
+			const gap = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+			this.stickToBottom = gap < 40;
+			this.updateJumpButton();
+		}, { passive: true });
 
 		// Délégation globale de clics : résout les wikilinks cliquables sans bloquer la sélection de texte
 		this.messagesContainerEl.addEventListener('click', async (e: MouseEvent) => {
@@ -427,8 +447,11 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	private renderFullMessages(): void {
+	/** Redessine la conversation. `forceBottom` : action de l'utilisateur qui ramène en bas (envoi, nouvelle conversation). */
+	private renderFullMessages(forceBottom = false): void {
 		if (!this.messagesContainerEl) return;
+		if (forceBottom) this.stickToBottom = true;
+		const previousTop = this.messagesContainerEl.scrollTop;
 		this.messagesContainerEl.empty();
 
 		if (this.messages.length <= 1) {
@@ -440,7 +463,10 @@ export class ChatView extends ItemView {
 			this.renderSingleMessageElement(msg, idx);
 		});
 
-		this.scrollToBottom();
+		// Lecture plus haut dans la conversation : on garde la position au lieu de sauter en bas
+		if (this.stickToBottom) this.scrollToBottom();
+		else this.messagesContainerEl.scrollTop = previousTop;
+		this.updateJumpButton();
 	}
 
 	private renderSuggestedPrompts(container: HTMLElement): void {
@@ -526,7 +552,7 @@ export class ChatView extends ItemView {
 
 
 			this.editingMessageIndex = null;
-				this.renderFullMessages();
+				this.renderFullMessages(true);
 
 				// Relance la génération de l'assistant à partir de cette modification
 				await this.triggerAssistantGeneration();
@@ -616,7 +642,7 @@ export class ChatView extends ItemView {
 			retryBtn.title = 'Réessayer / Régénérer la réponse';
 			retryBtn.addEventListener('click', async () => {
 				this.messages.splice(msgIndex); // Retire cette réponse et les suivantes
-				this.renderFullMessages();
+				this.renderFullMessages(true);
 				await this.triggerAssistantGeneration();
 			});
 		}
@@ -854,10 +880,17 @@ export class ChatView extends ItemView {
 		}
 	}
 
+	/** Suit la fin de la conversation, sauf si l'utilisateur lit plus haut. */
 	private scrollToBottom(): void {
-		if (this.messagesContainerEl) {
+		if (this.messagesContainerEl && this.stickToBottom) {
 			this.messagesContainerEl.scrollTop = this.messagesContainerEl.scrollHeight;
 		}
+		this.updateJumpButton();
+	}
+
+	private updateJumpButton(): void {
+		this.jumpToBottomEl?.toggleClass('is-visible', !this.stickToBottom);
+		this.jumpToBottomEl?.toggleClass('has-new', !this.stickToBottom && this.isGenerating);
 	}
 
 	private async handleSendMessage(): Promise<void> {
@@ -874,7 +907,7 @@ export class ChatView extends ItemView {
 
 		// 1. Ajouter le message utilisateur
 		this.messages.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
-		this.renderFullMessages();
+		this.renderFullMessages(true);
 
 		this.textareaEl.value = '';
 		this.adjustTextareaHeight();
