@@ -160,15 +160,17 @@ export function dedupeEvents(events: GoogleCalendarEvent[], rankOf: (calendarId:
  */
 export function buildCalendarColors(
 	settings: GoogleCalendarSettings,
-	calendars: Array<{ id: string; name: string }>,
+	calendars: Array<{ id: string; name: string; color?: string }>,
 	accent = 'var(--interactive-accent)',
 	primaryId?: string
 ): CalendarLegendEntry[] {
 	// Un même agenda ne figure qu'une fois (alias « primary » résolu)
-	const unique = new Map<string, { id: string; name: string }>();
+	const unique = new Map<string, { id: string; name: string; color?: string }>();
 	for (const cal of calendars) {
 		const id = resolveCalendarId(cal.id, primaryId);
-		if (!unique.has(id)) unique.set(id, { id, name: cal.id === id ? cal.name : (calendars.find(c => c.id === id)?.name || cal.name) });
+		if (unique.has(id)) continue;
+		const original = cal.id === id ? cal : (calendars.find(c => c.id === id) || cal);
+		unique.set(id, { id, name: original.name, color: original.color || cal.color });
 	}
 	calendars = [...unique.values()];
 	const sorted = [...calendars].sort((a, b) => a.id.localeCompare(b.id));
@@ -177,15 +179,23 @@ export function buildCalendarColors(
 	for (const cal of sorted) {
 		const role = calendarRole(settings, cal.id, primaryId);
 		if (role === 'ignore') continue;
-		let color = accent;
-		if (role === 'secondary') color = SECONDARY_PALETTE[secondaryIndex++ % SECONDARY_PALETTE.length];
-		else if (role === 'other_person') color = OTHER_PERSON_COLOR;
+		const conf = settings.calendarsConfig?.[cal.id];
+		// Priorité : couleur choisie pour l'agenda > couleur Google (si activée) > couleur du rôle
+		let color = (conf?.color || '').trim() || (settings.useGoogleCalendarColors ? (cal.color || '').trim() : '');
+		if (role === 'secondary') {
+			const auto = SECONDARY_PALETTE[secondaryIndex++ % SECONDARY_PALETTE.length];
+			if (!color) color = auto;
+		} else if (!color) {
+			color = role === 'other_person'
+				? (settings.otherPersonCalendarColor || '').trim() || OTHER_PERSON_COLOR
+				: (settings.primaryCalendarColor || '').trim() || accent;
+		}
 		byId.set(cal.id, {
 			id: cal.id,
-			name: settings.calendarsConfig?.[cal.id]?.summary || cal.name,
+			name: conf?.summary || cal.name,
 			role,
 			color,
-			ownerName: settings.calendarsConfig?.[cal.id]?.ownerName
+			ownerName: conf?.ownerName
 		});
 	}
 	const order: Record<string, number> = { primary: 0, secondary: 1, other_person: 2, ignore: 3 };

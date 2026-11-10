@@ -6580,12 +6580,19 @@ textarea.sbm-chat-textarea:focus {
 
 .sbm-tcal,
 .sbm-tcal-ghost,
-.sbm-tcal-peek {
-	--tcal-q1: var(--color-red);
-	--tcal-q2: var(--interactive-accent);
-	--tcal-q3: var(--color-orange);
-	--tcal-q4: var(--text-faint);
-	--tcal-today: var(--interactive-accent);
+.sbm-tcal-peek,
+.sbm-tcal-filter-pop {
+	--tcal-q1: var(--sbm-color-q1, var(--color-red));
+	--tcal-q2: var(--sbm-color-q2, var(--interactive-accent));
+	--tcal-q3: var(--sbm-color-q3, var(--color-orange));
+	--tcal-q4: var(--sbm-color-q4, var(--text-faint));
+	--tcal-prio-highest: var(--sbm-color-prio-highest, var(--color-red));
+	--tcal-prio-high: var(--sbm-color-prio-high, var(--color-orange));
+	--tcal-prio-medium: var(--sbm-color-prio-medium, var(--color-yellow));
+	--tcal-prio-low: var(--sbm-color-prio-low, var(--color-blue));
+	--tcal-prio-lowest: var(--sbm-color-prio-lowest, var(--text-faint));
+	--tcal-task: var(--sbm-color-task, var(--background-modifier-border-hover, var(--text-faint)));
+	--tcal-today: var(--sbm-color-today, var(--interactive-accent));
 	--tcal-cell-bg: var(--background-primary);
 	--tcal-muted-bg: var(--background-secondary);
 	--tcal-border: var(--background-modifier-border);
@@ -7418,6 +7425,11 @@ textarea.sbm-chat-textarea:focus {
 .sbm-tcal-dot.quad-q1 { background: var(--tcal-q1); }
 .sbm-tcal-dot.quad-q2 { background: var(--tcal-q2); }
 .sbm-tcal-dot.quad-q3 { background: var(--tcal-q3); }
+body.sbm-tasks-by-priority .sbm-tcal-dot.prio-highest { background: var(--tcal-prio-highest); }
+body.sbm-tasks-by-priority .sbm-tcal-dot.prio-high { background: var(--tcal-prio-high); }
+body.sbm-tasks-by-priority .sbm-tcal-dot.prio-medium { background: var(--tcal-prio-medium); }
+body.sbm-tasks-by-priority .sbm-tcal-dot.prio-low { background: var(--tcal-prio-low); }
+body.sbm-tasks-by-priority .sbm-tcal-dot.prio-lowest { background: var(--tcal-prio-lowest); }
 .sbm-tcal-dot.is-done { opacity: 0.35; }
 
 .sbm-tcal-mini {
@@ -7597,7 +7609,7 @@ textarea.sbm-chat-textarea:focus {
 /* ----- Puces de tâche ----- */
 
 .sbm-tcal-chip {
-	--chip-accent: var(--background-modifier-border-hover, var(--text-faint));
+	--chip-accent: var(--tcal-task);
 	position: relative;
 	display: flex;
 	align-items: flex-start;
@@ -7615,6 +7627,13 @@ textarea.sbm-chat-textarea:focus {
 .sbm-tcal-chip.quad-q1,
 .sbm-tcal-chip.prio-highest,
 .sbm-tcal-chip.prio-high { --chip-accent: var(--tcal-q1); }
+
+/* Quadrants désactivés : couleur selon la priorité */
+body.sbm-tasks-by-priority .sbm-tcal-chip.prio-highest { --chip-accent: var(--tcal-prio-highest); }
+body.sbm-tasks-by-priority .sbm-tcal-chip.prio-high { --chip-accent: var(--tcal-prio-high); }
+body.sbm-tasks-by-priority .sbm-tcal-chip.prio-medium { --chip-accent: var(--tcal-prio-medium); }
+body.sbm-tasks-by-priority .sbm-tcal-chip.prio-low { --chip-accent: var(--tcal-prio-low); }
+body.sbm-tasks-by-priority .sbm-tcal-chip.prio-lowest { --chip-accent: var(--tcal-prio-lowest); }
 
 /* Variante mini (vue mois) */
 .sbm-tcal-chip.variant-mini {
@@ -8917,7 +8936,7 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 .sbm-tcal,
 .sbm-tcal-ghost,
 .sbm-tcal-peek {
-	--sbm-entry-color: var(--color-purple, #a855f7);
+	--sbm-entry-color: var(--sbm-color-entry, var(--color-purple, #a855f7));
 }
 
 /* ----- Entrées dans les listes (mois, agenda) ----- */

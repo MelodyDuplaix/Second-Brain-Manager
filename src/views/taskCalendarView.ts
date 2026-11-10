@@ -235,6 +235,7 @@ export class TaskCalendarView extends ItemView {
 	private eventsError: string | null = null;
 	private legend: CalendarLegendEntry[] = [];
 	private legendLoaded = false;
+	private legendSource: { calendars: Array<{ id: string; name: string; color?: string }>; primaryId?: string } | null = null;
 
 	// Agenda à défilement continu
 	private agendaStart: string | null = null;
@@ -485,11 +486,11 @@ export class TaskCalendarView extends ItemView {
 	private async loadLegend(): Promise<void> {
 		if (this.legendLoaded) return;
 		const settings = this.plugin.settings;
-		let calendars: Array<{ id: string; name: string }> = [];
+		let calendars: Array<{ id: string; name: string; color?: string }> = [];
 		let primaryId: string | undefined;
 		try {
 			const list = await GoogleCalendarService.listCalendars(settings);
-			calendars = list.map(c => ({ id: c.id, name: c.summary }));
+			calendars = list.map(c => ({ id: c.id, name: c.summary, color: c.backgroundColor }));
 			primaryId = list.find(c => c.primary)?.id;
 		} catch {
 			// Liste indisponible : on se rabat sur les agendas configurés dans les réglages
@@ -510,8 +511,18 @@ export class TaskCalendarView extends ItemView {
 			const wanted = new Set(selected.length ? selected : [defaultId]);
 			calendars = calendars.filter(c => wanted.has(c.id) || c.id === defaultId);
 		}
+		this.legendSource = { calendars, primaryId };
 		this.legend = buildCalendarColors(settings, calendars, undefined, primaryId);
 		this.legendLoaded = true;
+	}
+
+	/** Recalcule les couleurs des agendas (réglages modifiés) sans interroger Google. */
+	public recolor(): void {
+		if (this.legendSource) {
+			const { calendars, primaryId } = this.legendSource;
+			this.legend = buildCalendarColors(this.plugin.settings, calendars, undefined, primaryId);
+		}
+		this.render();
 	}
 
 	private calendarColor(calendarId: string): string {
@@ -669,7 +680,8 @@ export class TaskCalendarView extends ItemView {
 		return (el) => {
 			const date = getTaskDate(task, this.state.dateField);
 			const quad = this.quadrantOf(task);
-			if (quad) el.style.setProperty('--chip-accent', `var(--tcal-${quad})`);
+			const accent = this.taskAccent(task, quad);
+			if (accent) el.style.setProperty('--chip-accent', accent);
 			else el.style.removeProperty('--chip-accent');
 			el.createDiv({ cls: 'sbm-tcal-peek-title', text: this.displayTitle(task.title) });
 			const meta = el.createDiv({ cls: 'sbm-tcal-peek-meta' });
@@ -1042,9 +1054,6 @@ export class TaskCalendarView extends ItemView {
 		this.clearGridSelection();
 		this.rootEl.empty();
 		this.rootEl.className = `sbm-tcal is-${this.layout} mode-${this.effectiveMode()} titles-${this.state.titleLines || 'full'}`;
-		const entryColor = (this.plugin.settings.dailyEntriesColor || '').trim();
-		if (entryColor) this.rootEl.style.setProperty('--sbm-entry-color', entryColor);
-		else this.rootEl.style.removeProperty('--sbm-entry-color');
 
 		// Les cases à cocher horodatées des notes quotidiennes s'affichent comme entrées (pas en double)
 		const entryTaskKeys = this.entriesEnabled() ? this.entries.taskKeys() : new Set<string>();
@@ -2428,6 +2437,7 @@ export class TaskCalendarView extends ItemView {
 			if (!isTaskOpen(t)) dot.addClass('is-done');
 			const q = this.quadrantOf(t);
 			if (q) dot.addClass(`quad-${q}`);
+			if (t.priority) dot.addClass(`prio-${t.priority}`);
 		});
 	}
 
@@ -2463,6 +2473,15 @@ export class TaskCalendarView extends ItemView {
 		btn.setAttribute('aria-label', title);
 		btn.addEventListener('click', onClick);
 		return btn;
+	}
+
+	/** Couleur d'une tâche : son quadrant, ou sa priorité quand les quadrants sont désactivés. */
+	private taskAccent(task: ObsidianTask, quad: MatrixQuadrant): string | null {
+		if (quad) return `var(--tcal-${quad})`;
+		const prio = task.priority;
+		if (!prio || prio === 'normal') return null;
+		if (this.plugin.settings.matrixEnabled === false) return `var(--tcal-prio-${prio})`;
+		return prio === 'highest' || prio === 'high' ? 'var(--tcal-q1)' : null;
 	}
 
 	private quadrantOf(task: ObsidianTask): MatrixQuadrant {

@@ -147,3 +147,45 @@ describe('agenda principal et doublons', () => {
 		expect(unique.map(e => `${e.id}@${e.calendarId}`)).toEqual(['spectacle@melo@x', 'autre@melo@x']);
 	});
 });
+
+describe('couleurs choisies dans les réglages', () => {
+	const calendars = [
+		{ id: 'me@x', name: 'Moi', color: '#111111' },
+		{ id: 'sport@x', name: 'Sport', color: '#222222' },
+		{ id: 'claire@x', name: 'Claire', color: '#333333' }
+	];
+	const base = {
+		...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
+		defaultCalendarId: 'me@x',
+		calendarsConfig: {
+			'me@x': { id: 'me@x', role: 'primary' as const },
+			'sport@x': { id: 'sport@x', role: 'secondary' as const },
+			'claire@x': { id: 'claire@x', role: 'other_person' as const }
+		}
+	};
+	const colorOf = (legend: ReturnType<typeof buildCalendarColors>, id: string) => legend.find(l => l.id === id)!.color;
+
+	it('uses the role colors chosen in the settings', () => {
+		const legend = buildCalendarColors({ ...base, primaryCalendarColor: '#aa0000', otherPersonCalendarColor: '#00aa00' }, calendars, 'ACCENT');
+		expect(colorOf(legend, 'me@x')).toBe('#aa0000');
+		expect(colorOf(legend, 'claire@x')).toBe('#00aa00');
+		expect(SECONDARY_PALETTE).toContain(colorOf(legend, 'sport@x'));
+	});
+
+	it('takes the Google colors only when enabled', () => {
+		const legend = buildCalendarColors({ ...base, useGoogleCalendarColors: true }, calendars, 'ACCENT');
+		expect(legend.map(l => l.color)).toEqual(['#111111', '#222222', '#333333']);
+	});
+
+	it('prefers the color chosen for one calendar over every other', () => {
+		const settings = {
+			...base,
+			useGoogleCalendarColors: true,
+			primaryCalendarColor: '#aa0000',
+			calendarsConfig: { ...base.calendarsConfig, 'me@x': { id: 'me@x', role: 'primary' as const, color: '#abcdef' }, 'sport@x': { id: 'sport@x', role: 'secondary' as const, color: '#fedcba' } }
+		};
+		const legend = buildCalendarColors(settings, calendars, 'ACCENT');
+		expect(colorOf(legend, 'me@x')).toBe('#abcdef');
+		expect(colorOf(legend, 'sport@x')).toBe('#fedcba');
+	});
+});

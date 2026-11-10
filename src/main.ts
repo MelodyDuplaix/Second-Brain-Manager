@@ -48,6 +48,20 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	// Densité visuelle de l'interface du plugin
 	uiDensity: UiDensity;
 
+	// Couleurs du calendrier (vide : couleur du thème)
+	taskColorQ1: string;
+	taskColorQ2: string;
+	taskColorQ3: string;
+	taskColorQ4: string;
+	// Quadrants désactivés : couleur selon la priorité
+	taskColorPrioHighest: string;
+	taskColorPrioHigh: string;
+	taskColorPrioMedium: string;
+	taskColorPrioLow: string;
+	taskColorPrioLowest: string;
+	taskColorDefault: string;
+	calendarTodayColor: string;
+
 	// Statuts de tâche lus dans les réglages du plugin Tasks (statuts personnalisés, statut suivant…)
 	useTasksPluginStatuses: boolean;
 
@@ -83,6 +97,22 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	configuredPrompts?: ConfiguredPrompt[];
 }
 
+/** Variable CSS globale ↔ réglage de couleur. */
+export const CALENDAR_COLOR_VARS: Array<[string, keyof SecondBrainSettings]> = [
+	['--sbm-color-q1', 'taskColorQ1'],
+	['--sbm-color-q2', 'taskColorQ2'],
+	['--sbm-color-q3', 'taskColorQ3'],
+	['--sbm-color-q4', 'taskColorQ4'],
+	['--sbm-color-prio-highest', 'taskColorPrioHighest'],
+	['--sbm-color-prio-high', 'taskColorPrioHigh'],
+	['--sbm-color-prio-medium', 'taskColorPrioMedium'],
+	['--sbm-color-prio-low', 'taskColorPrioLow'],
+	['--sbm-color-prio-lowest', 'taskColorPrioLowest'],
+	['--sbm-color-task', 'taskColorDefault'],
+	['--sbm-color-entry', 'dailyEntriesColor'],
+	['--sbm-color-today', 'calendarTodayColor']
+];
+
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_SYNTAX_CONFIG,
 	...DEFAULT_GOOGLE_CALENDAR_SETTINGS,
@@ -107,6 +137,18 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	startupSidebarViews: [],
 
 	uiDensity: 'compact',
+
+	taskColorQ1: '',
+	taskColorQ2: '',
+	taskColorQ3: '',
+	taskColorQ4: '',
+	taskColorPrioHighest: '',
+	taskColorPrioHigh: '',
+	taskColorPrioMedium: '',
+	taskColorPrioLow: '',
+	taskColorPrioLowest: '',
+	taskColorDefault: '',
+	calendarTodayColor: '',
 
 	useTasksPluginStatuses: true,
 
@@ -279,6 +321,11 @@ export default class SecondBrainPlugin extends Plugin {
 		await this.syncTasksPluginStatuses();
 		this.applyUiDensity();
 		this.register(() => document.body.removeClass('sbm-density-compact', 'sbm-density-dense'));
+		this.applyCalendarColors();
+		this.register(() => {
+			CALENDAR_COLOR_VARS.forEach(([cssVar]) => document.body.style.removeProperty(cssVar));
+			document.body.removeClass('sbm-tasks-by-priority');
+		});
 
 		// Enregistrement des vues
 		this.registerView(
@@ -688,6 +735,25 @@ export default class SecondBrainPlugin extends Plugin {
 		const density = this.settings.uiDensity || 'compact';
 		document.body.toggleClass('sbm-density-compact', density === 'compact');
 		document.body.toggleClass('sbm-density-dense', density === 'dense');
+	}
+
+	/** Couleurs choisies dans les réglages, exposées en variables CSS (vues, aperçus et fantômes de glisser). */
+	public applyCalendarColors(): void {
+		for (const [cssVar, key] of CALENDAR_COLOR_VARS) {
+			const value = String(this.settings[key] || '').trim();
+			if (value) document.body.style.setProperty(cssVar, value);
+			else document.body.style.removeProperty(cssVar);
+		}
+		// Sans quadrants, les tâches sont colorées selon leur priorité
+		document.body.toggleClass('sbm-tasks-by-priority', this.settings.matrixEnabled === false);
+	}
+
+	/** Applique un changement de couleur : variables CSS et couleurs des agendas, sans recharger les événements. */
+	public refreshCalendarColors(): void {
+		this.applyCalendarColors();
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR).forEach(leaf => {
+			if (leaf.view instanceof TaskCalendarView) leaf.view.recolor();
+		});
 	}
 
 	onunload() {

@@ -13,11 +13,97 @@ import { getTaskExclusionRules, ExclusionReason, TaskExclusionSettings } from '.
 import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
 import { DailyEntryParser, DailyEntryInsertPosition, formatClock } from '../../services/dailyEntriesService';
+import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEventsService';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
 	private entrySample = '- 11:30 - 12:00 Dentiste #santé\n- 13:16 [[Projet]]\n- [ ] 18:45 - 19:45 Cours de danse';
 	private refreshCalendarViews = debounce(() => this.plugin.refreshTaskViews(), 600, true);
+
+	/** Couleur d'une variable du thème convertie en hexadécimal (valeur affichée par le sélecteur quand rien n'est choisi). */
+	private themeColorHex(cssColor: string, fallback: string): string {
+		const probe = document.body.createDiv();
+		probe.style.display = 'none';
+		probe.style.color = cssColor;
+		const rgb = getComputedStyle(probe).color;
+		probe.remove();
+		const m = rgb.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+		if (!m) return fallback;
+		return '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('');
+	}
+
+	/** Sélecteur de couleur avec bouton de retour à la couleur par défaut ('' = défaut). */
+	private addColorControl(setting: Setting, get: () => string, set: (value: string) => void, defaultColor: () => string): void {
+		const custom = (get() || '').trim();
+		if (!custom) setting.descEl.createSpan({ cls: 'sbm-color-default-hint', text: ' (couleur par défaut)' });
+		setting
+			.addColorPicker((picker) => {
+				picker.setValue(custom || defaultColor()).onChange(async (val) => {
+					set(val);
+					await this.plugin.saveSettings();
+					this.plugin.refreshCalendarColors();
+					setting.descEl.querySelector('.sbm-color-default-hint')?.remove();
+				});
+			})
+			.addExtraButton((btn) => {
+				btn.setIcon('rotate-ccw').setTooltip('Couleur par défaut').onClick(async () => {
+					set('');
+					await this.plugin.saveSettings();
+					this.plugin.refreshCalendarColors();
+					this.rerender();
+				});
+			});
+	}
+
+	/** Couleurs des catégories affichées dans le calendrier (tâches, entrées, agendas Google). */
+	private renderCalendarColorSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Couleurs du calendrier',
+			'palette',
+			'Couleur de chaque catégorie dans le calendrier : tâches (par quadrant, ou par priorité si les quadrants sont désactivés), entrées des notes quotidiennes et agendas Google. Le bouton ↺ rend la couleur par défaut.'
+		);
+		const theme = (cssColor: string, fallback: string) => () => this.themeColorHex(cssColor, fallback);
+		const add = (name: string, desc: string, key: 'taskColorQ1' | 'taskColorQ2' | 'taskColorQ3' | 'taskColorQ4' | 'taskColorPrioHighest' | 'taskColorPrioHigh' | 'taskColorPrioMedium' | 'taskColorPrioLow' | 'taskColorPrioLowest' | 'taskColorDefault' | 'dailyEntriesColor' | 'calendarTodayColor' | 'primaryCalendarColor' | 'otherPersonCalendarColor', defaultColor: () => string) => {
+			group.addSetting((setting: Setting) => {
+				setting.setName(name).setDesc(desc);
+				this.addColorControl(setting, () => s[key] || '', (v) => { s[key] = v; }, defaultColor);
+			});
+		};
+
+		if (s.matrixEnabled !== false) {
+			add('Tâches Q1 · urgent et important', 'Aussi utilisée pour les tâches de priorité haute ou maximale.', 'taskColorQ1', theme('var(--color-red)', '#e93147'));
+			add('Tâches Q2 · important, pas urgent', 'Quadrant 2 de la matrice d’Eisenhower.', 'taskColorQ2', theme('var(--interactive-accent)', '#8a5cf5'));
+			add('Tâches Q3 · urgent, pas important', 'Quadrant 3 de la matrice d’Eisenhower.', 'taskColorQ3', theme('var(--color-orange)', '#ec7500'));
+			add('Tâches Q4 · ni urgent ni important', 'Quadrant 4 de la matrice d’Eisenhower.', 'taskColorQ4', theme('var(--text-faint)', '#999999'));
+			add('Autres tâches', 'Tâches sans quadrant ni priorité haute.', 'taskColorDefault', theme('var(--background-modifier-border-hover, var(--text-faint))', '#bdbdbd'));
+		} else {
+			const prioDesc = 'Quadrants désactivés : les tâches sont colorées selon leur priorité.';
+			add('Tâches 🔺 priorité maximale', prioDesc, 'taskColorPrioHighest', theme('var(--color-red)', '#e93147'));
+			add('Tâches ⏫ priorité haute', prioDesc, 'taskColorPrioHigh', theme('var(--color-orange)', '#ec7500'));
+			add('Tâches 🔼 priorité moyenne', prioDesc, 'taskColorPrioMedium', theme('var(--color-yellow)', '#e0ac00'));
+			add('Tâches 🔽 priorité basse', prioDesc, 'taskColorPrioLow', theme('var(--color-blue)', '#086ddd'));
+			add('Tâches ⏬ priorité minimale', prioDesc, 'taskColorPrioLowest', theme('var(--text-faint)', '#999999'));
+			add('Autres tâches', 'Tâches sans priorité.', 'taskColorDefault', theme('var(--background-modifier-border-hover, var(--text-faint))', '#bdbdbd'));
+		}
+		add('Entrées de la note quotidienne', 'Lignes horodatées (« - 11:30 - 12:00 Dentiste ») affichées dans le calendrier.', 'dailyEntriesColor', theme('var(--color-purple, #a855f7)', '#a855f7'));
+		add('Aujourd’hui', 'Repère du jour actuel (en-tête, case du jour, ligne de l’heure).', 'calendarTodayColor', theme('var(--interactive-accent)', '#8a5cf5'));
+		add('Agenda Google principal', 'Événements de l’agenda de référence.', 'primaryCalendarColor', theme('var(--interactive-accent)', '#8a5cf5'));
+		add('Agendas d’autres personnes', 'Événements des agendas consultatifs.', 'otherPersonCalendarColor', () => OTHER_PERSON_COLOR);
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Reprendre les couleurs de Google Agenda')
+				.setDesc('Les agendas sans couleur choisie prennent la couleur définie dans Google Agenda. Les agendas secondaires ont sinon une couleur automatique ; chaque agenda peut recevoir sa propre couleur dans Calendrier › Google Agenda.')
+				.addToggle((toggle) => {
+					toggle.setValue(!!s.useGoogleCalendarColors).onChange(async (val) => {
+						s.useGoogleCalendarColors = val;
+						await this.plugin.saveSettings();
+						this.plugin.refreshCalendarColors();
+					});
+				});
+		});
+	}
 
 	/** Calendrier : grille horaire et entrées horodatées des notes quotidiennes. */
 	private renderCalendarEntriesSettings(): void {
@@ -243,25 +329,6 @@ export class MainPage extends BaseSettingsPage {
 				});
 		});
 
-		group.addSetting((setting: Setting) => {
-			setting
-				.setName('Couleur des entrées')
-				.setDesc('Couleur des entrées de la note quotidienne dans le calendrier.')
-				.addColorPicker((picker) => {
-					picker.setValue(s.dailyEntriesColor || '#a855f7').onChange(async (val) => {
-						s.dailyEntriesColor = val;
-						await save();
-					});
-				})
-				.addExtraButton((btn) => {
-					btn.setIcon('rotate-ccw').setTooltip('Couleur du thème').onClick(async () => {
-						s.dailyEntriesColor = '';
-						await save();
-						this.rerender();
-					});
-				});
-		});
-
 		const hourOptions = (dropdown: { addOption: (v: string, l: string) => unknown }, from: number, to: number) => {
 			for (let h = from; h <= to; h++) dropdown.addOption(String(h), `${String(h).padStart(2, '0')}:00`);
 		};
@@ -341,6 +408,7 @@ export class MainPage extends BaseSettingsPage {
 			displayValue: () => s.googleRefreshToken ? 'Google connecté' : ''
 		}, () => {
 			this.renderCalendarEntriesSettings();
+			this.renderCalendarColorSettings();
 			this.section({
 				id: 'google',
 				name: 'Google Agenda',
@@ -976,6 +1044,7 @@ export class MainPage extends BaseSettingsPage {
 							this.plugin.settings.matrixEnabled = value;
 							MatrixFeature.setEnabled(value);
 							await this.plugin.saveSettings();
+							this.plugin.applyCalendarColors();
 							this.plugin.refreshTaskViews();
 							this.plugin.refreshGamificationViews();
 							this.rerender();
@@ -1478,7 +1547,7 @@ export class MainPage extends BaseSettingsPage {
 
 			if (this.discoveredCalendars && this.discoveredCalendars.length > 0) {
 				const calendarListGroup = new SettingGroup(this.containerEl).setHeading(
-					'Gestion & Rôles de chaque calendrier',
+					'Rôle et couleur de chaque agenda',
 					'calendar-check',
 					'Définissez si chaque calendrier est principal, secondaire ou consultatif'
 				);
@@ -1519,6 +1588,16 @@ export class MainPage extends BaseSettingsPage {
 									this.rerender();
 								});
 							});
+
+						if (conf.role !== 'ignore') {
+							const roleColor = conf.role === 'other_person'
+								? () => (this.plugin.settings.otherPersonCalendarColor || '').trim() || OTHER_PERSON_COLOR
+								: conf.role === 'primary'
+									? () => (this.plugin.settings.primaryCalendarColor || '').trim() || this.themeColorHex('var(--interactive-accent)', '#8a5cf5')
+									: () => (this.plugin.settings.useGoogleCalendarColors && c.backgroundColor) || SECONDARY_PALETTE[0];
+							this.addColorControl(setting, () => conf.color || '', (v) => { conf.color = v; },
+								() => (this.plugin.settings.useGoogleCalendarColors && c.backgroundColor) || roleColor());
+						}
 
 						if (conf.role === 'other_person') {
 							setting.addText((text) => {

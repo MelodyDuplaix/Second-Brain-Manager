@@ -47,6 +47,8 @@ export interface CalendarConfig {
 	summary?: string;
 	role: CalendarRole;
 	ownerName?: string;
+	/** Couleur choisie pour cet agenda (vide : couleur du rôle ou de Google) */
+	color?: string;
 }
 
 export interface GoogleCalendarSettings {
@@ -59,6 +61,12 @@ export interface GoogleCalendarSettings {
 	calendarsConfig?: Record<string, CalendarConfig>;
 	autoSyncGoogleCalendar: boolean;
 	syncIntervalMinutes: number;
+	/** Couleur de l'agenda principal (vide : accent du thème) */
+	primaryCalendarColor?: string;
+	/** Couleur des agendas d'autres personnes (vide : gris par défaut) */
+	otherPersonCalendarColor?: string;
+	/** Reprend la couleur définie dans Google Agenda pour les agendas sans couleur choisie */
+	useGoogleCalendarColors?: boolean;
 }
 
 export const DEFAULT_GOOGLE_CALENDAR_SETTINGS: GoogleCalendarSettings = {
@@ -70,7 +78,10 @@ export const DEFAULT_GOOGLE_CALENDAR_SETTINGS: GoogleCalendarSettings = {
 	defaultCalendarId: 'primary',
 	calendarsConfig: {},
 	autoSyncGoogleCalendar: true,
-	syncIntervalMinutes: 15
+	syncIntervalMinutes: 15,
+	primaryCalendarColor: '',
+	otherPersonCalendarColor: '',
+	useGoogleCalendarColors: false
 };
 
 export type CalendarViewType = 'day' | 'week' | 'schedule';
