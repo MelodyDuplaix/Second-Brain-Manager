@@ -106,6 +106,30 @@ export class MainPage extends BaseSettingsPage {
 		});
 	}
 
+	/** Où écrire les tâches créées par l'IA (briefing du matin, chat, agenda). */
+	private renderTaskCreationSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Création de tâches',
+			'list-plus',
+			'Emplacement des tâches ajoutées quand vous acceptez une proposition de l’IA (briefing du matin, chat) ou importez les rendez-vous de l’agenda.'
+		);
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Section des nouvelles tâches')
+				.setDesc('Titre de la section qui reçoit les tâches, si la note en contient une (ex. « A faire aujourd’hui »). Le début du titre suffit, sans les # ni la casse. Vide : détection automatique (« À faire », « Tâches », « Prochaines étapes »…). Les tâches ne sont jamais écrites dans les propriétés.')
+				.addText((text) => {
+					text
+						.setPlaceholder('A faire aujourd’hui')
+						.setValue(s.taskInsertHeading || '')
+						.onChange(async (val) => {
+							s.taskInsertHeading = val.replace(/^#+\s*/, '').trim();
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+	}
+
 	/** Calendrier : grille horaire et entrées horodatées des notes quotidiennes. */
 	private renderCalendarEntriesSettings(): void {
 		const s = this.plugin.settings;
@@ -395,6 +419,7 @@ export class MainPage extends BaseSettingsPage {
 			displayValue: () => s.matrixEnabled === false ? 'Sans quadrants' : 'Avec quadrants'
 		}, () => {
 			this.renderTaskSyntaxSettings();
+			this.renderTaskCreationSettings();
 			this.renderStatusSettings();
 			this.renderPauseSettings();
 			this.renderMatrixSettings();

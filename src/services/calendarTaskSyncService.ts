@@ -254,7 +254,7 @@ export class CalendarTaskSyncService {
 			}
 
 			const taskLine = this.formatEventTaskLine(ev, targetDate, settings, tag);
-			fileContent = ActionExecutor.insertTaskIntoNoteContent(fileContent, taskLine);
+			fileContent = ActionExecutor.insertTaskIntoNoteContent(fileContent, taskLine, settings.taskInsertHeading || "");
 			createdTasks.push(taskLine);
 			tasksCreated++;
 		}

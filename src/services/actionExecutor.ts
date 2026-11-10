@@ -267,9 +267,25 @@ export class ActionExecutor {
 		return title.replace(/\s+/g, ' ').trim();
 	}
 
-	public static insertTaskIntoNoteContent(content: string, taskLine: string): string {
+	/** Index de la ligne qui ferme les propriétés (frontmatter YAML), ou -1 s'il n'y en a pas. */
+	public static frontmatterEndIndex(lines: string[]): number {
+		if (lines.length === 0 || lines[0].trim() !== '---') return -1;
+		for (let i = 1; i < lines.length; i++) {
+			const t = lines[i].trim();
+			if (t === '---' || t === '...') return i;
+		}
+		return -1;
+	}
+
+	/**
+	 * Insère une ligne de tâche dans le corps d'une note (jamais dans ses propriétés).
+	 * `preferredHeading` : titre de section choisi dans les réglages, utilisé en priorité s'il existe dans la note.
+	 */
+	public static insertTaskIntoNoteContent(content: string, taskLine: string, preferredHeading = ''): string {
 		const isCRLF = content.includes('\r\n');
 		const lines = content.replace(/\r\n/g, '\n').split('\n');
+		// Premier index du corps de la note : les propriétés ne reçoivent jamais de tâche
+		const bodyStart = ActionExecutor.frontmatterEndIndex(lines) + 1;
 
 		const extractWords = (str: string): string[] => {
 			return str
@@ -317,7 +333,7 @@ export class ActionExecutor {
 		// Garde-fou strict anti-doublon & remplacement intelligent en place :
 		// Si une tâche identique ou similaire existe déjà dans la note (ex: draft sans métadonnées),
 		// on la remplace directement par la version complète pour éviter toute duplication
-		for (let i = 0; i < lines.length; i++) {
+		for (let i = bodyStart; i < lines.length; i++) {
 			const trimmed = lines[i].trim();
 			if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
 				if (isSameOrSimilarTask(trimmed, taskLine)) {
@@ -331,6 +347,8 @@ export class ActionExecutor {
 		const cleanHeadingForComparison = (str: string): string => {
 			return str.trim()
 				.replace(/^#{1,6}\s+/, '')
+				// Liens Markdown dans le titre (ex. bouton « [➕](obsidian://quickadd…) ») : sans intérêt pour la comparaison
+				.replace(/\[[^\]]*\]\([^)]*\)/g, '')
 				.normalize('NFD').replace(/[\u0300-\u036f]/g, '') // supprime les accents : à->a, â->a, é->e, etc.
 				.toLowerCase()
 				.replace(/[^\w\s-]/g, '')
@@ -338,7 +356,7 @@ export class ActionExecutor {
 		};
 
 		const isExcludedSection = (cleaned: string): boolean => {
-			const excludedKeywords = ['faites', 'terminees', 'archives', 'journal', 'log', 'history', 'liens', 'links', 'references', 'demain', 'tomorrow', 'done', 'completed', 'finished'];
+			const excludedKeywords = ['faites', 'terminees', 'effectuees', 'realisees', 'archives', 'journal', 'log', 'history', 'liens', 'links', 'references', 'demain', 'tomorrow', 'done', 'completed', 'finished'];
 			return excludedKeywords.some(kw => cleaned.includes(kw));
 		};
 
@@ -363,10 +381,27 @@ export class ActionExecutor {
 
 		let targetHeaderIdx = -1;
 
-		for (let i = 0; i < lines.length; i++) {
+		// Titres de niveau 1 : sections seulement si la note en a plusieurs ; un seul = le titre de la note
+		const h1Count = lines.slice(bodyStart).filter(l => /^#\s+/.test(l.trim())).length;
+		const sectionHeading = h1Count >= 2 ? /^#{1,6}\s+/ : /^#{2,6}\s+/;
+
+		// 0. Section choisie dans les réglages
+		const preferred = cleanHeadingForComparison(preferredHeading || '');
+		if (preferred) {
+			for (let i = bodyStart; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (/^#{1,6}\s+/.test(line) && cleanHeadingForComparison(line).startsWith(preferred)) {
+					targetHeaderIdx = i;
+					break;
+				}
+			}
+		}
+
+		// 1. Section de tâches reconnue. Les titres de niveau 1 comptent aussi : beaucoup de notes
+		// quotidiennes en font leurs sections (« # A faire aujourd'hui »). Un titre de note n'y ressemble pas.
+		for (let i = bodyStart; targetHeaderIdx === -1 && i < lines.length; i++) {
 			const line = lines[i].trim();
-			// On ne cible que les sous-titres (H2 à H6) pour ne pas confondre avec le titre principal H1 de la note
-			if (/^#{2,6}\s+/.test(line)) {
+			if (sectionHeading.test(line)) {
 				const cleaned = cleanHeadingForComparison(line);
 				if (isActiveTaskSection(cleaned)) {
 					targetHeaderIdx = i;
@@ -376,9 +411,9 @@ export class ActionExecutor {
 		}
 
 		if (targetHeaderIdx === -1) {
-			for (let i = 0; i < lines.length; i++) {
+			for (let i = bodyStart; i < lines.length; i++) {
 				const line = lines[i].trim();
-				if (/^#{2,6}\s+/.test(line)) {
+				if (sectionHeading.test(line)) {
 					const cleaned = cleanHeadingForComparison(line);
 					if (isGenericTaskSection(cleaned)) {
 						targetHeaderIdx = i;
@@ -389,42 +424,41 @@ export class ActionExecutor {
 		}
 		// Si un en-tête de section a été trouvé
 		if (targetHeaderIdx !== -1) {
-			let insertIdx = targetHeaderIdx + 1;
+			const targetLevel = /^(#{1,6})/.exec(lines[targetHeaderIdx].trim())?.[1].length ?? 2;
+			// Toujours à la fin de la section : après sa dernière ligne de contenu (liste, texte, bloc de
+			// code, intégration…), avant les lignes vides qui la séparent de la section suivante.
+			// Plusieurs tâches ajoutées à la suite restent ainsi groupées, dans l'ordre.
+			let lastContentIdx = targetHeaderIdx;
 			let inCodeBlock = false;
-			let lastTaskIdx = -1;
 
 			for (let i = targetHeaderIdx + 1; i < lines.length; i++) {
 				const trimmed = lines[i].trim();
 				if (trimmed.startsWith('```')) {
 					inCodeBlock = !inCodeBlock;
-					if (inCodeBlock && lastTaskIdx === -1) {
-						insertIdx = i;
-						break;
-					}
+					lastContentIdx = i;
+					continue;
 				}
-				if (inCodeBlock) continue;
+				if (inCodeBlock) {
+					lastContentIdx = i;
+					continue;
+				}
 
-				if (/^#{1,3}\s+/.test(trimmed)) {
+				const headingLevel = /^(#{1,6})\s+/.exec(trimmed)?.[1].length;
+				if (headingLevel !== undefined && (headingLevel <= 3 || headingLevel <= targetLevel)) {
 					break;
 				}
 
-				if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
-					lastTaskIdx = i;
-					insertIdx = i + 1;
-				} else if (lastTaskIdx !== -1 && trimmed === '') {
-					insertIdx = i;
-					break;
-				}
+				if (trimmed !== '') lastContentIdx = i;
 			}
 
-			lines.splice(insertIdx, 0, taskLine);
+			lines.splice(lastContentIdx + 1, 0, taskLine);
 			return joinLines(lines);
 		}
 
 		// 2. Si pas de section dédiée trouvée, chercher la dernière tâche markdown du document (hors code block)
 		let lastDocTaskIdx = -1;
 		let inCode = false;
-		for (let i = 0; i < lines.length; i++) {
+		for (let i = bodyStart; i < lines.length; i++) {
 			const trimmed = lines[i].trim();
 			if (trimmed.startsWith('```')) {
 				inCode = !inCode;
@@ -442,7 +476,7 @@ export class ActionExecutor {
 
 		// 3. Chercher si la note se termine par un footer / navigation callout (ex: >[!column, >[!day, ---)
 		let footerStartIdx = -1;
-		for (let i = lines.length - 1; i >= 0; i--) {
+		for (let i = lines.length - 1; i >= bodyStart; i--) {
 			const trimmed = lines[i].trim();
 			if (trimmed.startsWith('>[!column') || trimmed.startsWith('>[!day') || trimmed.startsWith('---') || trimmed.startsWith('*Note créée')) {
 				footerStartIdx = i;
@@ -453,7 +487,7 @@ export class ActionExecutor {
 			}
 		}
 
-		if (footerStartIdx > 0) {
+		if (footerStartIdx > bodyStart) {
 			lines.splice(footerStartIdx, 0, taskLine, '');
 			return joinLines(lines);
 		}
@@ -954,7 +988,7 @@ export class ActionExecutor {
 		}
 
 		await this.updateFileAndOpenEditors(file, (content) => {
-			return ActionExecutor.insertTaskIntoNoteContent(content, taskLine);
+			return ActionExecutor.insertTaskIntoNoteContent(content, taskLine, this.settings.taskInsertHeading || '');
 		});
 
 		const noteBase = file.basename || resolved.path.split('/').pop()?.replace('.md', '') || resolved.path;

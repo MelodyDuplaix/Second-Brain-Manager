@@ -62,6 +62,9 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	taskColorDefault: string;
 	calendarTodayColor: string;
 
+	// Titre de la section où l'IA ajoute les tâches acceptées (vide : détection automatique)
+	taskInsertHeading: string;
+
 	// Statuts de tâche lus dans les réglages du plugin Tasks (statuts personnalisés, statut suivant…)
 	useTasksPluginStatuses: boolean;
 
@@ -149,6 +152,8 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	taskColorPrioLowest: '',
 	taskColorDefault: '',
 	calendarTodayColor: '',
+
+	taskInsertHeading: '',
 
 	useTasksPluginStatuses: true,
 
