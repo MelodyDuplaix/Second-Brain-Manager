@@ -23,8 +23,10 @@ import { LinkTagSuggest } from '../suggesters/linkTagSuggest';
 import {
 	CalendarFilter,
 	DEFAULT_CALENDAR_FILTER,
+	GOOGLE_ONLY_PRESETS,
 	activeTaskGroups,
 	clearFilterChip,
+	copyFilter,
 	describeFilter,
 	extractTags,
 	isCalendarVisible,
@@ -684,6 +686,47 @@ export class TaskCalendarView extends ItemView {
 		return preset ? preset.name : null;
 	}
 
+	/**
+	 * Menu rapide des préréglages (clic droit sur le bouton de filtre) : un clic applique le préréglage,
+	 * sans passer par le panneau complet.
+	 */
+	private openPresetQuickMenu(e: MouseEvent): void {
+		e.preventDefault();
+		e.stopPropagation();
+		if (this.filterPopover.isOpen()) this.filterPopover.close();
+		const filter = this.getFilter();
+		const google = this.googleReady();
+		const presets = (this.plugin.settings.calendarFilterPresets || [])
+			.filter(p => google || !GOOGLE_ONLY_PRESETS.has(p.id));
+
+		const menu = new Menu();
+		if (presets.length) {
+			for (const preset of presets) {
+				const active = sameFilter(filter, preset.filter);
+				menu.addItem(i => i
+					.setTitle(preset.name)
+					.setIcon(preset.icon || 'bookmark')
+					.setChecked(active)
+					.onClick(() => {
+						if (!active) this.setFilter(copyFilter(preset.filter));
+					}));
+			}
+		} else {
+			menu.addItem(i => i.setTitle('Aucun préréglage enregistré').setIcon('bookmark').setDisabled(true));
+		}
+		menu.addSeparator();
+		menu.addItem(i => i
+			.setTitle('Tout afficher')
+			.setIcon('x')
+			.setDisabled(sameFilter(filter, DEFAULT_CALENDAR_FILTER))
+			.onClick(() => this.setFilter({ ...DEFAULT_CALENDAR_FILTER })));
+		menu.addItem(i => i
+			.setTitle('Modifier les filtres…')
+			.setIcon('sliders-horizontal')
+			.onClick(() => this.openFilters()));
+		menu.showAtMouseEvent(e);
+	}
+
 	/** Pastilles des filtres actifs sous la barre d'outils : un clic retire le filtre. */
 	private renderFilterBar(): void {
 		const chips = describeFilter(this.getFilter(), this.filterContext());
@@ -698,6 +741,7 @@ export class TaskCalendarView extends ItemView {
 		label.createSpan({ text: presetName || 'Filtres' });
 		label.title = `${summary}\nModifier les filtres (F)`;
 		label.addEventListener('click', () => this.openFilters());
+		label.addEventListener('contextmenu', (e) => this.openPresetQuickMenu(e));
 
 		if (!presetName) {
 			const track = bar.createDiv({ cls: 'sbm-tcal-filterbar-track' });
@@ -1385,7 +1429,7 @@ export class TaskCalendarView extends ItemView {
 		}
 
 		const activeFilters = describeFilter(this.getFilter(), this.filterContext()).length;
-		const filterBtn = this.iconButton(tools, 'filter', activeFilters ? `Filtres (${activeFilters} actif${activeFilters > 1 ? 's' : ''}) — F` : 'Filtres (F)', () => this.openFilters());
+		const filterBtn = this.iconButton(tools, 'filter', `${activeFilters ? `Filtres (${activeFilters} actif${activeFilters > 1 ? 's' : ''}) — F` : 'Filtres (F)'}\nClic droit : choisir un préréglage`, () => this.openFilters());
 		filterBtn.addClass('sbm-tcal-filter-btn');
 		filterBtn.setAttribute('aria-haspopup', 'dialog');
 		if (activeFilters) {
@@ -1393,6 +1437,8 @@ export class TaskCalendarView extends ItemView {
 			filterBtn.createSpan({ cls: 'sbm-tcal-filter-badge', text: String(activeFilters) });
 		}
 		if (this.filterPopover.isOpen()) filterBtn.addClass('is-open');
+		// Clic droit : liste des préréglages pour en appliquer un directement
+		filterBtn.addEventListener('contextmenu', (e) => this.openPresetQuickMenu(e));
 
 		this.iconButton(tools, 'more-horizontal', 'Options', (e) => this.openOptionsMenu(e));
 	}
