@@ -157,10 +157,22 @@ function quadrantRank(task: ObsidianTask): number {
 	return m ? Number(m[1]) : 5;
 }
 
+/**
+ * Jour où la tâche s'affiche dans le calendrier : son échéance (ou sa date prévue). Une tâche terminée
+ * ou annulée sans date apparaît le jour où elle l'a été (✅ / ❌) : sans cela, elle ne figurait
+ * nulle part — ni sur un jour, ni dans « Sans date », réservé aux tâches ouvertes — et une
+ * recherche qui la trouvait ne pouvait pas l'afficher.
+ */
+export function getTaskDisplayDate(task: ObsidianTask, field: CalendarDateField): string | null {
+	const date = getTaskDate(task, field);
+	if (date || isTaskOpen(task)) return date;
+	return CalendarDate.normalize(task.completedDate) || CalendarDate.normalize(task.cancelledDate);
+}
+
 export function bucketTasksByDate(tasks: ObsidianTask[], field: CalendarDateField): Map<string, ObsidianTask[]> {
 	const map = new Map<string, ObsidianTask[]>();
 	for (const task of tasks) {
-		const date = getTaskDate(task, field);
+		const date = getTaskDisplayDate(task, field);
 		if (!date) continue;
 		const list = map.get(date);
 		if (list) list.push(task);

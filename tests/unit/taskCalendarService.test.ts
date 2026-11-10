@@ -3,6 +3,7 @@ import { TFile } from 'obsidian';
 import {
 	CalendarDate,
 	bucketTasksByDate,
+	getTaskDisplayDate,
 	locateTaskLine,
 	TaskWriter,
 	dayEnergyLoad
@@ -72,6 +73,26 @@ describe('bucketTasksByDate', () => {
 	it('sums the energy load of open tasks only', () => {
 		const day = bucketTasksByDate(tasks, 'due').get('2026-11-10');
 		expect(dayEnergyLoad(day)).toBe(7);
+	});
+
+	it('places a done task without due date on the day it was completed', () => {
+		// Cas réel : tâche cochée sans 📅 ni ⏳, introuvable dans le calendrier (ni jour, ni « Sans date »)
+		const done = TaskParser.parseAllTasks('- [x] faire des bisous a Antoine @Melody ✅ 2026-11-10', 'Tracker.md', DEFAULT_SYNTAX_CONFIG);
+		expect(getTaskDisplayDate(done[0], 'due')).toBe('2026-11-10');
+		expect(getTaskDisplayDate(done[0], 'scheduled')).toBe('2026-11-10');
+		expect(bucketTasksByDate(done, 'due').get('2026-11-10')!.map(t => t.title)).toEqual(['faire des bisous a Antoine @Melody']);
+	});
+
+	it('places a cancelled task without due date on the day it was cancelled', () => {
+		const cancelled = TaskParser.parseAllTasks('- [-] Annulée ❌ 2026-11-09', 'note.md', DEFAULT_SYNTAX_CONFIG);
+		expect(getTaskDisplayDate(cancelled[0], 'due')).toBe('2026-11-09');
+	});
+
+	it('keeps the due date first, and leaves open undated tasks undated', () => {
+		const both = TaskParser.parseAllTasks('- [x] Fait en avance 📅 2026-11-12 ✅ 2026-11-10', 'note.md', DEFAULT_SYNTAX_CONFIG);
+		expect(getTaskDisplayDate(both[0], 'due')).toBe('2026-11-12');
+		const open = tasks.find(t => t.title === 'Sans date')!;
+		expect(getTaskDisplayDate(open, 'due')).toBeNull();
 	});
 });
 
