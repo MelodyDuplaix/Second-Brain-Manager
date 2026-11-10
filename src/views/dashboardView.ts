@@ -591,7 +591,8 @@ export class DashboardView extends ItemView {
 			const res = GamificationService.processCompletion(task, this.plugin.pluginData, this.plugin.settings.matrixProvider);
 			if (res.rewardGranted) {
 				await this.plugin.savePluginData();
-				new Notice(`🎉 Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙)`);
+				// Solde lu après l'enregistrement : il inclut les pièces venues d'un autre appareil.
+				new Notice(`🎉 Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${this.plugin.pluginData.wallet.balance} 🪙)`);
 			}
 		} finally {
 			this.plugin.isPluginPerformingTaskAction = false;

@@ -12,6 +12,7 @@ import { VIEW_TYPE_RECOVERY } from './views/recoveryView';
 import { TaskCalendarView, VIEW_TYPE_TASK_CALENDAR } from './views/taskCalendarView';
 import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts, RewardPurchase } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
+import { PluginDataSyncService, SyncableData, WalletBaseline } from './services/pluginDataSyncService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { SettingGroup } from './settings/settingGroup';
 import { MainPage } from './settings/pages/mainPage';
@@ -199,6 +200,8 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 
 interface StoredData {
 	settings: SecondBrainSettings;
+	/** Horodatage du dernier enregistrement des réglages (arbitrage entre deux appareils) */
+	settingsUpdatedAt?: string;
 	wallet: Wallet;
 	rewards: Reward[];
 	completionEvents: Record<string, CompletionEvent>;
@@ -207,6 +210,10 @@ interface StoredData {
 	workflowCounts?: WorkflowCounts;
 	lastActiveSession?: string;
 	rewardPurchases?: RewardPurchase[];
+	deletedCompletions?: Record<string, string>;
+	deletedPurchases?: Record<string, string>;
+	gamificationResetAt?: string;
+	walletBaseline?: WalletBaseline;
 }
 
 const DEFAULT_STORED_DATA: StoredData = {
@@ -261,6 +268,13 @@ export default class SecondBrainPlugin extends Plugin {
 	private lastUserEditorFilePath: string | null = null;
 	public isPluginPerformingTaskAction = false;
 	private registeredPromptCommandIds = new Set<string>();
+	private statusBarItemEl: HTMLElement | null = null;
+	/** Dernier contenu écrit dans `data.json` par cette instance : distingue nos écritures de celles d'un autre appareil. */
+	private lastWrittenData: string | null = null;
+	/** Horodatage du dernier enregistrement des réglages sur cet appareil. */
+	private settingsUpdatedAt: string | undefined;
+	/** Empreinte du dernier état de gamification affiché, pour ne rafraîchir qu'en cas de changement. */
+	private lastGamificationSignature: string | null = null;
 
 	public getPrompts(): ConfiguredPrompt[] {
 		if (!this.settings.configuredPrompts || this.settings.configuredPrompts.length === 0) {
@@ -424,8 +438,8 @@ export default class SecondBrainPlugin extends Plugin {
 			window.setTimeout(() => this.restoreViewTabHeaders(), 400);
 		});
 
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText(`Énergie: ${this.settings.energyLevel}/10 | 🪙 ${this.pluginData.wallet.balance}`);
+		this.statusBarItemEl = this.addStatusBarItem();
+		this.updateStatusBar();
 
 		// Traçage des interactions utilisateur sur les cases à cocher dans l'interface Obsidian.
 		// Écoute en phase de capture : le plugin Tasks arrête la propagation du clic sur les cases
@@ -463,11 +477,22 @@ export default class SecondBrainPlugin extends Plugin {
 			await this.syncTasksPluginStatuses();
 			this.refreshTaskViews();
 		}, 800, true);
+		// Nos propres données modifiées par un autre appareil (synchronisation des fichiers, plugin ouvert
+		// des deux côtés) : on fusionne au lieu de laisser la dernière écriture écraser l'autre.
+		const ownDataPath = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`);
+		const ownDataChanged = debounce(() => {
+			void this.reconcileExternalDataChange();
+		}, 1500, true);
 		this.registerEvent((this.app.vault as unknown as {
 			on(name: 'raw', cb: (path: string) => void): import('obsidian').EventRef;
 		}).on('raw', (path: string) => {
 			if (path.endsWith('obsidian-tasks-plugin/data.json')) tasksSettingsChanged();
+			else if (normalizePath(path) === ownDataPath) ownDataChanged();
 		}));
+
+		// Filet de sécurité : certains outils de synchronisation écrivent sans qu'Obsidian signale le
+		// fichier. On revérifie donc à chaque retour sur la fenêtre (lecture de data.json, peu coûteuse).
+		this.registerDomEvent(window, 'focus', () => ownDataChanged());
 
 		// Écouteur automatique de complétion de tâches dans les fichiers Markdown
 		this.registerEvent(
@@ -745,6 +770,49 @@ export default class SecondBrainPlugin extends Plugin {
 		});
 	}
 
+	/**
+	 * Empreinte de l'état de gamification affiché (solde, historique, série, trophées, échanges).
+	 * Elle sert à ne rafraîchir les vues que lorsque l'affichage changerait vraiment.
+	 */
+	private getGamificationSignature(): string {
+		if (!this.pluginData) return '';
+		const w = this.pluginData.wallet;
+		const unlocked = Object.values(this.pluginData.badges || {}).filter(b => b?.unlockedAt).length;
+		return [
+			w.balance,
+			w.lifetimeEarned,
+			w.lifetimeSpent,
+			Object.keys(this.pluginData.completionEvents || {}).length,
+			(this.pluginData.rewardPurchases || []).length,
+			(this.pluginData.rewards || []).length,
+			this.pluginData.streak?.currentStreak || 0,
+			this.pluginData.streak?.longestStreak || 0,
+			unlocked
+		].join('|');
+	}
+
+	/** Rafraîchissement groupé des vues qui affichent des pièces (plusieurs changements rapprochés = un seul rendu). */
+	private readonly refreshCoinViews = debounce(() => {
+		this.updateStatusBar();
+		this.refreshGamificationViews();
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD).forEach(leaf => {
+			if (leaf.view instanceof DashboardView) void leaf.view.render();
+		});
+	}, 120, false);
+
+	/**
+	 * À appeler après toute modification des pièces : barre d'état, vue « Gamification & Trophées » et
+	 * tableau de bord sont remis à jour tout de suite, sans attendre une réouverture de la vue.
+	 */
+	public notifyGamificationChanged(force = false): void {
+		if (!this.pluginData) return;
+		const signature = this.getGamificationSignature();
+		if (!force && signature === this.lastGamificationSignature) return;
+		this.lastGamificationSignature = signature;
+		this.updateStatusBar();
+		this.refreshCoinViews();
+	}
+
 	/** Applique la densité choisie via une classe sur <body> (lue par styles.css). */
 	public applyUiDensity(): void {
 		const density = this.settings.uiDensity || 'compact';
@@ -795,6 +863,9 @@ export default class SecondBrainPlugin extends Plugin {
 		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
 
 		let dataModified = false;
+		let awardedTasks = 0;
+		let awardedCoins = 0;
+		const unlockedBadges = new Map<string, { name: string; description: string }>();
 		// Doublons exacts (même titre, même date ✅) dans le fichier : numérotés pour rester distincts
 		const seen = new Map<string, number>();
 
@@ -807,11 +878,12 @@ export default class SecondBrainPlugin extends Plugin {
 					const res = GamificationService.processCompletion(task, this.pluginData, this.settings.matrixProvider, undefined, occurrence);
 					if (res.rewardGranted) {
 						dataModified = true;
-						new Notice(`Tâche terminée ! +${res.coinsEarned} 🪙 (Solde : ${res.newBalance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
-						if (res.newlyUnlockedBadges && res.newlyUnlockedBadges.length > 0) {
-							for (const badge of res.newlyUnlockedBadges) {
-								new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${badge.name} !\n${badge.description}`, 7000);
-							}
+						awardedTasks++;
+						awardedCoins += res.coinsEarned;
+						// Les notifications attendent l'enregistrement : le solde annoncé est alors celui
+						// qui tient compte des pièces arrivées d'un autre appareil.
+						for (const badge of res.newlyUnlockedBadges || []) {
+							unlockedBadges.set(badge.id, { name: badge.name, description: badge.description });
 						}
 					}
 				} else {
@@ -827,6 +899,14 @@ export default class SecondBrainPlugin extends Plugin {
 
 		if (dataModified) {
 			await this.savePluginData();
+		}
+
+		if (awardedTasks > 0) {
+			const label = awardedTasks > 1 ? `${awardedTasks} tâches terminées !` : 'Tâche terminée !';
+			new Notice(`${label} +${awardedCoins} 🪙 (Solde : ${this.pluginData.wallet.balance} 🪙 | Série : ${this.pluginData.streak.currentStreak}j 🔥)`);
+			for (const badge of unlockedBadges.values()) {
+				new Notice(`🏆 NOUVEAU BADGE DÉBLOQUÉ : ${badge.name} !\n${badge.description}`, 7000);
+			}
 		}
 	}
 
@@ -1110,7 +1190,10 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async loadPluginData() {
-		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, await this.loadData());
+		const stored = await this.loadData();
+		this.lastWrittenData = stored ? JSON.stringify(stored) : null;
+		const raw: StoredData = Object.assign({}, DEFAULT_STORED_DATA, stored);
+		this.settingsUpdatedAt = raw.settingsUpdatedAt;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw.settings);
 		// Préréglages de filtres par défaut copiés une fois dans la liste, pour pouvoir les modifier
 		if (!this.settings.calendarFilterPresetsSeeded) {
@@ -1146,23 +1229,32 @@ export default class SecondBrainPlugin extends Plugin {
 				notesMovedOrCleaned: 0
 			},
 			lastActiveSession: raw.lastActiveSession,
-			rewardPurchases: raw.rewardPurchases || []
+			rewardPurchases: raw.rewardPurchases || [],
+			deletedCompletions: raw.deletedCompletions || {},
+			deletedPurchases: raw.deletedPurchases || {},
+			gamificationResetAt: raw.gamificationResetAt,
+			walletBaseline: raw.walletBaseline
 		};
 
 		GamificationService.ensureDataStructures(this.pluginData);
 		// Nettoyage des anciennes tâches cochées enregistrées en masse à 0 pièce (identifiants liés aux numéros de ligne)
 		const pruned = GamificationService.pruneHistoricalSyncEvents(this.pluginData);
+		PluginDataSyncService.recomputeWallet(this.pluginData);
 		GamificationService.checkAndUnlockBadges(this.pluginData);
-		if (pruned > 0) {
-			console.info(`[Second Brain Manager] ${pruned} complétion(s) historique(s) en double retirée(s) de l'historique.`);
+		if (pruned > 0 || raw.walletBaseline === undefined) {
+			if (pruned > 0) {
+				console.info(`[Second Brain Manager] ${pruned} complétion(s) historique(s) en double retirée(s) de l'historique.`);
+			}
 			await this.savePluginData();
 		}
 		this.getPrompts();
 	}
 
-	async savePluginData() {
-		const dataToStore: StoredData = {
+	/** État complet du plugin tel qu'il serait écrit dans `data.json`. */
+	private buildStoredData(): StoredData {
+		return {
 			settings: this.settings,
+			settingsUpdatedAt: this.settingsUpdatedAt,
 			wallet: this.pluginData.wallet,
 			rewards: this.pluginData.rewards,
 			completionEvents: this.pluginData.completionEvents,
@@ -1170,9 +1262,117 @@ export default class SecondBrainPlugin extends Plugin {
 			badges: this.pluginData.badges,
 			workflowCounts: this.pluginData.workflowCounts,
 			lastActiveSession: this.pluginData.lastActiveSession,
-			rewardPurchases: this.pluginData.rewardPurchases || []
+			rewardPurchases: this.pluginData.rewardPurchases || [],
+			deletedCompletions: this.pluginData.deletedCompletions || {},
+			deletedPurchases: this.pluginData.deletedPurchases || {},
+			gamificationResetAt: this.pluginData.gamificationResetAt,
+			walletBaseline: this.pluginData.walletBaseline
 		};
+	}
+
+	/**
+	 * Applique un état fusionné à l'instance. Les champs de `pluginData` sont remplacés sur place :
+	 * les vues gardent ainsi leur référence à l'objet.
+	 */
+	private applyStoredData(data: StoredData): void {
+		this.settings = data.settings;
+		this.settingsUpdatedAt = data.settingsUpdatedAt;
+		this.pluginData.wallet = data.wallet;
+		this.pluginData.rewards = data.rewards;
+		this.pluginData.completionEvents = data.completionEvents;
+		if (data.streak) this.pluginData.streak = data.streak;
+		if (data.badges) this.pluginData.badges = data.badges;
+		if (data.workflowCounts) this.pluginData.workflowCounts = data.workflowCounts;
+		this.pluginData.lastActiveSession = data.lastActiveSession;
+		this.pluginData.rewardPurchases = data.rewardPurchases || [];
+		this.pluginData.deletedCompletions = data.deletedCompletions || {};
+		this.pluginData.deletedPurchases = data.deletedPurchases || {};
+		this.pluginData.gamificationResetAt = data.gamificationResetAt;
+		this.pluginData.walletBaseline = data.walletBaseline;
+		GamificationService.ensureDataStructures(this.pluginData);
+	}
+
+	/**
+	 * Enregistre les données. Le fichier `data.json` est d'abord relu : s'il a été modifié par un autre
+	 * appareil (plugin ouvert des deux côtés, synchronisation des fichiers), les deux états sont fusionnés
+	 * au lieu d'être écrasés. C'est ce qui garantit le même nombre de pièces partout.
+	 */
+	async savePluginData() {
+		let dataToStore = this.buildStoredData();
+		try {
+			const onDisk = (await this.loadData()) as StoredData | null;
+			if (onDisk && JSON.stringify(onDisk) !== this.lastWrittenData) {
+				dataToStore = PluginDataSyncService.merge(
+					dataToStore as SyncableData<SecondBrainSettings>,
+					Object.assign({}, DEFAULT_STORED_DATA, onDisk) as SyncableData<SecondBrainSettings>
+				) as StoredData;
+				GamificationService.pruneHistoricalSyncEvents(dataToStore as unknown as PluginData);
+				PluginDataSyncService.recomputeWallet(dataToStore);
+				this.applyStoredData(dataToStore);
+				GamificationService.checkAndUnlockBadges(this.pluginData);
+				dataToStore = this.buildStoredData();
+			}
+		} catch (e) {
+			console.warn('[Second Brain Manager] Fusion des données synchronisées impossible, écriture directe :', e);
+		}
+		this.lastWrittenData = JSON.stringify(dataToStore);
 		await this.saveData(dataToStore);
+		// Toute modification des pièces passe par ici : les vues se mettent à jour immédiatement.
+		this.notifyGamificationChanged();
+	}
+
+	/**
+	 * `data.json` modifié en dehors de cette instance (autre appareil + synchronisation de fichiers) :
+	 * on fusionne les deux états, on réécrit le résultat pour que les deux appareils convergent, puis on
+	 * rafraîchit l'affichage.
+	 */
+	private async reconcileExternalDataChange(): Promise<void> {
+		if (!this.pluginData) return;
+		let onDisk: StoredData | null;
+		try {
+			onDisk = (await this.loadData()) as StoredData | null;
+		} catch (e) {
+			console.warn('[Second Brain Manager] Relecture de data.json impossible :', e);
+			return;
+		}
+		if (!onDisk) return;
+		const diskSerialized = JSON.stringify(onDisk);
+		// Modification provoquée par notre propre écriture : rien à faire
+		if (diskSerialized === this.lastWrittenData) return;
+
+		const local = this.buildStoredData();
+		const merged = PluginDataSyncService.merge(
+			local as SyncableData<SecondBrainSettings>,
+			Object.assign({}, DEFAULT_STORED_DATA, onDisk) as SyncableData<SecondBrainSettings>
+		) as StoredData;
+		GamificationService.pruneHistoricalSyncEvents(merged as unknown as PluginData);
+		PluginDataSyncService.recomputeWallet(merged);
+
+		const previousBalance = this.pluginData.wallet.balance;
+		this.applyStoredData(merged);
+		GamificationService.checkAndUnlockBadges(this.pluginData);
+
+		const mergedSerialized = JSON.stringify(this.buildStoredData());
+		if (mergedSerialized !== diskSerialized) {
+			// L'autre appareil n'a pas (encore) tout : on republie l'état fusionné.
+			await this.savePluginData();
+		} else {
+			this.lastWrittenData = mergedSerialized;
+		}
+
+		// Données venues d'un autre appareil : on réaffiche même si l'empreinte semble identique
+		// (l'historique peut avoir changé sans que le solde bouge).
+		this.notifyGamificationChanged(true);
+		this.refreshTaskViews();
+		if (this.pluginData.wallet.balance !== previousBalance) {
+			console.info(`[Second Brain Manager] Données synchronisées depuis un autre appareil : solde ${previousBalance} → ${this.pluginData.wallet.balance} 🪙.`);
+		}
+	}
+
+	/** Barre d'état : énergie et solde de pièces courants. */
+	public updateStatusBar(): void {
+		if (!this.statusBarItemEl || !this.pluginData) return;
+		this.statusBarItemEl.setText(`Énergie: ${this.settings.energyLevel}/10 | 🪙 ${this.pluginData.wallet.balance}`);
 	}
 
 	public async touchActiveSession(): Promise<void> {
@@ -1183,6 +1383,9 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async saveSettings() {
+		// Les réglages modifiés ici sont les plus récents : ce sont eux qui gagneront en cas de conflit
+		// avec ceux d'un autre appareil.
+		this.settingsUpdatedAt = new Date().toISOString();
 		await this.savePluginData();
 	}
 }

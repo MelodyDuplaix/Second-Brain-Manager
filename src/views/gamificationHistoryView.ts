@@ -43,6 +43,8 @@ export class GamificationHistoryView extends ItemView {
 		}
 
 		const container = this.containerEl.children[1];
+		// La vue se redessine aussi d'elle-même quand des pièces arrivent : on garde la position de lecture.
+		const previousScroll = container.scrollTop;
 		container.empty();
 		container.addClass('sbm-history-container');
 
@@ -131,6 +133,8 @@ export class GamificationHistoryView extends ItemView {
 		} else {
 			this.renderAdvancedStatsTab(mainContent, events);
 		}
+
+		if (previousScroll > 0) container.scrollTop = previousScroll;
 	}
 
 	private renderBadgesTab(container: Element): void {
@@ -402,7 +406,8 @@ export class GamificationHistoryView extends ItemView {
 				const res = GamificationService.removeCompletion(item.taskId, this.plugin.pluginData);
 				if (res.success) {
 					await this.plugin.savePluginData();
-					new Notice(`Complétion annulée. Solde mis à jour : ${res.newBalance} 🪙`);
+					// Solde relu après l'enregistrement (il tient compte d'une éventuelle fusion)
+					new Notice(`Complétion annulée. Solde mis à jour : ${this.plugin.pluginData.wallet.balance} 🪙`);
 					await this.render();
 				}
 			});

@@ -13,6 +13,7 @@ import {
 	getActiveBadgeDefinitions
 } from '../models/gamification';
 import { MatrixAdapterFactory } from '../adapters/matrixAdapter';
+import { PluginDataSyncService, WalletBaseline } from './pluginDataSyncService';
 
 export interface PluginData {
 	wallet: Wallet;
@@ -24,6 +25,14 @@ export interface PluginData {
 	lastActiveSession?: string;
 	/** Historique des récompenses échangées contre des pièces */
 	rewardPurchases?: RewardPurchase[];
+	/** Complétions supprimées volontairement (taskId → horodatage) : évite leur retour par la synchronisation */
+	deletedCompletions?: Record<string, string>;
+	/** Échanges de récompense annulés (id → horodatage) */
+	deletedPurchases?: Record<string, string>;
+	/** Date de la dernière remise à zéro du score */
+	gamificationResetAt?: string;
+	/** Part du solde héritée des anciennes versions, hors historique courant */
+	walletBaseline?: WalletBaseline;
 }
 
 export class GamificationService {
@@ -48,6 +57,17 @@ export class GamificationService {
 		}
 		if (!data.rewardPurchases) {
 			data.rewardPurchases = [];
+		}
+		if (!data.deletedCompletions) {
+			data.deletedCompletions = {};
+		}
+		if (!data.deletedPurchases) {
+			data.deletedPurchases = {};
+		}
+		if (!data.walletBaseline) {
+			// Migration : on fige la part du solde qui ne se retrouve pas dans l'historique, afin que le
+			// passage au solde recalculé ne fasse perdre aucune pièce déjà gagnée.
+			data.walletBaseline = PluginDataSyncService.deriveWalletBaseline(data);
 		}
 		if (!data.workflowCounts) {
 			data.workflowCounts = {
@@ -346,6 +366,8 @@ export class GamificationService {
 		const [purchase] = list.splice(idx, 1);
 		data.wallet.balance += purchase.cost;
 		data.wallet.lifetimeSpent = Math.max(0, (data.wallet.lifetimeSpent || 0) - purchase.cost);
+		// Marqueur de suppression : sans lui, l'échange reviendrait depuis l'autre appareil
+		(data.deletedPurchases as Record<string, string>)[purchase.id] = new Date().toISOString();
 		return true;
 	}
 
@@ -474,6 +496,8 @@ export class GamificationService {
 		data.wallet.balance = Math.max(0, data.wallet.balance - deductedCoins);
 		data.wallet.lifetimeEarned = Math.max(0, data.wallet.lifetimeEarned - deductedCoins);
 		delete data.completionEvents[taskId];
+		// Marqueur de suppression : sans lui, la complétion reviendrait depuis l'autre appareil
+		(data.deletedCompletions as Record<string, string>)[taskId] = new Date().toISOString();
 
 		return {
 			success: true,
@@ -633,9 +657,14 @@ ${taskTable}
 			}
 		}
 
-		// Remise à zéro des statistiques
+		// Remise à zéro des statistiques. L'horodatage fait que l'historique archivé ne revient pas
+		// depuis un autre appareil lors de la prochaine synchronisation.
+		data.gamificationResetAt = new Date().toISOString();
+		data.walletBaseline = { earned: 0, spent: 0 };
 		data.wallet = { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
 		data.rewardPurchases = [];
+		data.deletedCompletions = {};
+		data.deletedPurchases = {};
 		data.streak = { currentStreak: 0, longestStreak: 0 };
 		data.completionEvents = {};
 		data.badges = {};
