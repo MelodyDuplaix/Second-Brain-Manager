@@ -409,10 +409,12 @@ export default class SecondBrainPlugin extends Plugin {
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText(`Énergie: ${this.settings.energyLevel}/10 | 🪙 ${this.pluginData.wallet.balance}`);
 
-		// Traçage des interactions utilisateur sur les cases à cocher dans l'interface Obsidian
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+		// Traçage des interactions utilisateur sur les cases à cocher dans l'interface Obsidian.
+		// Écoute en phase de capture : le plugin Tasks arrête la propagation du clic sur les cases
+		// de ses requêtes (stopPropagation), qui n'atteindrait donc jamais un écouteur classique.
+		const onCheckboxEvent = (evt: Event) => {
 			const target = evt.target as HTMLElement | null;
-			if (!target) return;
+			if (!target || !target.classList) return;
 			if (
 				target.classList.contains('task-list-item-checkbox') ||
 				target.classList.contains('cm-task-checkbox') ||
@@ -420,19 +422,14 @@ export default class SecondBrainPlugin extends Plugin {
 			) {
 				this.recordUserCheckboxInteraction();
 			}
-		});
-
-		this.registerDomEvent(document, 'change', (evt: Event) => {
-			const target = evt.target as HTMLElement | null;
-			if (!target) return;
-			if (
-				target.classList.contains('task-list-item-checkbox') ||
-				target.classList.contains('cm-task-checkbox') ||
-				(target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox')
-			) {
-				this.recordUserCheckboxInteraction();
-			}
-		});
+		};
+		const watchCheckboxes = (doc: Document) => {
+			this.registerDomEvent(doc, 'click', onCheckboxEvent, { capture: true });
+			this.registerDomEvent(doc, 'change', onCheckboxEvent, { capture: true });
+		};
+		watchCheckboxes(document);
+		// Fenêtres détachées : leur document est distinct de celui de la fenêtre principale
+		this.registerEvent(this.app.workspace.on('window-open', (win) => watchCheckboxes(win.doc)));
 
 		// Traçage des modifications actives dans l'éditeur Markdown
 		this.registerEvent(
