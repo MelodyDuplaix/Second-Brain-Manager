@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, TAbstractFile, Menu, Notice, Modal, App, setIcon, normalizePath, debounce } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, TAbstractFile, Menu, Notice, Modal, App, setIcon, normalizePath, debounce, Events } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
@@ -34,8 +34,11 @@ import {
 	normalizeFilter,
 	normalizeTagList,
 	sameFilter,
-	taskGroupKey
+	taskGroupKey,
+	matchesDelegationFilter,
+	delegationPersonKey
 } from '../services/calendarFilters';
+import { DelegationFeature } from '../models/delegation';
 import {
 	CalendarLegendEntry,
 	bucketEventsByDate,
@@ -64,6 +67,11 @@ import { DailyEntryModal, DailyEntryDraft } from './dailyEntryModal';
 import { getTaskExclusionRules } from '../services/taskExclusionService';
 import { TaskStatusRegistry } from '../models/taskStatusRegistry';
 import SecondBrainPlugin from '../main';
+
+/** Appui long au doigt (le glisser a été armé) relâché sans avoir bougé : on modifie au lieu de déplacer. */
+export function isLongPressWithoutMove(pointerType: string, startX: number, startY: number, endX: number, endY: number): boolean {
+	return pointerType !== 'mouse' && Math.hypot(endX - startX, endY - startY) < 12;
+}
 
 export const VIEW_TYPE_TASK_CALENDAR = 'sbm-task-calendar-view';
 
@@ -144,6 +152,8 @@ interface TaskCalendarState {
 	tags: string[];
 	/** Tags exclus */
 	excludedTags: string[];
+	/** Tâches données par d'autres : catégories gardées ; vide : toutes */
+	delegation: string[];
 	/** Lignes de titre dans la vue mois : 1, 2 ou 0 (en entier) */
 	titleLines: number;
 	/** Affichage en barre latérale étroite : liste (agenda) ou grille horaire du jour */
@@ -231,6 +241,7 @@ export class TaskCalendarView extends ItemView {
 		searchText: '',
 		tags: [],
 		excludedTags: [],
+		delegation: [],
 		titleLines: 2,
 		compactMode: 'agenda',
 		showEntries: true,
@@ -317,7 +328,8 @@ export class TaskCalendarView extends ItemView {
 			this.app,
 			() => this.plugin.settings,
 			(path) => !path.startsWith(`${templatesFolder}/`) && !getTaskExclusionRules(this.app, this.plugin.settings).isPathExcluded(path),
-			(tasks) => getTaskExclusionRules(this.app, this.plugin.settings).filter(tasks)
+			// Les tâches des autres restent dans l'index : le filtre « personnes » décide de les montrer
+			(tasks) => getTaskExclusionRules(this.app, this.plugin.settings).filter(tasks, { keepOthers: true })
 		);
 		this.writer = new TaskWriter(this.app, () => this.plugin.settings);
 		this.entries = new DailyEntryIndex(this.app, () => this.plugin.settings);
@@ -358,6 +370,7 @@ export class TaskCalendarView extends ItemView {
 		if (typeof s.searchText === 'string') this.state.searchText = f.searchText;
 		if (Array.isArray(s.tags)) this.state.tags = f.tags;
 		if (Array.isArray(s.excludedTags)) this.state.excludedTags = f.excludedTags;
+		if (Array.isArray(s.delegation)) this.state.delegation = f.delegation;
 		if (s.titleLines === 0 || s.titleLines === 1 || s.titleLines === 2) this.state.titleLines = s.titleLines;
 		// Première restauration de la vue : le préréglage d'ouverture remplace les derniers filtres
 		if (!this.stateRestored) {
@@ -398,6 +411,8 @@ export class TaskCalendarView extends ItemView {
 		this.registerEvent(this.app.vault.on('create', (file) => {
 			if (file instanceof TFile && this.entries.isBuilt() && this.entries.register(file)) this.ensureEntries();
 		}));
+		// Tâches données par d'autres activées/coupées ou jeton modifié : relecture des tâches
+		this.registerEvent((this.app.workspace as Events).on('sbm:delegation-changed', () => this.reindexForDelegation()));
 		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
 			this.index.removeFile(oldPath);
 			this.entries.removeFile(oldPath);
@@ -446,6 +461,13 @@ export class TaskCalendarView extends ItemView {
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 	}
+
+	/** Relecture différée : le jeton se règle lettre par lettre dans les réglages. */
+	private reindexForDelegation = debounce(async () => {
+		if (!this.loaded) return;
+		await this.index.buildAll();
+		this.renderPreservingScroll();
+	}, 800, true);
 
 	/** Recharge complètement l'index (commande "Rafraîchir"). */
 	public async refresh(): Promise<void> {
@@ -595,6 +617,8 @@ export class TaskCalendarView extends ItemView {
 		entriesAvailable: () => this.plugin.settings.dailyEntriesEnabled !== false,
 		matrixEnabled: () => this.plugin.settings.matrixEnabled !== false,
 		knownTags: () => this.knownTags(),
+		delegationEnabled: () => DelegationFeature.isEnabled(),
+		knownDelegators: () => this.knownDelegators(),
 		presets: () => this.plugin.settings.calendarFilterPresets || [],
 		startupPresetId: () => this.plugin.settings.calendarStartupPreset || '',
 		setStartupPresetId: async (id) => {
@@ -632,7 +656,8 @@ export class TaskCalendarView extends ItemView {
 			taskGroups: [...s.taskGroups],
 			searchText: s.searchText || '',
 			tags: [...(s.tags || [])],
-			excludedTags: [...(s.excludedTags || [])]
+			excludedTags: [...(s.excludedTags || [])],
+			delegation: [...(s.delegation || [])]
 		};
 	}
 
@@ -649,6 +674,7 @@ export class TaskCalendarView extends ItemView {
 		s.searchText = f.searchText;
 		s.tags = f.tags;
 		s.excludedTags = f.excludedTags;
+		s.delegation = f.delegation;
 		this.undatedLimit = UNDATED_PAGE;
 		this.saveState();
 		this.renderPreservingScroll();
@@ -674,8 +700,17 @@ export class TaskCalendarView extends ItemView {
 			matrixEnabled: this.plugin.settings.matrixEnabled !== false,
 			googleReady: this.googleReady(),
 			entriesAvailable: this.plugin.settings.dailyEntriesEnabled !== false,
-			legend: this.legend
+			legend: this.legend,
+			delegationEnabled: DelegationFeature.isEnabled(),
+			people: this.knownDelegators()
 		};
+	}
+
+	/** Personnes mentionnées dans les tâches (clé de filtre, orthographe la plus fréquente, nombre de tâches). */
+	private knownDelegators(): Array<{ key: string; name: string; count: number }> {
+		if (!DelegationFeature.isEnabled()) return [];
+		return DelegationFeature.groupByPerson(this.index.getAll(), t => t.person)
+			.map(g => ({ key: delegationPersonKey(g.name), name: g.name, count: g.items.length }));
 	}
 
 	/** Préréglage (intégré ou personnel) correspondant exactement aux filtres actuels. */
@@ -931,6 +966,7 @@ export class TaskCalendarView extends ItemView {
 			if (task.pieces && this.plugin.isFeatureEnabled('gamification')) meta.createSpan({ text: `🪙${task.pieces}` });
 			if (task.recurrence) meta.createSpan({ text: `🔁 ${task.recurrence}` });
 			if (task.statusChar !== ' ') meta.createSpan({ text: `[${task.statusChar}] ${TaskStatusRegistry.nameOf(task.statusChar)}` });
+			if (task.person) meta.createSpan({ text: `${DelegationFeature.labels().badge}${DelegationFeature.labels().describe((task.people || [task.person]).join(', '))}` });
 			if (task.domainTags.length) {
 				const tags = el.createDiv({ cls: 'sbm-tcal-peek-tags' });
 				task.domainTags.forEach(t => tags.createSpan({ cls: 'sbm-tcal-meta tag', text: t }));
@@ -1249,11 +1285,14 @@ export class TaskCalendarView extends ItemView {
 		const matrix = this.plugin.settings.matrixEnabled !== false;
 		const groups = activeTaskGroups(this.getFilter(), matrix);
 		const filter = this.getFilter();
+		const delegationOn = DelegationFeature.isEnabled();
+		const hideOthers = DelegationFeature.hidesOthers();
 		return this.index.getAll().filter(t => {
 			if (t.status === 'cancelled' && !this.state.showDone) return false;
 			if (groups && !groups.has(taskGroupKey(t.priority, this.quadrantOf(t), matrix))) return false;
 			if (!this.state.showDone && !isTaskOpen(t)) return false;
 			if (!matchesDescriptionFilter(filter, { texts: [t.title, t.cleanText], tags: t.domainTags })) return false;
+			if (delegationOn && !matchesDelegationFilter(filter, t, hideOthers)) return false;
 			if (!q) return true;
 			return t.title.toLowerCase().includes(q)
 				|| t.filePath.toLowerCase().includes(q)
@@ -1914,6 +1953,7 @@ export class TaskCalendarView extends ItemView {
 			el.addEventListener('contextmenu', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
+				if (this.isTouchHold()) return;
 				this.hidePeek();
 				this.openEventMenu(e, ev, item.day);
 			});
@@ -1946,6 +1986,7 @@ export class TaskCalendarView extends ItemView {
 			el.addEventListener('contextmenu', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
+				if (this.isTouchHold()) return;
 				this.hidePeek();
 				this.openEntryMenu(e, entry);
 			});
@@ -2136,6 +2177,12 @@ export class TaskCalendarView extends ItemView {
 		this.cleanupGridDrag();
 		if (!wasActive) return;
 		this.suppressClickUntil = Date.now() + 250;
+		// Tactile : appui long relâché sans glisser → fenêtre de modification
+		if (isLongPressWithoutMove(d.pointerType, d.startX, d.startY, e.clientX, e.clientY)) {
+			this.openEditorForItem({ event: item.event, eventDay: item.day, entry: item.entry }, d.el, e.clientX, e.clientY);
+			if (this.pendingRender) this.renderPreservingScroll();
+			return;
+		}
 		if (targetDay === undefined || targetStart === undefined || targetEnd === undefined) {
 			if (this.pendingRender) this.renderPreservingScroll();
 			return;
@@ -2799,7 +2846,11 @@ export class TaskCalendarView extends ItemView {
 		const titleEl = content.createDiv({ cls: 'sbm-tcal-chip-title' });
 		const prioIcon = task.priority ? PRIORITY_ICONS[task.priority] : undefined;
 		if (prioIcon && variant !== 'mini') titleEl.createSpan({ cls: 'sbm-tcal-prio', text: prioIcon });
-		titleEl.appendText(this.displayTitle(task.title, variant !== 'row'));
+		// La personne est affichée en badge : on la retire du titre (sauf dans la vue mois, sans badge)
+		const shownTitle = task.person && variant !== 'mini' ? DelegationFeature.strip(task.title) : task.title;
+		titleEl.appendText(this.displayTitle(shownTitle, variant !== 'row'));
+		if (task.person) chip.addClass('is-delegated');
+		if (task.forOthers) chip.addClass('is-for-others');
 
 		if (variant !== 'mini') {
 			const meta = content.createDiv({ cls: 'sbm-tcal-chip-meta' });
@@ -2807,6 +2858,12 @@ export class TaskCalendarView extends ItemView {
 				meta.createSpan({ cls: `sbm-tcal-meta date ${open && date < this.today ? 'is-late' : ''}`, text: CalendarDate.relativeLabel(date, this.today) });
 			}
 			if (quad) meta.createSpan({ cls: `sbm-tcal-meta quad quad-${quad}`, text: quad.toUpperCase() });
+			if (task.person) {
+				const labels = DelegationFeature.labels();
+				const names = DelegationFeature.getMode() === 'context' ? (task.people || [task.person]) : [task.person];
+				const who = meta.createSpan({ cls: 'sbm-tcal-meta delegated', text: `${labels.badge}${names.join(', ')}` });
+				who.title = labels.describe(names.join(', '));
+			}
 			if (task.energy) meta.createSpan({ cls: 'sbm-tcal-meta', text: `⚡${task.energy}` });
 			if (task.pieces && this.plugin.isFeatureEnabled('gamification')) meta.createSpan({ cls: 'sbm-tcal-meta', text: `🪙${task.pieces}` });
 			if (task.recurrence) {
@@ -2834,6 +2891,7 @@ export class TaskCalendarView extends ItemView {
 		chip.addEventListener('contextmenu', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (this.isTouchHold()) return;
 			if (this.drag?.active) return;
 			this.cancelDrag();
 			this.openTaskMenu(e, task, chip);
@@ -2890,6 +2948,7 @@ export class TaskCalendarView extends ItemView {
 		chip.addEventListener('contextmenu', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (this.isTouchHold()) return;
 			if (this.drag?.active) return;
 			this.cancelDrag();
 			this.hidePeek();
@@ -2945,6 +3004,7 @@ export class TaskCalendarView extends ItemView {
 		chip.addEventListener('contextmenu', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (this.isTouchHold()) return;
 			if (this.drag?.active) return;
 			this.cancelDrag();
 			this.hidePeek();
@@ -3089,6 +3149,23 @@ export class TaskCalendarView extends ItemView {
 			});
 			statusMenu.showAtMouseEvent(e);
 		}));
+		if (DelegationFeature.isEnabled()) {
+			const labels = DelegationFeature.labels();
+			const current = (task.people || []).join(', ');
+			menu.addItem(i => i.setTitle(current ? `${labels.describe(current)}…` : labels.menu).setIcon('user-check').onClick(() => {
+				this.popover.open(chip, {
+					title: `${labels.menu.replace('…', '')} (noms séparés par des virgules, vide : retirer)`,
+					type: 'text',
+					placeholder: 'Nom de la personne',
+					initialValue: current,
+					onSubmit: (val) => {
+						const names = DelegationFeature.parseNames(val);
+						void this.mutate(task, l => DelegationFeature.setPeople(l, names),
+							names.length ? `${labels.badge}${labels.describe(names.join(', '))}` : 'Personne retirée');
+					}
+				});
+			}));
+		}
 		if (!task.completed) {
 			menu.addItem(i => i.setTitle(paused ? 'Reprendre' : 'Mettre en pause').setIcon(paused ? 'play' : 'pause').onClick(() =>
 				this.mutate(task, l => TaskMutator.setPaused(l, !paused, settings), paused ? '▶️ Tâche reprise' : '⏸️ Tâche en pause')));
@@ -3214,6 +3291,28 @@ export class TaskCalendarView extends ItemView {
 	   Glisser-déposer (pointer events : souris, stylet et tactile)
 	   ====================================================================== */
 
+	/**
+	 * Fenêtre de modification d'un élément (appui long au doigt) :
+	 * entrée → fenêtre de l'entrée, événement → fenêtre de l'événement, tâche → menu de la tâche.
+	 */
+	private openEditorForItem(item: { task?: ObsidianTask; event?: GoogleCalendarEvent; eventDay?: string; entry?: DailyEntry }, anchor: HTMLElement, x: number, y: number): void {
+		this.hidePeek();
+		if (item.entry) {
+			this.openEntryModal(item.entry);
+		} else if (item.event) {
+			this.openEventModal(item.event);
+		} else if (item.task) {
+			// L'élément d'origine a pu être redessiné pendant l'appui : on vise sa version à jour
+			const fresh = this.rootEl.querySelector<HTMLElement>(`.sbm-tcal-chip[data-key="${CSS.escape(taskKey(item.task))}"]`);
+			this.openTaskMenu(new MouseEvent('contextmenu', { clientX: x, clientY: y }), item.task, fresh || anchor);
+		}
+	}
+
+	/** Le menu contextuel natif d'un appui long au doigt est ignoré : l'appui long ouvre la modification. */
+	private isTouchHold(): boolean {
+		return Boolean((this.drag && this.drag.pointerType !== 'mouse') || (this.gridDrag && this.gridDrag.pointerType !== 'mouse'));
+	}
+
 	private onChipPointerDown(e: PointerEvent, item: DragItem, chip: HTMLElement): void {
 		if (e.button !== 0 || this.drag) return;
 		this.hidePeek();
@@ -3284,6 +3383,13 @@ export class TaskCalendarView extends ItemView {
 		const { task, event, eventDay, entry } = d;
 		this.suppressClickUntil = Date.now() + 250;
 		this.cleanupDrag();
+
+		// Tactile : appui long relâché sans glisser → fenêtre de modification
+		if (isLongPressWithoutMove(d.pointerType, d.startX, d.startY, e.clientX, e.clientY)) {
+			this.openEditorForItem({ task, event, eventDay, entry }, d.sourceEl, e.clientX, e.clientY);
+			if (this.pendingRender) this.renderPreservingScroll();
+			return;
+		}
 
 		if (target && target.dataset.dropDate !== undefined) {
 			const date = target.dataset.dropDate || null;

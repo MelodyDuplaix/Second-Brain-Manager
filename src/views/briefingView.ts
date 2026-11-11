@@ -468,8 +468,9 @@ export class BriefingView extends ItemView {
 			// 1. Extraction des propositions d'actions structurées et nettoyage du texte markdown
 			const { cleanText, proposals } = MorningBriefingService.extractProposalsFromResponse(
 				result.text,
-				this.vaultTasks,
-				result.data.dateStr
+				result.allTasks,
+				result.data.dateStr,
+				(result.data.calendarEvents || []).map(ev => ev.summary || '').filter(Boolean)
 			);
 
 			this.generatedBriefingText = cleanText;
@@ -482,12 +483,18 @@ export class BriefingView extends ItemView {
 
 			// 0. Bannière d'encombrement & mode reprise
 			if (result.data.isRecoveryMode || result.data.isCluttered) {
+				const notes = result.data.inboxNotePreviews?.length ?? 0;
+				const parts = [
+					result.data.overdueTasks.length ? `${result.data.overdueTasks.length} tâche(s) en retard` : '',
+					notes ? `${notes} note(s) à ranger` : '',
+					result.data.inactivityDays && result.data.inactivityDays >= 3 ? (result.data.inactivityText || '') : ''
+				].filter(Boolean);
 				const clutterBanner = textDisplayEl.createDiv({ cls: 'sbm-clutter-alert-banner is-recovery-active' });
 				const infoBox = clutterBanner.createDiv({ cls: 'sbm-clutter-info' });
-				infoBox.createSpan({ cls: 'sbm-clutter-title', text: '🧹 Mode Reprise & Décongestion activé (Tri Large)' });
+				infoBox.createSpan({ cls: 'sbm-clutter-title', text: '🧹 Briefing de reprise' });
 				infoBox.createSpan({
 					cls: 'sbm-clutter-desc',
-					text: `${result.data.overdueTasks.length} tâches en retard et ${result.data.inboxNotePreviews.length} notes non classées détectées (${result.data.inactivityText}). Un plan de tri et d'organisation complet a été préparé ci-dessous.`
+					text: `${parts.join(', ') || 'Quelques éléments à remettre en ordre'}. Le briefing inclut un plan de tri ; rien n'est modifié sans votre accord.`
 				});
 			}
 
@@ -528,20 +535,9 @@ export class BriefingView extends ItemView {
 				};
 			});
 
-			const planTasksBtn = briefingActionBar.createEl('button', {
-				cls: 'sbm-doc-action-btn',
-				text: '📅 Planifier ces tâches pour aujourd\'hui'
-			});
-			planTasksBtn.title = 'Appliquer la date du jour aux tâches recommandées dans leurs fichiers sources';
-			planTasksBtn.addEventListener('click', async () => {
-				const count = await MorningBriefingService.planTasksForToday(
-					this.app,
-					this.plugin,
-					this.vaultTasks,
-					result.data.dateStr
-				);
-				new Notice(`${count} tâche(s) planifiée(s) pour aujourd'hui !`);
-			});
+			// Bouton « Planifier » : ajouté une fois le texte rendu, pour ne viser que les tâches citées
+			const planTasksBtn = briefingActionBar.createEl('button', { cls: 'sbm-doc-action-btn' });
+			planTasksBtn.hide();
 
 			if (result.data.calendarEvents && result.data.calendarEvents.length > 0) {
 				const syncRdvBtn = briefingActionBar.createEl('button', {
@@ -589,7 +585,27 @@ export class BriefingView extends ItemView {
 			await MarkdownRenderer.render(this.app, cleanedText, textBodyContainer, '', this);
 
 			// 4. Remplacement des tâches markdown par des widgets interactifs in-place
-			await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
+			const recommended = await this.upgradeTaskElementsInPlace(textBodyContainer, cleanedText, this.vaultTasks);
+
+			// 5. Planifier pour aujourd'hui les seules tâches recommandées qui ne le sont pas déjà
+			const toPlan = recommended.filter(t =>
+				!t.completed && !t.isPaused && t.status !== 'paused' && t.status !== 'cancelled' &&
+				(!t.dueDate || t.dueDate < result.data.dateStr) && t.scheduledDate !== result.data.dateStr
+			);
+			if (toPlan.length > 0) {
+				planTasksBtn.setText(`📅 Planifier les ${toPlan.length} tâche(s) recommandée(s) pour aujourd'hui`);
+				planTasksBtn.title = toPlan.map(t => `• ${t.title}`).join('\n');
+				planTasksBtn.show();
+				planTasksBtn.addEventListener('click', async () => {
+					const count = await MorningBriefingService.planTasksForToday(this.app, this.plugin, toPlan, result.data.dateStr);
+					new Notice(`${count} tâche(s) planifiée(s) pour aujourd'hui.`);
+					planTasksBtn.setText('✅ Tâches planifiées');
+					planTasksBtn.addClass('is-saved');
+					planTasksBtn.disabled = true;
+				});
+			} else {
+				planTasksBtn.remove();
+			}
 
 		} catch (err: unknown) {
 			thinkingBox.remove();
@@ -752,12 +768,6 @@ export class BriefingView extends ItemView {
 	}
 
 	private isTaskMatch(text: string, vaultTitle: string): boolean {
-		const stopWords = new Set([
-			'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'a', 'à', 'pour', 'dans', 'en', 'par',
-			'sur', 'et', 'ou', 'ce', 'cette', 'ces', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son',
-			'sa', 'ses', 'the', 'of', 'in', 'to', 'for', 'with', 'on', 'at', 'from', 'by', 'about'
-		]);
-
 		const clean = (str: string) =>
 			str
 				.toLowerCase()
@@ -771,30 +781,14 @@ export class BriefingView extends ItemView {
 		const cleanVault = clean(vaultTitle);
 
 		if (!cleanText || !cleanVault) return false;
-
-		const getWords = (s: string) =>
-			s.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
-
-		const wordsA = getWords(cleanText);
-		const wordsB = getWords(cleanVault);
-
-		if (wordsA.length === 0 || wordsB.length === 0) return false;
-
-		if (wordsA.length > 25 && wordsA.length > wordsB.length * 3) return false;
-
-		if (cleanText.includes(cleanVault) || cleanVault.includes(cleanText)) return true;
-
-		const common = wordsA.filter(w => wordsB.includes(w));
-		const matchRatio = common.length / wordsB.length;
-
-		return matchRatio >= 0.6 || (common.length >= 2 && wordsB.length <= 3 && matchRatio >= 0.5);
+		return cleanText.includes(cleanVault);
 	}
 
 	private async upgradeTaskElementsInPlace(
 		textContentEl: HTMLElement,
 		content: string,
 		vaultTasks: ObsidianTask[]
-	): Promise<void> {
+	): Promise<ObsidianTask[]> {
 		const usedTaskIds = new Set<string>();
 
 		// A. Blocs de code <pre> contenant des tâches Markdown
@@ -928,5 +922,7 @@ export class BriefingView extends ItemView {
 				}
 			}
 		});
+
+		return vaultTasks.filter(vt => usedTaskIds.has(`${vt.filePath}:${vt.lineNumber}`));
 	}
 }

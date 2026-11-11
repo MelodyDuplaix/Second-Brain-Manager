@@ -38,8 +38,9 @@ import {
 	isFeatureEnabled
 } from './models/features';
 import type { CalendarFilterPreset } from './services/calendarFilters';
+import { DelegationFeature, DelegationSettings, DEFAULT_DELEGATION_SETTINGS } from './models/delegation';
 
-export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings, FeatureSettings {
+export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSettings, TaskExclusionSettings, DailyEntriesSettings, FeatureSettings, DelegationSettings {
 	energyLevel: number;
 	defaultCoinsPerTask: number;
 	/** Active la fonctionnalité des quadrants (matrice d'Eisenhower) dans tout le plugin */
@@ -139,6 +140,7 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	...DEFAULT_TASK_EXCLUSION_SETTINGS,
 	...DEFAULT_DAILY_ENTRIES_SETTINGS,
 	...DEFAULT_FEATURE_SETTINGS,
+	...DEFAULT_DELEGATION_SETTINGS,
 	energyLevel: 5,
 	defaultCoinsPerTask: 1,
 	matrixEnabled: true,
@@ -361,6 +363,7 @@ export default class SecondBrainPlugin extends Plugin {
 	async onload() {
 		await this.loadPluginData();
 		MatrixFeature.setEnabled(this.settings.matrixEnabled !== false);
+		this.applyDelegationSettings();
 		this.touchActiveSession();
 		this.registerCustomPromptCommands();
 		await this.syncTasksPluginStatuses();
@@ -679,11 +682,29 @@ export default class SecondBrainPlugin extends Plugin {
 		calendar: [VIEW_TYPE_TASK_CALENDAR, VIEW_TYPE_CALENDAR],
 		ai: [VIEW_TYPE_CHAT],
 		briefings: [VIEW_TYPE_BRIEFING, VIEW_TYPE_EVENING_REVIEW, VIEW_TYPE_RECOVERY],
-		gamification: [VIEW_TYPE_GAMIFICATION_HISTORY]
+		gamification: [VIEW_TYPE_GAMIFICATION_HISTORY],
+		delegated: []
 	};
 
 	public isFeatureEnabled(key: FeatureKey): boolean {
 		return isFeatureEnabled(this.settings, key);
+	}
+
+	/**
+	 * Personnes dans les tâches : active la lecture du jeton (et son sens) dans le parseur.
+	 * Rien n'est lu (ni affiché) tant que la fonctionnalité est coupée.
+	 */
+	public applyDelegationSettings(): void {
+		const before = DelegationFeature.signature();
+		DelegationFeature.configure(
+			this.isFeatureEnabled('delegated'),
+			this.settings.delegatedTaskToken,
+			this.settings.delegationMode,
+			this.settings.delegationMyNames
+		);
+		const after = DelegationFeature.signature();
+		// Les tâches déjà lues par le calendrier doivent être relues avec la nouvelle règle
+		if (before !== after) this.app.workspace.trigger('sbm:delegation-changed');
 	}
 
 	/** Fonctionnalité dont dépend une vue (null : vue toujours disponible, ex. tableau de bord). */
@@ -788,6 +809,7 @@ export default class SecondBrainPlugin extends Plugin {
 	 * vues ouvertes et barre d’état. Appelée au chargement et à chaque changement de réglage.
 	 */
 	public syncFeatureUi(): void {
+		this.applyDelegationSettings();
 		for (const def of this.featureRibbonDefs()) {
 			const key = `${def.feature}:${def.icon}`;
 			const existing = this.featureRibbons.get(key);
@@ -898,6 +920,8 @@ export default class SecondBrainPlugin extends Plugin {
 		const seen = new Map<string, number>();
 
 		for (const task of tasks) {
+			// Tâche attribuée à quelqu'un d'autre : ses pièces ne sont pas les miennes
+			if (task.forOthers && DelegationFeature.hidesOthers()) continue;
 			if (task.completed || task.status === 'done') {
 				const baseId = GamificationService.getStableTaskId(task);
 				const occurrence = seen.get(baseId) || 0;
@@ -1425,6 +1449,7 @@ export default class SecondBrainPlugin extends Plugin {
 	}
 
 	async saveSettings() {
+		this.applyDelegationSettings();
 		// Les réglages modifiés ici sont les plus récents : ce sont eux qui gagneront en cas de conflit
 		// avec ceux d'un autre appareil.
 		this.settingsUpdatedAt = new Date().toISOString();

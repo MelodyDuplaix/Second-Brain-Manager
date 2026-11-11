@@ -12,6 +12,21 @@ import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig'
 import { GoogleCalendarEvent } from '../models/googleCalendar';
 import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
+import { CalendarDate } from './taskCalendarService';
+import {
+	EVENING_SECTION_HEADER,
+	MORNING_SECTION_HEADER,
+	UserRhythm,
+	buildDelegatedSection,
+	clip,
+	computeUserRhythm,
+	describeVaultConventions,
+	extractDailySection,
+	localDateStr,
+	sameIntent,
+	sharedStyleGuidelines,
+	stripGeneratedSections
+} from './briefingContext';
 
 export interface EveningVaultData {
 	dateStr: string;
@@ -27,6 +42,17 @@ export interface EveningVaultData {
 	calendarEvents?: GoogleCalendarEvent[];
 	calendarEventsText?: string;
 	customPromptInstructions?: string;
+	/** Ce que le briefing du matin avait prévu (continuité matin → soir) */
+	morningBriefing?: string;
+	/** Tâches déjà prévues pour demain */
+	tomorrowTasks?: ObsidianTask[];
+	/** Tâches données par d'autres qui arrivent à échéance (fonctionnalité optionnelle) */
+	delegatedTasks?: ObsidianTask[];
+	rhythm?: UserRhythm | null;
+	folders?: string[];
+	inboxFolder?: string;
+	googleConnected?: boolean;
+	gamificationEnabled?: boolean;
 }
 
 export class EveningReviewService {
@@ -35,7 +61,9 @@ export class EveningReviewService {
 	 */
 	public static async collectEveningData(app: App, plugin: SecondBrainPlugin): Promise<EveningVaultData> {
 		const today = new Date();
-		const dateStr = today.toISOString().split('T')[0];
+		// Date locale : après minuit, toISOString() donnerait encore la veille
+		const dateStr = localDateStr(today);
+		const tomorrowStr = CalendarDate.addDays(dateStr, 1);
 
 		const formattedDate = today.toLocaleDateString('fr-FR', {
 			weekday: 'long',
@@ -55,6 +83,18 @@ export class EveningReviewService {
 		const completedTodayTasks: ObsidianTask[] = [];
 		const unfinishedTodayTasks: ObsidianTask[] = [];
 		const overdueTasks: ObsidianTask[] = [];
+		const tomorrowTasks: ObsidianTask[] = [];
+		const delegatedTasks: ObsidianTask[] = [];
+
+		// Complétions enregistrées aujourd'hui (historique du plugin)
+		const completionsToday = Object.values(plugin.pluginData?.completionEvents || {})
+			.filter(ev => ev?.completedAt && localDateStr(new Date(ev.completedAt)) === dateStr);
+		const completedTextsToday = completionsToday.map(ev => ev.taskText || '').filter(Boolean);
+
+		// Note quotidienne du jour (tous formats de nom pris en charge)
+		const dailyRes = await vaultContext.getDailyNote(dateStr);
+		const dailyFile = dailyRes.exists ? (app.vault.getFileByPath(dailyRes.path) || app.vault.getAbstractFileByPath(dailyRes.path)) : null;
+		const dailyAllowed = dailyFile instanceof TFile && !filterService.isFileExcluded(dailyFile);
 
 		const results = await Promise.all(
 			files.map(async (file) => {
@@ -77,29 +117,30 @@ export class EveningReviewService {
 				continue;
 			}
 			if (t.completed || t.status === 'done') {
-				if (t.completedDate === dateStr || !t.completedDate) {
-					completedTodayTasks.push(t);
-				}
-			} else if (t.status !== 'cancelled') {
+				// Sans date de complétion, une tâche cochée ne compte que si elle est dans la note du jour
+				// ou dans l'historique des complétions d'aujourd'hui (sinon : toutes les anciennes tâches cochées)
+				const doneToday = t.completedDate
+					? t.completedDate === dateStr
+					: t.filePath === dailyRes.path || completedTextsToday.some(txt => txt.includes(t.title) || sameIntent(txt, t.title));
+				if (doneToday) completedTodayTasks.push(t);
+			} else if (t.status !== 'cancelled' && !t.isPaused && t.status !== 'paused') {
 				if (t.dueDate === dateStr || t.scheduledDate === dateStr) {
 					unfinishedTodayTasks.push(t);
 				} else if (t.dueDate && t.dueDate < dateStr) {
 					overdueTasks.push(t);
+				} else if (t.dueDate === tomorrowStr || t.scheduledDate === tomorrowStr) {
+					tomorrowTasks.push(t);
+				}
+				if (t.person && ((t.dueDate && t.dueDate <= tomorrowStr) || (t.scheduledDate && t.scheduledDate <= tomorrowStr))) {
+					delegatedTasks.push(t);
 				}
 			}
 		}
 
 		// Calcul des pièces gagnées aujourd'hui depuis l'historique
-		let coinsEarnedToday = 0;
-		if (plugin.pluginData && plugin.pluginData.completionEvents) {
-			const events = Object.values(plugin.pluginData.completionEvents);
-			events.forEach(ev => {
-				if (ev.timestamp && ev.timestamp.startsWith(dateStr)) {
-					coinsEarnedToday += ev.coinsAwarded || 0;
-				}
-			});
-		}
-		if (coinsEarnedToday === 0 && completedTodayTasks.length > 0) {
+		const gamificationEnabled = plugin.isFeatureEnabled?.('gamification') !== false;
+		let coinsEarnedToday = completionsToday.reduce((acc, ev) => acc + (Number(ev.coins) || 0), 0);
+		if (gamificationEnabled && coinsEarnedToday === 0 && completedTodayTasks.length > 0) {
 			coinsEarnedToday = completedTodayTasks.reduce((acc, t) => acc + (t.pieces || plugin.settings.defaultCoinsPerTask || 1), 0);
 		}
 
@@ -109,18 +150,15 @@ export class EveningReviewService {
 			.filter(f => f.path.startsWith(inboxFolder) && f.basename && !filterService.isFileExcluded(f))
 			.map(f => f.basename);
 
-		// Lecture de la note quotidienne du jour si elle existe
-		let dailyNoteContent: string | undefined;
-		const dailyPath = normalizePath(`${plugin.settings.dailyNotesFolder}/${dateStr}.md`);
-		const dailyFile = app.vault.getFileByPath(dailyPath) || app.vault.getAbstractFileByPath(dailyPath);
-		if (dailyFile instanceof TFile && !filterService.isFileExcluded(dailyFile)) {
-			dailyNoteContent = await app.vault.read(dailyFile);
-		}
+		// Note quotidienne du jour et plan du matin (continuité)
+		const dailyNoteContent = dailyAllowed ? dailyRes.content : undefined;
+		const morningBriefing = extractDailySection(dailyNoteContent, MORNING_SECTION_HEADER);
 
 		// Lecture des événements Google Calendar du jour si configuré
 		let calendarEventsText = '';
 		let calendarEvents: GoogleCalendarEvent[] = [];
-		if (plugin.settings.googleRefreshToken) {
+		const googleConnected = Boolean(plugin.settings.googleRefreshToken) && plugin.isFeatureEnabled?.('calendar') !== false;
+		if (googleConnected) {
 			try {
 				const startOfToday = new Date(today);
 				startOfToday.setHours(0, 0, 0, 0);
@@ -154,94 +192,117 @@ export class EveningReviewService {
 			dailyNoteContent,
 			calendarEvents,
 			calendarEventsText,
-			customPromptInstructions: plugin.settings.customPromptInstructions
+			customPromptInstructions: plugin.settings.customPromptInstructions,
+			morningBriefing,
+			tomorrowTasks,
+			delegatedTasks,
+			rhythm: computeUserRhythm(plugin.pluginData?.completionEvents, dateStr),
+			folders: structure.folders,
+			inboxFolder: plugin.settings.inboxFolder,
+			googleConnected,
+			gamificationEnabled
 		};
 	}
 
 	/**
-	 * Construit le prompt système et utilisateur optimisé pour la revue du soir.
+	 * Construit le prompt système et utilisateur de la revue du soir.
+	 * Seules les rubriques qui ont du contenu sont envoyées et demandées.
 	 */
 	public static buildEveningMessages(data: EveningVaultData, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ChatMessage[] {
-		const formatTaskLine = (t: ObsidianTask): string => {
-			return TaskMutator.formatTaskForPrompt(t, config);
-		};
+		const formatTaskLine = (t: ObsidianTask): string => TaskMutator.formatTaskForPrompt(t, config);
+		const gamificationOn = data.gamificationEnabled !== false;
+		const hasCalendar = Boolean(data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun'));
+		const googleConnected = data.googleConnected ?? hasCalendar;
+		const block = (title: string, tasks: ObsidianTask[], limit: number) => tasks.length
+			? `${title} :\n${tasks.slice(0, limit).map(formatTaskLine).join('\n')}${tasks.length > limit ? `\n… et ${tasks.length - limit} autre(s)` : ''}\n`
+			: '';
 
-		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(config);
+		const completedSection = data.completedTodayTasks.length
+			? block(`TACHES TERMINEES AUJOURD'HUI (${data.completedTodayTasks.length})`, data.completedTodayTasks, 25)
+			: `TACHES TERMINEES AUJOURD'HUI : aucune tâche cochée aujourd'hui.\n`;
+		const coinsLine = gamificationOn && data.coinsEarnedToday > 0 ? `Pieces gagnees aujourd'hui : +${data.coinsEarnedToday} pieces\n` : '';
 
-		const completedText = data.completedTodayTasks.length > 0
-			? data.completedTodayTasks.map(formatTaskLine).join('\n')
-			: 'Aucune tâche marquée terminée aujourd\'hui.';
+		const morningPlan = data.morningBriefing
+			? `CE QUE LE BRIEFING DE CE MATIN AVAIT PRÉVU :\n${clip(data.morningBriefing, 1500)}\n`
+			: '';
+		const calendarSectionText = hasCalendar
+			? `AGENDA DU JOUR (rendez-vous qui ont occupé la journée) :\n${data.calendarEventsText}\n`
+			: '';
 
-		const unfinishedText = data.unfinishedTodayTasks.length > 0
-			? data.unfinishedTodayTasks.map(formatTaskLine).join('\n')
-			: 'Toutes les tâches prévues aujourd\'hui ont été traitées.';
+		const delegated = buildDelegatedSection(
+			(data.delegatedTasks || []).filter(t => !data.unfinishedTodayTasks.includes(t) && !data.overdueTasks.includes(t)),
+			data.contacts || [],
+			formatTaskLine
+		);
 
-		const overdueText = data.overdueTasks.length > 0
-			? data.overdueTasks.slice(0, 8).map(formatTaskLine).join('\n')
-			: 'Aucune autre tâche en retard.';
+		const inboxText = data.inboxNotes.length
+			? `NOTES EN BOITE DE RECEPTION (${data.inboxNotes.length}) :\n${data.inboxNotes.slice(0, 20).map(n => `- [[${n}]]`).join('\n')}\n`
+			: '';
+		const foldersText = data.inboxNotes.length && data.folders?.length
+			? `Dossiers existants (pour ranger) : ${data.folders.slice(0, 30).join(', ')}\n`
+			: '';
 
-		const inboxText = data.inboxNotes.length > 0
-			? data.inboxNotes.map(n => `- [[${n}]]`).join('\n')
-			: 'Boîte de réception vide.';
+		const dailyNoteBody = stripGeneratedSections(data.dailyNoteContent);
+		const dailyNoteSnippet = dailyNoteBody
+			? `NOTE QUOTIDIENNE DU JOUR (écrite par l'utilisateur) :\n${clip(dailyNoteBody, 1500)}\n`
+			: '';
 
-		let calendarSectionText = '';
-		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
-			calendarSectionText = `\nAGENDA DU JOUR (Rendez-vous et réunions ayant pris du temps sur la journée) :\n${data.calendarEventsText}\n`;
-		}
+		const userMessage = [
+			`Voici le bilan de mon coffre pour ce ${data.formattedDate}.`,
+			[morningPlan, calendarSectionText].filter(Boolean).map(s => s.trim()).join('\n\n'),
+			[
+				completedSection + coinsLine,
+				block(`TACHES PREVUES AUJOURD'HUI ET NON TERMINEES (${data.unfinishedTodayTasks.length})`, data.unfinishedTodayTasks, 20),
+				block(`AUTRES TACHES EN RETARD (${data.overdueTasks.length})`, data.overdueTasks, 8),
+				delegated.section.trim() ? `${delegated.section.trim()}\n` : '',
+				block(`DEJA PREVU POUR DEMAIN (${(data.tomorrowTasks || []).length})`, data.tomorrowTasks || [], 10),
+				inboxText,
+				foldersText
+			].filter(Boolean).map(s => s.trim()).join('\n\n'),
+			dailyNoteSnippet,
+			'Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir.'
+		].filter(s => s && s.trim()).map(s => s.trim()).join('\n\n');
 
-		let customInstructionsSection = '';
-		if (data.customPromptInstructions && data.customPromptInstructions.trim()) {
-			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
-		}
+		const customInstructionsSection = data.customPromptInstructions?.trim()
+			? `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT, elles priment sur les règles générales) :\n${data.customPromptInstructions.trim()}\n`
+			: '';
 
-		let dailyNoteSnippet = '';
-		if (data.dailyNoteContent) {
-			dailyNoteSnippet = `\nContenu actuel de la note quotidienne du jour (${data.dateStr}) :\n${data.dailyNoteContent.slice(0, 1500)}\n`;
-		}
+		const agendaRules = hasCalendar
+			? `\nAGENDAS : les rendez-vous de l'agenda personnel ont occupé du temps réel : tiens-en compte pour juger la journée avec justesse. Les agendas d'autres personnes ne concernent pas l'utilisateur.\n`
+			: '';
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle, méthodologie GTD et clôture de journée.
+		const rhythm = data.rhythm;
+		const rhythmLine = rhythm && rhythm.activeDays >= 3
+			? `- D'habitude, l'utilisateur termine environ ${rhythm.avgPerActiveDay.toFixed(1).replace('.', ',').replace(',0', '')} tâche(s) les jours actifs ; aujourd'hui : ${data.completedTodayTasks.length}. Situe la journée avec justesse, sans flatterie ni reproche.`
+			: '';
 
-PRISE EN COMPTE DU TEMPS AGENDA & SÉPARATION DES AGENDAS :
-- Les rendez-vous sous "MON AGENDA PERSONNEL DE RÉFÉRENCE" ont la priorité absolue et occupent du temps réel de concentration. Prends en compte la charge d'événements personnels pour contextualiser les avancées de l'utilisateur avec justesse.
-- Les événements sous "AGENDAS D'AUTRES PERSONNES" appartiennent exclusivement à des tiers (proches, collègues, équipe). L'utilisateur n'y a pas participé personnellement et ils n'impactent pas son temps.${customInstructionsSection}
+		const hasLeftovers = data.unfinishedTodayTasks.length > 0 || data.overdueTasks.length > 0;
+		const structure = `DÉROULÉ DE LA REVUE (dans cet ordre, en omettant toute partie sans contenu utile) :
+   - **Bilan de la Journée** : ce qui a avancé (tâches terminées${hasCalendar ? ', rendez-vous tenus' : ''}${gamificationOn ? ', pièces gagnées' : ''}), en reconnaissant l'effort réel.${data.morningBriefing ? ' Compare honnêtement avec le plan du matin : ce qui est fait, ce qui a glissé et pourquoi c\'est acceptable.' : ''}
+${hasLeftovers ? `   - **Triage des Tâches Restantes** : pour chaque tâche restante importante, une décision simple (demain, plus tard, à abandonner). Un bouton « Reporter les tâches restantes à demain » existe : ne détaille pas un report qui va de soi, concentre-toi sur les vrais choix. Ne surcharge pas demain${(data.tomorrowTasks || []).length ? ` (déjà ${(data.tomorrowTasks || []).length} tâche(s) prévue(s))` : ''}.\n` : ''}${delegated.count ? `   - **Engagements envers les autres** : les tâches données par quelqu'un qui arrivent à échéance ; suggère de prévenir la personne si un délai est nécessaire.\n` : ''}${data.inboxNotes.length ? `   - **Boîte de Réception** : suggère brièvement où ranger les notes, dans les dossiers existants du coffre.\n` : ''}   - **Mot de Clôture** : une phrase pour fermer la journée et passer à la soirée.`;
 
-TON OBJECTIF :
-Fournir une Revue du Soir claire, constructive et agréable pour faire le point sur la journée écoulée, récapituler le travail accompli, réorganiser les tâches restantes et libérer la charge mentale avant la soirée.
+		const systemPrompt = `Tu es "Second Brain Manager", le copilote d'organisation personnelle de l'utilisateur, à l'aise avec la méthode GTD.
+Tu rédiges sa Revue du Soir : un bilan juste et apaisant de la journée, qui décharge l'esprit et prépare demain sans le surcharger.
 
-CONSIGNES DE TON ET DE STYLE :
-- **Ton Équilibré, Chaleureux et Professionnel** : Adopte un ton constructif, courtois et mature. Sois encourageant sans en faire trop, en reconnaissant les efforts et en apportant des conseils d'organisation pratiques.
-- **Clarté et Rythme** : Présente les faits avec fluidité et structure sans lourdeur.
-- **Sobriété Visuelle** : N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste sobre et élégant.
-- **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact, utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`). Ne mets jamais de backticks autour des wikilinks.
+CE QUE TU SAIS DE L'UTILISATEUR :
+${[rhythmLine, '- Le soir, l\'objectif est de clore la journée : pas de nouvelles résolutions ni de liste d\'efforts supplémentaires.'].filter(Boolean).join('\n')}${customInstructionsSection}
 
-CONSIGNES DE REDACTION :
-1. **Bilan de la Journée** : Synthèse équilibrée des tâches accomplies (${data.completedTodayTasks.length} tâche(s)), des pièces gagnées (+${data.coinsEarnedToday} pièces) et du temps consacré aux rendez-vous d'agenda.
-2. **Triage des Tâches Restantes** : Suggestions concrètes et réalistes pour les tâches non terminées (replanification ou délestage).
-${taskSyntaxDesc}
-3. **Organisation de la Boîte de Réception** :
-   - Si des notes sont dans l'Inbox, suggère simplement où les classer (\`01 - Projets/\`, \`03 - Contacts/\`).
-4. **Structure de la Revue** :
-   - **Bilan de la Journée** (Avancées, tâches accomplies et rendez-vous tenus)
-   - **Triage des Tâches Restantes** (Recommandations et replanifications pour demain)
-   - **Organisation de l'Inbox & Mot de Clôture** (Classement fluide et mot de transition vers la soirée)`;
+SON COFFRE :
+${describeVaultConventions({
+	inboxFolder: data.inboxFolder,
+	projects: data.projects,
+	contacts: data.contacts,
+	googleConnected,
+	gamificationEnabled: gamificationOn
+})}
+${agendaRules}
+${sharedStyleGuidelines()}
 
-		const userMessage = `Voici le bilan de mon coffre pour ce ${data.formattedDate} :
+${structure}
 
-${calendarSectionText}
-TACHES TERMINEES AUJOURD'HUI (${data.completedTodayTasks.length}) :
-${completedText}
-Pieces gagnees aujourd'hui : +${data.coinsEarnedToday} pieces
-
-TACHES PREVUES NON TERMINEES (${data.unfinishedTodayTasks.length}) :
-${unfinishedText}
-
-AUTRES TACHES EN RETARD (${data.overdueTasks.length}) :
-${overdueText}
-
-NOTES EN BOITE DE RECEPTION (${data.inboxNotes.length}) :
-${inboxText}
-${dailyNoteSnippet}
-Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
+TÂCHES CITÉES :
+Pour une tâche existante, reprends son intitulé exact (sans chemin ni numéro de ligne) afin qu'elle reste cochable.
+Ne crée pas de nouvelles tâches et n'ajoute pas de bloc json:actions : si un élément de la journée appelle vraiment une action nouvelle, mentionne-le simplement comme suggestion.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -284,6 +345,8 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		const allTasks = [
 			...data.unfinishedTodayTasks,
 			...data.overdueTasks,
+			...(data.delegatedTasks || []),
+			...(data.tomorrowTasks || []),
 			...data.completedTodayTasks
 		];
 
@@ -316,7 +379,7 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		}
 
 		const cleanText = DailyNoteFormatter.formatForDailyNote(reviewText);
-		const sectionHeader = '## 🌙 Revue du Soir & Bilan';
+		const sectionHeader = EVENING_SECTION_HEADER;
 		const sectionContent = `${sectionHeader}\n\n*Clôturé à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}*\n\n${cleanText}\n`;
 
 		const existingFile = app.vault.getFileByPath(filePath) || app.vault.getAbstractFileByPath(filePath);
@@ -358,9 +421,7 @@ Dresse le bilan de ma journée et aide-moi à libérer mon esprit pour ce soir. 
 		plugin: SecondBrainPlugin,
 		tasks: ObsidianTask[]
 	): Promise<number> {
-		const tomorrow = new Date();
-		tomorrow.setDate(tomorrow.getDate() + 1);
-		const tomorrowStr = tomorrow.toISOString().split('T')[0];
+		const tomorrowStr = CalendarDate.addDays(localDateStr(), 1);
 
 		let updatedCount = 0;
 		const tasksByFile = new Map<string, ObsidianTask[]>();

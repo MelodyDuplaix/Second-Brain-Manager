@@ -39,6 +39,13 @@ export interface ObsidianTask {
 	priorityTag?: string;
 	matrixTag?: string;
 	domainTags: string[];
+	/** Personne mentionnée à afficher (fonctionnalité « Personnes dans les tâches ») :
+	 *  destinataire, donneur ou personne liée selon le réglage */
+	person?: string;
+	/** Toutes les personnes mentionnées */
+	people?: string[];
+	/** Tâche attribuée à quelqu'un d'autre (mode « attribuée ») : ce n'est pas une de mes tâches */
+	forOthers?: boolean;
 
 	blockId?: string;
 	parentLineNumber?: number;

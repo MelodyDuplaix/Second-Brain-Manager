@@ -1,6 +1,7 @@
 import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
+import { TaskStatusRegistry } from '../models/taskStatusRegistry';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixFeature } from '../adapters/matrixAdapter';
 import { LLMService } from './llmService';
@@ -14,10 +15,48 @@ import { GoogleCalendarEvent } from '../models/googleCalendar';
 import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
 import { JsonUtils } from '../utils/jsonUtils';
+import { DelegationFeature } from '../models/delegation';
+import { CalendarDate } from './taskCalendarService';
+import {
+	EVENING_SECTION_HEADER,
+	MORNING_SECTION_HEADER,
+	UserRhythm,
+	actionPolicy,
+	buildDelegatedSection,
+	clip,
+	computeUserRhythm,
+	describeRhythm,
+	describeVaultConventions,
+	extractDailySection,
+	localDateStr,
+	refineBriefingProposals,
+	sharedStyleGuidelines,
+	stripGeneratedSections,
+	suggestedTaskCount
+} from './briefingContext';
+
+function isOpenBriefingTask(task: ObsidianTask): boolean {
+	const status = task.status.toLowerCase();
+	const rawStatusChar = /^\s*-\s*\[([^\]])\]/.exec(task.rawText)?.[1];
+	const statusChar = rawStatusChar ?? task.statusChar;
+	const statusType = rawStatusChar ? TaskStatusRegistry.typeOf(rawStatusChar) : task.statusType;
+	return !task.completed
+		&& statusType !== 'DONE'
+		&& statusType !== 'CANCELLED'
+		&& status !== 'done'
+		&& status !== 'completed'
+		&& status !== 'cancelled'
+		&& status !== 'x'
+		&& status !== '-'
+		&& statusChar !== 'x'
+		&& statusChar !== 'X'
+		&& statusChar !== '-';
+}
 
 export interface BriefingVaultData {
 	dateStr: string;
 	formattedDate: string;
+	currentTime?: string;
 	energy: number;
 	modeText: string;
 	focusProject?: string;
@@ -26,22 +65,22 @@ export interface BriefingVaultData {
 	priorityTags?: string[];
 	priorityProperties?: string[];
 	adhocPriority?: string;
-	userPrioritizedTasks: ObsidianTask[];
-	inactivityText: string;
-	inactivityDays: number;
-	isRecoveryMode: boolean;
-	quickWinTasks: ObsidianTask[];
+	userPrioritizedTasks?: ObsidianTask[];
+	inactivityText?: string;
+	inactivityDays?: number;
+	isRecoveryMode?: boolean;
+	quickWinTasks?: ObsidianTask[];
 	oneThingTask?: ObsidianTask;
 	overdueTasks: ObsidianTask[];
-	staleTasks: ObsidianTask[];
+	staleTasks?: ObsidianTask[];
 	todayTasks: ObsidianTask[];
 	priorityTasks: ObsidianTask[];
 	inboxTasks: ObsidianTask[];
 	projectTasks: ObsidianTask[];
-	looseNotes: string[];
-	inboxNotePreviews: Array<{ path: string; name: string; preview: string }>;
-	folders: string[];
-	isCluttered: boolean;
+	looseNotes?: string[];
+	inboxNotePreviews?: Array<{ path: string; name: string; preview: string }>;
+	folders?: string[];
+	isCluttered?: boolean;
 	projects: string[];
 	contacts: string[];
 	dailyNotePath?: string;
@@ -51,6 +90,15 @@ export interface BriefingVaultData {
 	pausedTasks?: ObsidianTask[];
 	canSuggestPausedTasks?: boolean;
 	customPromptInstructions?: string;
+	/** Tâches ouvertes données par d'autres personnes (fonctionnalité optionnelle) */
+	delegatedTasks?: ObsidianTask[];
+	/** Rythme réel (historique des tâches terminées) */
+	rhythm?: UserRhythm | null;
+	/** Ce que la revue du soir de la veille avait prévu (continuité soir → matin) */
+	previousEveningReview?: string;
+	inboxFolder?: string;
+	googleConnected?: boolean;
+	gamificationEnabled?: boolean;
 }
 
 export class MorningBriefingService {
@@ -92,6 +140,15 @@ export class MorningBriefingService {
 		return { inactivityText: 'Session active', inactivityDays: 0 };
 	}
 
+	/** Libellé du mode selon l'énergie déclarée. */
+	public static modeTextFor(energy: number): string {
+		return energy <= 3
+			? 'Mode Économie (énergie faible : peu de tâches, concentre-toi sur l’essentiel et le délestage)'
+			: energy <= 7
+				? 'Mode Équilibré (énergie moyenne : une tâche majeure et quelques secondaires)'
+				: 'Mode Plein Potentiel (énergie haute : bon jour pour les chantiers exigeants ou créatifs)';
+	}
+
 	/**
 	 * Récupère et structure l'ensemble des données du coffre nécessaires pour le briefing.
 	 */
@@ -108,7 +165,8 @@ export class MorningBriefingService {
 		}
 	): Promise<BriefingVaultData> {
 		const today = new Date();
-		const dateStr = today.toISOString().split('T')[0];
+		// Date locale : après minuit, toISOString() donnerait encore la veille
+		const dateStr = localDateStr(today);
 
 		// Formatage de la date en français (ex: "Lundi 24 Août 2026")
 		const formattedDate = today.toLocaleDateString('fr-FR', {
@@ -116,6 +174,11 @@ export class MorningBriefingService {
 			year: 'numeric',
 			month: 'long',
 			day: 'numeric'
+		});
+		const currentTime = today.toLocaleTimeString('fr-FR', {
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: false
 		});
 		const capitalizedDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
 
@@ -138,11 +201,7 @@ export class MorningBriefingService {
 		}
 
 		const energy = requestedEnergy !== undefined ? requestedEnergy : plugin.settings.energyLevel;
-		const modeText = energy <= 3
-			? 'Mode Économie (Faible énergie - priorité à la préservation et au délestage)'
-			: energy <= 7
-				? 'Mode Équilibré (Énergie moyenne - focus sur 1 tâche majeure et 2-3 secondaires)'
-				: 'Mode Plein Potentiel (Haute énergie - idéal pour les chantiers complexes et créatifs)';
+		const modeText = this.modeTextFor(energy);
 
 		// Récupération de l'horodatage d'activité le plus récent parmi toutes les sources disponibles
 		const candidateTimestamps: number[] = [];
@@ -186,25 +245,20 @@ export class MorningBriefingService {
 					if (filterService.isFileExcluded(file, raw)) {
 						return [];
 					}
-					return TaskParser.findTasksInVaultText(raw, file.path, plugin.settings);
-				} catch {
+					return TaskParser.parseAllTasks(raw, file.path, plugin.settings);
+				} catch (error) {
+					console.warn(`[Second Brain Manager] Impossible de lire les tâches de « ${file.path} » pour le briefing :`, error);
 					return [];
 				}
 			})
 		);
 
-		const allOpenTasks: ObsidianTask[] = [];
-		results.forEach(tasks => {
-			tasks.forEach(t => {
-				if (!t.completed && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'x' && t.status !== '-') {
-					allOpenTasks.push(t);
-				}
-			});
-		});
+		const allOpenTasks = results.flat().filter(isOpenBriefingTask);
 
 		// Séparation stricte entre les tâches actives normales et les tâches explicitement en pause (On Hold)
-		const activeOpenTasks = allOpenTasks.filter(t => !t.isPaused && t.status !== 'paused');
-		const pausedTasks = allOpenTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
+		// Mode « attribuée » : les tâches pour d'autres personnes ne sont pas les miennes
+		const activeOpenTasks = allOpenTasks.filter(t => !t.isPaused && t.status !== 'paused' && !(t.forOthers && DelegationFeature.hidesOthers()));
+		const pausedTasks = allOpenTasks.filter(t => Boolean(t.isPaused || t.status === 'paused') && !(t.forOthers && DelegationFeature.hidesOthers()));
 
 		// Classification basée exclusivement sur les tâches actives
 		const overdueTasks = activeOpenTasks.filter(t =>
@@ -214,7 +268,8 @@ export class MorningBriefingService {
 		const todayTasks = activeOpenTasks.filter(t =>
 			t.dueDate === dateStr ||
 			t.scheduledDate === dateStr ||
-			(t.startDate && t.startDate <= dateStr)
+			// Une tâche commencée n'est « du jour » que si son échéance n'est pas déjà passée (elle est alors en retard)
+			(t.startDate && t.startDate <= dateStr && (!t.dueDate || t.dueDate >= dateStr))
 		);
 
 		// Identification des tâches expressément prioritaires (dossiers/fichiers choisis + tags choisis + tags configurés + propriétés frontmatter)
@@ -237,13 +292,14 @@ export class MorningBriefingService {
 		});
 
 		// Identification des tâches très anciennes (souffrance / obsolescence)
-		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+		const sevenDaysAgo = CalendarDate.addDays(dateStr, -7);
 		const staleTasks = overdueTasks.filter(t =>
 			(t.dueDate && t.dueDate <= sevenDaysAgo) ||
 			(t.scheduledDate && t.scheduledDate <= sevenDaysAgo)
 		);
 
-		const inboxFolder = plugin.settings.inboxFolder ? normalizePath(plugin.settings.inboxFolder).toLowerCase() : '00 - inbox';
+		const inboxFolderSetting = plugin.settings.inboxFolder || '00 - Inbox';
+		const inboxFolder = normalizePath(inboxFolderSetting).toLowerCase();
 		const inboxTasks = activeOpenTasks.filter(t => {
 			const norm = normalizePath(t.filePath).toLowerCase();
 			const isRoot = !norm.includes('/');
@@ -278,7 +334,14 @@ export class MorningBriefingService {
 			oneThingTask = activeOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' && (t.dueDate === dateStr || (t.dueDate && t.dueDate < dateStr)));
 		}
 		if (!oneThingTask) {
+			// Sans quadrants : priorité haute, due aujourd'hui ou en retard
+			oneThingTask = activeOpenTasks.find(t => (t.priority === 'highest' || t.priority === 'high') && t.dueDate !== undefined && t.dueDate <= dateStr);
+		}
+		if (!oneThingTask) {
 			oneThingTask = activeOpenTasks.find(t => matrixAdapter.getQuadrant(t) === 'q1' || matrixAdapter.getQuadrant(t) === 'q2');
+		}
+		if (!oneThingTask && todayTasks.length > 0) {
+			oneThingTask = todayTasks[0];
 		}
 		if (!oneThingTask && overdueTasks.length > 0) {
 			oneThingTask = overdueTasks[0];
@@ -344,10 +407,20 @@ export class MorningBriefingService {
 			dailyNoteContent = dailyRes.content;
 		}
 
+		// Continuité : ce que la revue du soir d'hier avait prévu pour aujourd'hui
+		let previousEveningReview: string | undefined;
+		try {
+			const yesterday = await vaultContext.getDailyNote(CalendarDate.addDays(dateStr, -1));
+			previousEveningReview = extractDailySection(yesterday.content, EVENING_SECTION_HEADER);
+		} catch {
+			previousEveningReview = undefined;
+		}
+
 		// Lecture des événements Google Calendar du jour si configuré
 		let calendarEventsText = '';
 		let calendarEvents: GoogleCalendarEvent[] = [];
-		if (plugin.settings.googleRefreshToken) {
+		const googleConnected = Boolean(plugin.settings.googleRefreshToken) && plugin.isFeatureEnabled?.('calendar') !== false;
+		if (googleConnected) {
 			try {
 				const startOfToday = new Date(today);
 				startOfToday.setHours(0, 0, 0, 0);
@@ -371,6 +444,7 @@ export class MorningBriefingService {
 		return {
 			dateStr,
 			formattedDate: capitalizedDate,
+			currentTime,
 			energy,
 			modeText,
 			focusProject: focusProject && focusProject !== 'all' ? focusProject : undefined,
@@ -405,283 +479,220 @@ export class MorningBriefingService {
 			calendarEventsText,
 			pausedTasks,
 			canSuggestPausedTasks,
-			customPromptInstructions: plugin.settings.customPromptInstructions
+			customPromptInstructions: plugin.settings.customPromptInstructions,
+			delegatedTasks: activeOpenTasks.filter(t => t.person),
+			rhythm: computeUserRhythm(plugin.pluginData?.completionEvents, dateStr),
+			previousEveningReview,
+			inboxFolder: inboxFolderSetting,
+			googleConnected,
+			gamificationEnabled: plugin.isFeatureEnabled?.('gamification') !== false
 		};
 	}
 
 	/**
-	 * Construit le prompt système et utilisateur optimisé pour un briefing percutant ou une reprise décongestionnée.
+	 * Construit le prompt système et utilisateur du briefing du matin.
+	 * Une seule trame pour la journée normale et la reprise : seules les parties utiles sont demandées,
+	 * et chaque tâche n'apparaît qu'une fois dans les données envoyées.
 	 */
 	public static buildBriefingMessages(data: BriefingVaultData, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): ChatMessage[] {
-		const formatTaskLine = (t: ObsidianTask): string => {
-			return TaskMutator.formatTaskForPrompt(t, config);
+		const formatTaskLine = (t: ObsidianTask): string => TaskMutator.formatTaskForPrompt(t, config);
+		const matrixOn = MatrixFeature.isEnabled();
+		const recovery = Boolean(data.isRecoveryMode);
+		const dailyTargetPath = data.dailyNotePath || `Note quotidienne/${data.dateStr}.md`;
+		const hasCalendar = Boolean(data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun'));
+		const googleConnected = data.googleConnected ?? hasCalendar;
+		const capacity = suggestedTaskCount(data.rhythm ?? null, data.energy);
+
+		// Chaque tâche n'est envoyée qu'une fois, dans la rubrique la plus parlante
+		const seen = new Set<string>();
+		const keyOf = (t: ObsidianTask) => `${t.filePath}:${t.lineNumber}`;
+		const take = (list: ObsidianTask[] | undefined, limit: number): ObsidianTask[] => {
+			const out: ObsidianTask[] = [];
+			for (const t of list || []) {
+				if (out.length >= limit) break;
+				if (!isOpenBriefingTask(t)) continue;
+				const k = keyOf(t);
+				if (seen.has(k)) continue;
+				seen.add(k);
+				out.push(t);
+			}
+			return out;
 		};
+		const block = (title: string, tasks: ObsidianTask[]) => tasks.length ? `${title} :\n${tasks.map(formatTaskLine).join('\n')}\n` : '';
 
-		const taskSyntaxDesc = TaskMutator.getTaskSyntaxPromptDescription(config);
-
-		const oneThingText = data.oneThingTask
-			? formatTaskLine(data.oneThingTask)
-			: 'Aucune tâche majeure détectée.';
-
-		const quickWinsText = (data.quickWinTasks && data.quickWinTasks.length > 0)
-			? data.quickWinTasks.map(formatTaskLine).join('\n')
-			: 'Aucune tâche rapide identifiée.';
-
-		const overdueText = (data.overdueTasks && data.overdueTasks.length > 0)
-			? data.overdueTasks.slice(0, 35).map(formatTaskLine).join('\n')
-			: 'Aucune tâche en retard.';
-
-		const staleText = (data.staleTasks && data.staleTasks.length > 0)
-			? data.staleTasks.slice(0, 35).map(formatTaskLine).join('\n')
-			: 'Aucune tâche ancienne en souffrance.';
-
-		const todayText = (data.todayTasks && data.todayTasks.length > 0)
-			? data.todayTasks.map(formatTaskLine).join('\n')
-			: 'Aucune tâche expressément planifiée pour aujourd\'hui.';
-
-		const priorityText = (data.priorityTasks && data.priorityTasks.length > 0)
-			? data.priorityTasks.slice(0, 8).map(formatTaskLine).join('\n')
-			: (MatrixFeature.isEnabled() ? 'Aucune tâche Q1/Q2 prioritaire.' : 'Aucune tâche prioritaire.');
-
-		const inboxText = (data.inboxTasks && data.inboxTasks.length > 0)
-			? data.inboxTasks.slice(0, 20).map(formatTaskLine).join('\n')
-			: 'Aucun élément en boîte de réception.';
-
-		const looseNotesText = (data.inboxNotePreviews && data.inboxNotePreviews.length > 0)
-			? data.inboxNotePreviews.map(n => `- [[${n.name}]] (Chemin: "${n.path}")${n.preview ? ` : "${n.preview}"` : ''}`).join('\n')
-			: 'Aucune note non classée en boîte de réception.';
-
-		const foldersText = (data.folders && data.folders.length > 0)
-			? data.folders.slice(0, 25).join(', ')
-			: 'Racine';
-
+		// ----- Données (message utilisateur) -----
 		let focusProjectText = '';
 		if (data.focusProject) {
-			const tasksForProject = data.projectTasks.length > 0
-				? data.projectTasks.map(formatTaskLine).join('\n')
-				: `Aucune tâche explicite trouvée pour ${data.focusProject}.`;
-			focusProjectText = `\nPROJET PRIORITAIRE DU JOUR DESIGNE PAR L'UTILISATEUR : "[[${data.focusProject}]]"\n` +
-				`TACHES LIEES A CE PROJET :\n${tasksForProject}\n`;
+			const tasksForProject = take(data.projectTasks, 15);
+			focusProjectText = `PROJET FOCUS DU JOUR CHOISI PAR L'UTILISATEUR : "[[${data.focusProject}]]"\n` +
+				(tasksForProject.length ? `TACHES LIEES A CE PROJET :\n${tasksForProject.map(formatTaskLine).join('\n')}\n` : `Aucune tâche explicite trouvée pour ce projet.\n`);
 		}
 
-		let dailyNoteSnippet = '';
-		if (data.dailyNoteContent) {
-			dailyNoteSnippet = `\nContenu actuel de la note quotidienne du jour (${data.dateStr}) :\n${data.dailyNoteContent.slice(0, 1500)}\n`;
-		}
-
-		let focusDirectives = '';
-		if (data.focusProject) {
-			focusDirectives += `\n- **Projet Focus Majeur** : L'utilisateur a explicitement demandé de focaliser sa journée sur "[[${data.focusProject}]]". Fais de ce projet le cœur de ton Cap du Jour et privilégie ses tâches dans le plan de journée.`;
-		}
-
-		let adhocPrioritySection = '';
-		let adhocPriorityDirective = '';
-		if (data.adhocPriority && data.adhocPriority.trim()) {
-			adhocPrioritySection = `\nOBJECTIF & PRIORITÉ DU JOUR FIXÉE DIRECTEMENT PAR L'UTILISATEUR (PRIORITÉ ABSOLUE) :\n"${data.adhocPriority.trim()}"\n`;
-			adhocPriorityDirective = `\n- **Priorité Spécifique Directe de l'Utilisateur** : L'utilisateur a expressément fixé cette priorité / consigne majeure pour sa journée : "${data.adhocPriority.trim()}". Fais-en l'axe central n°1 de ton Cap du Jour et du plan d'action, et organise ses tâches autour de cet objectif.`;
-		}
+		const adhoc = data.adhocPriority?.trim();
+		const adhocPrioritySection = adhoc
+			? `OBJECTIF OU CONSIGNE DU JOUR FIXÉE DIRECTEMENT PAR L'UTILISATEUR :\n"${adhoc}"\n`
+			: '';
 
 		let prioritiesSection = '';
-		const hasPriorityFolders = data.priorityFolders && data.priorityFolders.length > 0;
-		const hasPriorityFiles = data.priorityFiles && data.priorityFiles.length > 0;
-		const hasPriorityTags = data.priorityTags && data.priorityTags.length > 0;
-		const hasPriorityRules = hasPriorityTags || (data.priorityProperties && data.priorityProperties.length > 0);
-		const hasUserPrioritizedTasks = data.userPrioritizedTasks && data.userPrioritizedTasks.length > 0;
-
-		if (hasPriorityFolders || hasPriorityFiles || hasPriorityRules || hasUserPrioritizedTasks) {
+		const hasPriorityFolders = Boolean(data.priorityFolders?.length);
+		const hasPriorityFiles = Boolean(data.priorityFiles?.length);
+		const hasPriorityTags = Boolean(data.priorityTags?.length);
+		const hasPriorityProps = Boolean(data.priorityProperties?.length);
+		const prioritized = take(data.userPrioritizedTasks, 8);
+		const hasPriorityContext = hasPriorityFolders || hasPriorityFiles || hasPriorityTags || hasPriorityProps || prioritized.length > 0;
+		if (hasPriorityContext) {
 			const lines: string[] = [];
-			if (hasPriorityFolders) lines.push(`- Dossiers prioritaires sélectionnés : ${data.priorityFolders!.join(', ')}`);
-			if (hasPriorityFiles) lines.push(`- Fichiers prioritaires sélectionnés : ${data.priorityFiles!.join(', ')}`);
-			if (hasPriorityTags) lines.push(`- Tags prioritaires sélectionnés / configurés : ${data.priorityTags!.map(t => '#' + t.replace(/^#/, '')).join(', ')}`);
-			if (data.priorityProperties && data.priorityProperties.length > 0) lines.push(`- Propriétés frontmatter prioritaires : ${data.priorityProperties.join(', ')}`);
-			if (hasUserPrioritizedTasks) {
-				lines.push(`- Tâches hautement prioritaires identifiées :\n${data.userPrioritizedTasks.slice(0, 8).map(t => '  * ' + t.title + (t.filePath ? ` (dans [[${t.filePath}]])` : '')).join('\n')}`);
-			}
-			prioritiesSection = `\nFOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L'UTILISATEUR :\n${lines.join('\n')}\n*(CONSIGNE MAJEURE : Accorde une priorité toute particulière à ces dossiers, fichiers, tags et tâches lors du choix de "The One Thing" et de l'ordonnancement du plan de journée)*\n`;
-			focusDirectives += `\n- **Dossiers/Fichiers/Tags/Tâches prioritaires** : Priorise expressément les tâches issues des dossiers, fichiers et tags prioritaires indiqués ci-dessous.`;
+			if (hasPriorityFolders) lines.push(`- Dossiers sélectionnés par l'utilisateur : ${data.priorityFolders!.join(', ')}`);
+			if (hasPriorityFiles) lines.push(`- Fichiers sélectionnés par l'utilisateur : ${data.priorityFiles!.join(', ')}`);
+			if (hasPriorityTags) lines.push(`- Tags sélectionnés / configurés : ${data.priorityTags!.map(t => '#' + t.replace(/^#/, '')).join(', ')}`);
+			if (hasPriorityProps) lines.push(`- Propriétés frontmatter configurées : ${data.priorityProperties!.join(', ')}`);
+			if (prioritized.length) lines.push(`- Tâches correspondantes :\n${prioritized.map(t => '  ' + formatTaskLine(t)).join('\n')}`);
+			prioritiesSection = `FOCUS ET SÉLECTIONS DU JOUR DÉFINIS PAR L'UTILISATEUR :\n${lines.join('\n')}\n`;
 		}
 
-		let customInstructionsSection = '';
-		if (data.customPromptInstructions && data.customPromptInstructions.trim()) {
-			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
-		}
+		const calendarSectionText = hasCalendar
+			? `AGENDA & CRÉNEAUX DU JOUR (Google Calendar) :\n${data.calendarEventsText}\n`
+			: '';
 
-		let calendarSectionText = '';
-		let calendarDirectives = '';
-		const dailyTargetPath = data.dailyNotePath || `Note quotidienne/${data.dateStr}.md`;
-		if (data.calendarEventsText && data.calendarEventsText.trim() && !data.calendarEventsText.startsWith('Aucun')) {
-			calendarSectionText = `\nAGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE) :\n${data.calendarEventsText}\nATTENTION : Ces rendez-vous sont des contraintes fermes prioritaires sur toutes les tâches. Tu dois impérativement articuler le plan d'action et les tâches dans les temps libres restants entre ces créneaux.\n`;
-			calendarDirectives = `\n- **Rendez-vous Agenda & Tâches Daily Note** : Des rendez-vous personnels sont prévus à l'agenda. Propose expressément à l'utilisateur de les inscrire en tâches dans sa note quotidienne ("${dailyTargetPath}") afin de pouvoir les cocher au fil de la journée. Dans le bloc JSON d'actions (\`\`\`json:actions), inclus une proposition "create_task" pour chaque rendez-vous personnel (targetPath: "${dailyTargetPath}", taskTitle: horaire + titre du RDV, scheduledDate: "${data.dateStr}", domainTags: ["#rdv"]).`;
-		}
+		const previousEvening = data.previousEveningReview
+			? `CE QUE LA REVUE D'HIER SOIR AVAIT PRÉVU (pour assurer la continuité) :\n${clip(data.previousEveningReview, 1200)}\n`
+			: '';
+
+		const oneThing = data.oneThingTask ? take([data.oneThingTask], 1) : [];
+		const today = take(data.todayTasks, 20);
+		const priority = take(data.priorityTasks, 8);
+		// Les quick wins passent avant les retards : une tâche facile garde son signal « facile »
+		const quickWins = take(data.quickWinTasks, 3);
+		const overdue = take(data.overdueTasks, recovery ? 35 : 15);
+		const staleCount = recovery ? (data.staleTasks || []).filter(isOpenBriefingTask).length : 0;
+		// Les tâches données par d'autres non encore citées sont regroupées par personne
+		const delegated = buildDelegatedSection(take(data.delegatedTasks, 15), data.contacts || [], formatTaskLine);
+		const inbox = take(data.inboxTasks, recovery ? 20 : 10);
+		const notePreviews = data.inboxNotePreviews || [];
+		const looseNotesText = notePreviews.length
+			? `NOTES EN VRAC À RANGER (${notePreviews.length}) :\n${notePreviews.map(n => `- [[${n.name}]] (Chemin: "${n.path}")${n.preview ? ` : "${n.preview}"` : ''}`).join('\n')}\n`
+			: '';
+		const foldersText = notePreviews.length && data.folders?.length
+			? `Dossiers existants (pour ranger) : ${data.folders.slice(0, 30).join(', ')}\n`
+			: '';
 
 		let pausedSectionText = '';
 		let pausedDirectives = '';
-		if (data.canSuggestPausedTasks && data.pausedTasks && data.pausedTasks.length > 0) {
-			const pausedList = data.pausedTasks.slice(0, 10).map(formatTaskLine).join('\n');
-			pausedSectionText = `\nTACHES EN PAUSE DISPONIBLES (${data.pausedTasks.length} au total) :\n${pausedList}\n`;
-			pausedDirectives = `\n- **Opportunité - Tâches en Pause** : L'utilisateur a très peu de tâches actives prioritaires aujourd'hui (moins de 3 tâches en retard, du jour ou sans date). Indique-lui de façon simple et courtoise qu'il dispose de ${data.pausedTasks.length} tâche(s) en pause et propose-lui d'en réactiver ou d'en traiter 1 ou 2 si pertinent (cite 1 ou 2 exemples concrets parmi la liste).`;
+		const openPausedTasks = (data.pausedTasks || []).filter(isOpenBriefingTask);
+		if (data.canSuggestPausedTasks && openPausedTasks.length > 0) {
+			const pausedList = openPausedTasks.slice(0, 10).map(formatTaskLine).join('\n');
+			pausedSectionText = `TACHES EN PAUSE DISPONIBLES (${openPausedTasks.length} au total) :\n${pausedList}\n`;
+			pausedDirectives = `\n- **Opportunité - Tâches en Pause** : l'utilisateur a très peu de tâches actives (moins de 3 tâches en retard, du jour ou sans date). Mentionne simplement qu'il a ${openPausedTasks.length} tâche(s) en pause et propose d'en reprendre 1 ou 2 si c'est pertinent (cite des exemples concrets).`;
 		}
 
-		let systemPrompt = '';
-		let userMessage = '';
+		const dailyNoteBody = stripGeneratedSections(data.dailyNoteContent);
+		const dailyNoteSnippet = dailyNoteBody
+			? `NOTE QUOTIDIENNE DU JOUR (${dailyTargetPath}), déjà écrite par l'utilisateur :\n${clip(dailyNoteBody, 1500)}\n`
+			: '';
 
-		if (data.isRecoveryMode) {
-			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle${MatrixFeature.isEnabled() ? ', méthodologie GTD et matrice d\'Eisenhower' : ' et méthodologie GTD'}.
+		const taskSections = [
+			oneThing.length ? `TACHE MAJEURE DETECTEE (THE ONE THING) :\n${formatTaskLine(oneThing[0])}\n` : '',
+			block(`TACHES PLANIFIEES POUR AUJOURD'HUI (${today.length})`, today),
+			block('AUTRES TACHES OUVERTES À CONSIDÉRER', priority),
+			block(`TACHES EN RETARD (${overdue.length}${staleCount ? `, dont ${staleCount} en souffrance depuis plus de 7 jours` : ''})`, overdue),
+			block('QUICK WINS DISPONIBLES', quickWins),
+			delegated.section.trim() ? `${delegated.section.trim()}\n` : '',
+			block(`TACHES EN BOITE DE RECEPTION / EN VRAC (${inbox.length})`, inbox),
+			looseNotesText,
+			foldersText,
+			pausedSectionText
+		].filter(Boolean).map(s => s.trim()).join('\n\n');
 
-SITUATION DU COFFRE :
-Le coffre présente un volume d'éléments en attente à réorganiser (${data.inactivityText}, ${data.overdueTasks.length} tâches en retard dont ${data.staleTasks.length} anciennes, ${data.inboxNotePreviews.length} notes non classées).
+		const emptyDay = !taskSections.trim() && !hasCalendar;
+		const context = [focusProjectText, adhocPrioritySection, prioritiesSection, calendarSectionText, previousEvening].filter(Boolean).map(s => s.trim()).join('\n\n');
 
-PRISE EN COMPTE DES AGENDAS :
-1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement construire le plan de reprise et ordonner les tâches dans les créneaux libres disponibles.
-2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
+		const intro = recovery
+			? `Voici la situation de mon coffre ce ${data.formattedDate} (${data.inactivityText || 'reprise'}).`
+			: `Voici l'état de mon coffre ce ${data.formattedDate}.`;
+		const ask = recovery
+			? 'Prépare mon briefing avec un plan de tri réaliste pour repartir sur de bonnes bases.'
+			: emptyDay
+				? 'Rien n’est prévu : prépare un briefing court et propose comment utiliser la journée, sans inventer de tâches.'
+				: 'Prépare mon briefing du matin.';
+		const timeContext = data.currentTime ? `HEURE LOCALE AU MOMENT DE LA GÉNÉRATION : ${data.currentTime}\n` : '';
+		const userMessage = [intro, timeContext, context, taskSections, dailyNoteSnippet, ask].filter(s => s && s.trim()).map(s => s.trim()).join('\n\n');
 
-TON OBJECTIF :
-Fournir un Briefing du Matin clair, engageant et constructif pour remettre le coffre en ordre et démarrer la journée avec un **plan de tri et d'organisation exhaustif** des tâches en retard et des notes en vrac.
-
-CONSIGNES DE TON ET DE STYLE :
-- **Ton Équilibré, Chaleureux et Professionnel** : Adopte la posture d'un copilote de confiance : courtois, encourageant, clair et mature. Sois agréable à lire, constructif et pragmatique, sans verser dans l'infantilisation ni dans une froideur excessive.
-- **Formulation Naturelle et Fluide** : Salue poliment, pose un diagnostic net sans dramatiser, et va à l'essentiel avec un sens pratique aiguisé.
-- **Sobriété Visuelle** : N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste élégant et structuré.
-- **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact (dans le texte du briefing, dans les One Thing / Quick Wins, et dans les intitulés des tâches du bloc JSON), utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`, \`Appeler [[Claire]] pour valider [[Devis]]\`). Ne mets jamais de backticks autour des wikilinks.
-
-CONSIGNES DE REDACTION :
-1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}${calendarDirectives}
-   - **Accueil & Synthèse** (Salutation cordiale et résumé clair de l'état du coffre)
-   - **Rendez-vous Fixes & Contraintes Agenda** (Rappel clair des créneaux incontournables du jour)
-   - **Action Prioritaire (The One Thing)** (La tâche majeure et stratégique du jour selon l'énergie ${data.energy}/10, calée hors des rendez-vous)
-   - **Actions Rapides (Quick Wins)** (1 ou 2 micro-actions simples si pertinent pour amorcer l'avancement)
-   - **Plan de Tri & d'Organisation** :
-     - Annule les réunions passées et tâches manifestement obsolètes (\`newStatus: "cancelled"\`).
-     - Replanifie à aujourd'hui (${data.dateStr}) ou à une date réaliste les tâches réellement prioritaires.
-     - ${MatrixFeature.isEnabled() ? 'Rétrograde en Q2 ou retire' : 'Retire'} les échéances non fermes (\`newDueDate: null\`) des tâches secondaires.
-     - Propose le rangement et le renommage explicite de chaque note en vrac vers son dossier pertinent (\`type: "move_note"\`, \`type: "rename_note"\`).
-   - **Conseil de Rythme** (Une recommandation motivante et pratique pour aborder la journée sereinement)
-2. **Format des Tâches Recommandées** :
-${taskSyntaxDesc}
-3. **Bloc d'Actions Structurées (OBLIGATOIRE - Bloc \`\`\`json:actions)** :
-Termine TOUJOURS ta réponse par un bloc de code JSON \`\`\`json:actions exhaustif contenant TOUTES les propositions d'actions (reports, annulations, rangements, renommages et ajout des rendez-vous de l'agenda en tâches dans la note quotidienne "${dailyTargetPath}") afin que l'utilisateur puisse appliquer l'ensemble du plan en 1 clic :
-\`\`\`json:actions
-[
-  {
-    "type": "update_task",
-    "targetPath": "1 Notes partagés Antoine/Tracker menage.md",
-    "lineNumber": 15,
-    "taskTitle": "Passer l'aspirateur et la serpillère si besoin",
-    "newDueDate": "${data.dateStr}",
-    "reason": "Replanifier à aujourd'hui"
-  },
-  {
-    "type": "update_task",
-    "targetPath": "Note quotidienne/28-12-2025.md",
-    "lineNumber": 18,
-    "taskTitle": "Prendre médicament allergie",
-    "newStatus": "cancelled",
-    "reason": "Tâche médicale obsolète datant de 2025"
-  },
-  {
-    "type": "move_note",
-    "targetPath": "Notes en vrac/Liste d'appel VŒUX 2026.md",
-    "destinationFolder": "01 - Projets",
-    "newFileName": "Vœux 2026 - Liste d'appels.md",
-    "description": "Ranger et renommer la liste d'appel dans les projets"
-  },
-  {
-    "type": "rename_note",
-    "targetPath": "00 - Inbox/Sans titre.md",
-    "newFileName": "Idées Projet X.md",
-    "description": "Donner un nom clair et explicite à la note"
-  }
-]
-\`\`\`
-Utilise les chemins exacts et numéros de ligne fournis.`;
-
-			userMessage = `Voici la situation actuelle de mon coffre pour ce ${data.formattedDate} (${data.inactivityText}, Niveau d'énergie : ${data.energy}/10 - ${data.modeText}) :
-
-Dossiers disponibles : ${foldersText}
-Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
-Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
-${focusProjectText}
-${adhocPrioritySection}
-${prioritiesSection}
-${calendarSectionText}
-TACHE MAJEURE DETECTEE (THE ONE THING) :
-${oneThingText}
-
-QUICK WINS DISPONIBLES :
-${quickWinsText}
-
-TACHES EN RETARD ET ANCIENNES (${data.overdueTasks.length} au total) :
-${overdueText}
-
-TACHES EN SOUFFRANCE (> 7 jours de retard, ${data.staleTasks.length} au total) :
-${staleText}
-
-NOTES EN VRAC ET BOITE DE RECEPTION (${data.inboxNotePreviews.length} notes non rangées / ${data.inboxTasks.length} tâches en vrac) :
-Notes en vrac :
-${looseNotesText}
-
-Tâches en vrac :
-${inboxText}
-${pausedSectionText}
-${dailyNoteSnippet}
-Propose-moi mon briefing avec un plan de tri et d'organisation des tâches et notes, accompagné du bloc json:actions pour que je puisse tout appliquer en 1 clic. Adopte un ton équilibré, clair et dynamique, sans émojis.`;
-
-		} else {
-			// Mode Briefing Quotidien standard
-			systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle${MatrixFeature.isEnabled() ? ', méthodologie GTD et matrice d\'Eisenhower' : ' et méthodologie GTD'}.
-
-PRISE EN COMPTE DES AGENDAS :
-1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement construire le plan de journée et ordonner les tâches dans les créneaux libres disponibles.
-2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
-
-TON OBJECTIF :
-Fournir un Briefing du Matin clair, motivant, structuré et sur-mesure pour organiser la journée de l'utilisateur en respectant son niveau d'énergie (${data.energy}/10 - ${data.modeText}) et ses contraintes d'agenda.
-
-CONSIGNES DE TON ET DE STYLE :
-- **Ton Équilibré, Chaleureux et Professionnel** : Adopte la posture d'un copilote de confiance : courtois, encourageant, stimulant et mature. Trouve le juste milieu entre proximité humaine et rigueur d'organisation.
-- **Clarté et Pertinence** : Propose des priorités bien articulées et des recommandations actionnables, avec une expression soignée et fluide.
-- **Sobriété Visuelle** : N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste élégant et professionnel.
-- **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact (dans le texte du briefing, dans les One Thing / Quick Wins, et dans les intitulés des tâches du bloc JSON), utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`, \`Appeler [[Claire]] pour valider [[Devis]]\`). Ne mets jamais de backticks autour des wikilinks.
-
-CONSIGNES DE REDACTION :
-1. **Structure du Briefing** :${focusDirectives}${adhocPriorityDirective}${pausedDirectives}${calendarDirectives}
-   - **Cap du Jour** (Salutation courtoise et focus ou projet n°1 incontournable)
-   - **Rendez-vous & Contraintes Fixes de l'Agenda** (Rappel clair des heures de réunions/rendez-vous à honorer en priorité)
-   - **Plan de Journée Recommandé** (Les tâches sélectionnées et positionnées de façon réaliste dans les créneaux disponibles selon l'énergie)
-   - **Points de Vigilance & Conseils** (Urgences réelles, points d'attention et conseil pour bien rythmer la journée)
-2. **Format des Tâches Recommandées** :
-${taskSyntaxDesc}
-3. **Actions Exécutables (Bloc JSON \`\`\`json:actions)** :
-Si des actions concrètes sont proposées (notamment l'inscription en tâches dans la note quotidienne "${dailyTargetPath}" des rendez-vous de l'agenda détectés avec type: "create_task", targetPath: "${dailyTargetPath}", scheduledDate: "${data.dateStr}", domainTags: ["#rdv"]), inclus le bloc JSON \`\`\`json:actions afin que l'utilisateur puisse les approuver en 1 clic.`;
-
-			userMessage = `Voici l'état actuel de mon coffre pour ce ${data.formattedDate} :
-
-Niveau d'énergie : ${data.energy}/10 (${data.modeText})
-Dossiers disponibles : ${foldersText}
-Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
-Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
-${focusProjectText}
-${adhocPrioritySection}
-${prioritiesSection}
-${calendarSectionText}
-TACHES PLANIFIEES POUR AUJOURD'HUI :
-${todayText}
-
-TACHES PRIORITAIRES${MatrixFeature.isEnabled() ? ' (Q1 / Q2)' : ''} :
-${priorityText}
-
-TACHES EN RETARD (${data.overdueTasks.length} détectées) :
-${overdueText}
-
-TACHES EN BOITE DE RECEPTION / NOTES EN VRAC (${data.inboxTasks.length} détectées) :
-${inboxText}
-
-NOTES EN VRAC :
-${looseNotesText}
-${pausedSectionText}
-${dailyNoteSnippet}
-Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le bloc json:actions pour les actions proposées. N'utilise aucun émoji dans ta réponse textuelle (sauf si la syntaxe des tâches configurée l'exige).`;
+		// ----- Consignes (message système) -----
+		let directives = '';
+		if (data.focusProject) {
+			directives += `\n- **Projet Focus Majeur** : l'utilisateur veut centrer sa journée sur "[[${data.focusProject}]]". Fais-en le cœur du Cap du Jour et privilégie ses tâches.`;
 		}
+		if (adhoc) {
+			directives += `\n- **Consigne spécifique de l'utilisateur** : "${adhoc}". Fais-en le fil conducteur de la journée.`;
+		}
+		if (hasPriorityContext) {
+			directives += `\n- **Éléments de focus sélectionnés** : tiens compte des dossiers, fichiers, tags et tâches indiqués pour choisir un plan adapté.`;
+		}
+		if (data.previousEveningReview) {
+			directives += `\n- **Continuité** : la revue d'hier soir avait prévu des choses pour aujourd'hui. Reprends-les si elles sont toujours d'actualité, sans les recopier.`;
+		}
+		directives += pausedDirectives + delegated.directive;
+
+		const customInstructionsSection = data.customPromptInstructions?.trim()
+			? `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT, elles priment sur les règles générales) :\n${data.customPromptInstructions.trim()}\n`
+			: '';
+
+		const agendaRules = hasCalendar
+			? `\nPRISE EN COMPTE DES AGENDAS :
+1. Les rendez-vous de l'agenda principal et des agendas secondaires sont des contraintes fermes : organise les tâches dans les créneaux libres qui restent.
+2. Les agendas d'autres personnes (proches, collègues) sont informatifs : mentionne-les sobrement si c'est utile, sans les compter comme des contraintes ni signaler de conflit.\n`
+			: '';
+
+		const tri = recovery
+			? `   - **Plan de Tri & d'Organisation** : un plan de tri et d'organisation réaliste pour alléger la reprise — annuler l'obsolète (réunions passées, tâches périmées), replanifier ce qui compte vraiment à une date tenable, retirer les échéances artificielles, ranger les notes en vrac. Justifie brièvement chaque choix. Ne supprime pas les obligations à conséquences réelles (paiements, démarches administratives, santé, engagements envers quelqu'un) : replanifie-les.\n`
+			: (data.overdueTasks.length || notePreviews.length)
+				? `   - **Tri Rapide** (facultatif) : seulement si des retards ou des notes en vrac pèsent vraiment ; propose un allègement ciblé (2 à 5 éléments), pas une revue complète.\n`
+				: '';
+
+		const structure = `DÉROULÉ DU BRIEFING (dans cet ordre, en omettant toute partie sans contenu utile) :
+   - **Cap du Jour** : salutation brève et l'intention de la journée en une ou deux phrases${recovery ? `, en reconnaissant la reprise (${data.inactivityText || 'reprise'}) sans dramatiser` : ''}.
+${hasCalendar ? `   - **Rendez-vous & Contraintes Fixes de l'Agenda** : les créneaux incontournables, en une liste courte.\n` : ''}   - **Plan de Journée** : la tâche principale (The One Thing, et pourquoi elle) puis au plus ${Math.max(0, capacity - 1)} autre(s) tâche(s), dans un ordre réaliste${hasCalendar ? ' et placées dans les créneaux libres' : ''}.
+   - **Petites Victoires** (facultatif) : 1 ou 2 actions de quelques minutes, seulement si elles aident à démarrer.
+${tri}   - **Points de Vigilance** (facultatif) : uniquement de vrais risques (échéance proche, engagement envers quelqu'un${hasCalendar ? ', conflit d\'agenda' : ''}).
+   - **Mot de la Fin** : une phrase pratique adaptée à l'énergie du jour.${directives ? `\n\nCONSIGNES PARTICULIÈRES DU JOUR :${directives}` : ''}`;
+
+		const allowed = ['update_task', ...(notePreviews.length ? ['move_note', 'rename_note'] : []), 'create_task'];
+
+		const systemPrompt = `Tu es "Second Brain Manager", le copilote d'organisation personnelle de l'utilisateur, à l'aise avec la méthode GTD${matrixOn ? ' et la matrice d\'Eisenhower' : ''}.
+Tu rédiges son Briefing du Matin : un point personnalisé pour démarrer la journée, fondé uniquement sur les données de son coffre.${recovery ? '\nLe coffre a besoin d\'un peu de remise en ordre (retards, notes en vrac ou pause prolongée) : le briefing inclut un plan de tri.' : ''}
+
+CE QUE TU SAIS DE L'UTILISATEUR :
+- Énergie déclarée ce matin : ${data.energy}/10 — ${data.modeText}.
+${describeRhythm(data.rhythm ?? null, data.energy)}${customInstructionsSection}
+
+SON COFFRE :
+${describeVaultConventions({
+	inboxFolder: data.inboxFolder,
+	dailyNotePath: dailyTargetPath,
+	projects: data.projects,
+	contacts: data.contacts,
+	googleConnected,
+	gamificationEnabled: data.gamificationEnabled !== false
+})}
+${agendaRules}
+${sharedStyleGuidelines()}
+
+RÈGLES DE PRÉSENTATION DU BRIEFING :
+- Rédige uniquement un briefing lisible en prose, avec des titres courts si utile. N'évoque pas de « tâches prioritaires », de classement par priorité ni de fonctionnalité de widget de tâches.
+- Ne produis aucun widget, tableau, liste de cases à cocher ou ligne de tâche Markdown (- [ ], - [x]). Mentionne les tâches existantes par leur intitulé exact, intégré à une phrase.
+- Ne recommande jamais une tâche terminée ou annulée : les tâches fournies sont celles qui restent ouvertes ; si une tâche semble terminée dans un autre contexte, ne la propose pas.
+- Le seul bloc de code éventuellement autorisé est le bloc facultatif \`\`\`json:actions décrit plus bas ; il ne fait pas partie du texte du briefing.
+
+${structure}
+
+TÂCHES CITÉES :
+Pour une tâche existante, reprends son intitulé exact (sans chemin ni numéro de ligne), intégré à une phrase et sans la transformer en case à cocher.
+
+FORMAT DES ACTIONS :
+- Si tu proposes des actions, retourne-les uniquement dans un bloc \`\`\`json:actions contenant directement un tableau JSON d'objets d'action, sans objet enveloppe « actions ».
+- N'insère jamais le JSON des actions dans le texte du briefing. Respecte les types et champs autorisés ci-dessous.
+
+${actionPolicy({ dailyTargetPath, allowed })}`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -695,7 +706,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 	public static extractProposalsFromResponse(
 		responseText: string,
 		vaultTasks: ObsidianTask[] = [],
-		todayStr?: string
+		todayStr?: string,
+		eventTitles: string[] = []
 	): { cleanText: string; proposals: ActionProposal[] } {
 		const blocks = JsonUtils.extractJsonBlocks(responseText);
 
@@ -711,8 +723,13 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 
 		for (const block of blocks) {
 			const parsed = JsonUtils.safeParseJson(block.jsonText);
-			if (Array.isArray(parsed) && parsed.length > 0) {
-				const proposalsFromBlock = parsed
+			const actions = Array.isArray(parsed)
+				? parsed
+				: parsed && typeof parsed === 'object' && Array.isArray((parsed as { actions?: unknown }).actions)
+					? (parsed as { actions: unknown[] }).actions
+					: [];
+			if (actions.length > 0) {
+				const proposalsFromBlock = actions
 					.filter(p => p && typeof p === 'object' && p.type)
 					.map((p, index) => {
 						const rawTarget = p.targetPath || (p.folder ? `${p.folder}/${p.fileName || 'Note'}` : p.fileName) || p.description || 'Note';
@@ -746,9 +763,15 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 
 		cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim();
 
+		// Aucune création forcée : doublons retirés, créations restantes à cocher par l'utilisateur
+		const proposals = refineBriefingProposals(validatedProposals, {
+			existingTaskTitles: vaultTasks.map(t => t.title),
+			eventTitles
+		});
+
 		return {
 			cleanText: cleanText || responseText.trim(),
-			proposals: validatedProposals
+			proposals
 		};
 	}
 
@@ -764,6 +787,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 			focusProject?: string;
 			priorityFolders?: string[];
 			priorityFiles?: string[];
+			priorityTags?: string[];
+			adhocPriority?: string;
 			energy?: number;
 		}
 	): Promise<{ text: string; data: BriefingVaultData; allTasks: ObsidianTask[] }> {
@@ -786,18 +811,29 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 			config,
 			(chunk, full) => {
 				generatedText = full;
-				onChunk(chunk, full);
+				onChunk?.(chunk, full);
 			}
 		);
 
+		// Tâches connues du briefing (sans doublon), pour relier le texte aux vraies tâches
+		const seen = new Set<string>();
 		const allTasks = [
-			...data.overdueTasks,
+			...(data.oneThingTask ? [data.oneThingTask] : []),
 			...data.todayTasks,
+			...data.overdueTasks,
 			...data.priorityTasks,
+			...(data.userPrioritizedTasks || []),
+			...(data.quickWinTasks || []),
+			...(data.delegatedTasks || []),
 			...data.inboxTasks,
 			...data.projectTasks,
 			...(data.pausedTasks || [])
-		];
+		].filter(t => {
+			const k = `${t.filePath}:${t.lineNumber}`;
+			if (seen.has(k)) return false;
+			seen.add(k);
+			return isOpenBriefingTask(t);
+		});
 
 		return {
 			text: generatedText,
@@ -820,7 +856,7 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 		const filePath = dailyRes.path;
 
 		const cleanText = DailyNoteFormatter.formatForDailyNote(briefingText);
-		const sectionHeader = '## 🌅 Briefing & Focus du Jour';
+		const sectionHeader = MORNING_SECTION_HEADER;
 		const sectionContent = `${sectionHeader}\n\n*Généré à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} (Énergie : ${plugin.settings.energyLevel}/10)*\n\n${cleanText}\n`;
 
 		const existingFile = app.vault.getFileByPath(filePath) || app.vault.getAbstractFileByPath(filePath);
@@ -869,6 +905,8 @@ Propose-moi mon briefing et mon plan d'action optimisé pour aujourd'hui avec le
 		const tasksByFile = new Map<string, ObsidianTask[]>();
 
 		for (const task of tasks) {
+			// Les tâches en pause ou déjà terminées ne sont jamais replanifiées d'office
+			if (task.completed || task.isPaused || task.status === 'paused' || task.status === 'cancelled') continue;
 			if (!task.dueDate || task.dueDate < dateStr) {
 				const list = tasksByFile.get(task.filePath) || [];
 				list.push(task);

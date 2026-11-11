@@ -1,3 +1,4 @@
+import { DelegationFeature } from '../models/delegation';
 import { App, TFile } from 'obsidian';
 import { ObsidianTask } from '../models/task';
 
@@ -27,7 +28,12 @@ export const DEFAULT_TASK_EXCLUSION_SETTINGS: TaskExclusionSettings = {
 /** Accès facultatif aux tags de note (frontmatter et corps) via le cache de métadonnées d'Obsidian. */
 export type NoteTagsResolver = (filePath: string) => string[];
 
-export type ExclusionReason = 'tag' | 'note-tag' | 'word' | 'path' | 'status' | 'parent';
+export type ExclusionReason = 'tag' | 'note-tag' | 'word' | 'path' | 'status' | 'parent' | 'others';
+
+/** Options de filtrage : le calendrier garde les tâches des autres (masquées par ses propres filtres). */
+export interface ExclusionOptions {
+	keepOthers?: boolean;
+}
 
 export function parseRuleList(raw?: string): string[] {
 	if (!raw) return [];
@@ -98,7 +104,9 @@ export class TaskExclusionRules {
 	}
 
 	/** Raison de l'exclusion d'une tâche, ou null si elle est conservée. */
-	public reasonFor(task: ObsidianTask): ExclusionReason | null {
+	public reasonFor(task: ObsidianTask, opts: ExclusionOptions = {}): ExclusionReason | null {
+		// Mode « attribuée » : une tâche pour quelqu'un d'autre n'est pas une de mes tâches
+		if (!opts.keepOthers && task.forOthers && DelegationFeature.hidesOthers()) return 'others';
 		if (this.isEmpty()) return null;
 		if (this.isPathExcluded(task.filePath)) return 'path';
 		if (this.statuses.size && this.statuses.has(task.statusChar)) return 'status';
@@ -117,21 +125,22 @@ export class TaskExclusionRules {
 		return null;
 	}
 
-	public isExcluded(task: ObsidianTask): boolean {
-		return this.reasonFor(task) !== null;
+	public isExcluded(task: ObsidianTask, opts: ExclusionOptions = {}): boolean {
+		return this.reasonFor(task, opts) !== null;
 	}
 
 	/**
 	 * Filtre une liste de tâches. Les sous-tâches d'une tâche exclue sont exclues avec elle.
 	 * Les tâches doivent être dans l'ordre du fichier (ce que produit TaskParser.parseAllTasks).
 	 */
-	public filter(tasks: ObsidianTask[]): ObsidianTask[] {
-		if (this.isEmpty()) return tasks;
+	public filter(tasks: ObsidianTask[], opts: ExclusionOptions = {}): ObsidianTask[] {
+		const othersApply = !opts.keepOthers && DelegationFeature.hidesOthers();
+		if (this.isEmpty() && !othersApply) return tasks;
 		const excludedLines = new Map<string, Set<number>>();
 		return tasks.filter(task => {
 			const lines = excludedLines.get(task.filePath) || new Set<number>();
 			const parentExcluded = task.parentLineNumber !== undefined && lines.has(task.parentLineNumber);
-			if (parentExcluded || this.isExcluded(task)) {
+			if (parentExcluded || this.isExcluded(task, opts)) {
 				lines.add(task.lineNumber);
 				excludedLines.set(task.filePath, lines);
 				return false;

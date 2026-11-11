@@ -2,11 +2,22 @@ import { describe, it, expect } from 'vitest';
 import { FEATURE_DEFINITIONS, isFeatureEnabled } from '../../src/models/features';
 
 describe('Fonctionnalités activables', () => {
-	it('tout est actif par défaut, et pour un coffre existant sans ces réglages', () => {
+	it('les fonctionnalités d’origine sont actives par défaut, et pour un coffre existant sans ces réglages', () => {
 		for (const def of FEATURE_DEFINITIONS) {
-			expect(isFeatureEnabled(undefined, def.key)).toBe(true);
-			expect(isFeatureEnabled({}, def.key)).toBe(true);
+			const expected = def.defaultEnabled !== false;
+			expect(isFeatureEnabled(undefined, def.key)).toBe(expected);
+			expect(isFeatureEnabled({}, def.key)).toBe(expected);
 		}
+		for (const key of ['calendar', 'ai', 'briefings', 'gamification'] as const) {
+			expect(isFeatureEnabled(undefined, key)).toBe(true);
+		}
+	});
+
+	it('les tâches données par d’autres sont une option : coupée par défaut, activée explicitement', () => {
+		expect(isFeatureEnabled(undefined, 'delegated')).toBe(false);
+		expect(isFeatureEnabled({}, 'delegated')).toBe(false);
+		expect(isFeatureEnabled({ featureDelegatedTasksEnabled: true }, 'delegated')).toBe(true);
+		expect(isFeatureEnabled({ featureDelegatedTasksEnabled: false }, 'delegated')).toBe(false);
 	});
 
 	it('seul un réglage explicitement faux désactive une fonctionnalité', () => {

@@ -18,8 +18,11 @@ import {
 	soloCalendar,
 	taskGroupOptions,
 	toggleCalendarInFilter,
-	toggleRoleInFilter
+	toggleRoleInFilter,
+	DELEGATION_SELF,
+	DELEGATION_OTHERS
 } from '../services/calendarFilters';
+import { DelegationFeature } from '../models/delegation';
 
 export interface FilterPopoverHost {
 	getFilter(): CalendarFilter;
@@ -30,6 +33,10 @@ export interface FilterPopoverHost {
 	matrixEnabled(): boolean;
 	/** Tags présents dans le calendrier, les plus utilisés d'abord (proposés dans les filtres) */
 	knownTags(): string[];
+	/** Fonctionnalité « tâches données par d'autres » active */
+	delegationEnabled(): boolean;
+	/** Personnes qui ont donné des tâches, les plus fréquentes d'abord (clé de filtre, nom affiché, nombre) */
+	knownDelegators(): Array<{ key: string; name: string; count: number }>;
 	/** Tous les préréglages, par défaut compris (liste modifiable) */
 	presets(): CalendarFilterPreset[];
 	savePresets(presets: CalendarFilterPreset[]): Promise<void>;
@@ -173,6 +180,7 @@ export class CalendarFilterPopover {
 		this.renderDescription(el, filter);
 		if (this.host.googleReady() && this.host.legend().length) this.renderCalendars(el, filter);
 		if (filter.showTasks) this.renderTaskGroups(el, filter);
+		if (filter.showTasks && this.host.delegationEnabled()) this.renderDelegation(el, filter);
 
 		el.scrollTop = scroll;
 	}
@@ -615,6 +623,38 @@ export class CalendarFilterPopover {
 					this.apply({ ...filter, taskGroups: keys });
 				}
 			});
+		}
+	}
+
+	/** Personnes dans les tâches : les miennes, toutes celles qui mentionnent quelqu'un, ou une personne. */
+	private renderDelegation(parent: HTMLElement, filter: CalendarFilter): void {
+		const kept = new Set(filter.delegation || []);
+		const people = this.host.knownDelegators();
+		const labels = DelegationFeature.labels();
+		const defaultHint = DelegationFeature.hidesOthers() ? 'les miennes (celles des autres masquées)' : 'toutes les tâches';
+		const sec = this.section(parent, labels.section, kept.size ? '' : defaultHint);
+		const row = sec.createDiv({ cls: 'sbm-tcal-filter-chips' });
+		const toggle = (key: string) => {
+			const next = new Set(kept);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			// La puce « autres » englobe chaque personne : on garde l'un ou l'autre
+			if (key === DELEGATION_OTHERS && next.has(key)) [...next].filter(k => k.startsWith('person:')).forEach(k => next.delete(k));
+			if (key.startsWith('person:') && next.has(key)) next.delete(DELEGATION_OTHERS);
+			this.apply({ ...filter, delegation: [...next] });
+		};
+		this.chip(row, 'Les miennes', { active: kept.has(DELEGATION_SELF), icon: 'user', onClick: () => toggle(DELEGATION_SELF) });
+		this.chip(row, labels.othersChip, { active: kept.has(DELEGATION_OTHERS), icon: 'users', onClick: () => toggle(DELEGATION_OTHERS) });
+		for (const person of people.slice(0, 12)) {
+			this.chip(row, person.name, {
+				active: kept.has(person.key) || kept.has(DELEGATION_OTHERS),
+				icon: 'user-check',
+				title: `${person.count} tâche${person.count > 1 ? 's' : ''} · ${labels.describe(person.name)}`,
+				onClick: () => toggle(person.key)
+			});
+		}
+		if (!people.length) {
+			sec.createDiv({ cls: 'sbm-tcal-filter-hint', text: `Aucune tâche ne mentionne encore quelqu’un (${DelegationFeature.getToken()}Nom).` });
 		}
 	}
 }

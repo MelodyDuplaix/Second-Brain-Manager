@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MorningBriefingService, BriefingVaultData } from '../../src/services/morningBriefingService';
 import { ObsidianTask } from '../../src/models/task';
 import { DEFAULT_SETTINGS } from '../../src/main';
 import { TFile, App } from 'obsidian';
+import { VaultContextService } from '../../src/services/vaultContextService';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('MorningBriefingService', () => {
 	const mockTasks: ObsidianTask[] = [
@@ -49,6 +52,7 @@ describe('MorningBriefingService', () => {
 		const data: BriefingVaultData = {
 			dateStr: '2026-08-24',
 			formattedDate: 'Lundi 24 Août 2026',
+			currentTime: '09:37',
 			energy: 3,
 			modeText: 'Mode Économie',
 			overdueTasks: [mockTasks[0]],
@@ -67,6 +71,10 @@ describe('MorningBriefingService', () => {
 		expect(messages[0].content).toContain('Second Brain Manager');
 		expect(messages[0].content).toContain('Mode Économie');
 		expect(messages[0].content).toContain('Briefing du Matin');
+		expect(messages[0].content).toContain('Ne produis aucun widget, tableau, liste de cases à cocher');
+		expect(messages[0].content).toContain('N\'évoque pas de « tâches prioritaires »');
+		expect(messages[0].content).not.toContain('FORMAT DES TÂCHES CITÉES');
+		expect(messages[1].content).toContain('HEURE LOCALE AU MOMENT DE LA GÉNÉRATION : 09:37');
 
 		expect(messages[1].role).toBe('user');
 		expect(messages[1].content).toContain('Lundi 24 Août 2026');
@@ -74,6 +82,114 @@ describe('MorningBriefingService', () => {
 		expect(messages[1].content).toContain('[[Acme Project]]');
 		expect(messages[1].content).toContain('[[Maison]]');
 		expect(messages[1].content).toContain('[[Idées vrac]]');
+	});
+
+	it('collects open tasks from vault files and excludes checked tasks', async () => {
+		const markdown = [
+			'- [x] Backend déjà terminé',
+			'- [ ] Nouvelle tâche encore ouverte'
+		].join('\n');
+		const vaultFile = { path: '01 - Projets/Projet.md', basename: 'Projet' };
+		const filterService = {
+			isFolderExcluded: () => false,
+			isFileNameExcluded: () => false,
+			isFileExcluded: () => false,
+			isTaskPrioritized: () => false,
+			getPriorityTags: () => [],
+			getPriorityProperties: () => []
+		};
+		vi.spyOn(VaultContextService.prototype, 'getFilterService').mockReturnValue(filterService as any);
+		vi.spyOn(VaultContextService.prototype, 'getVaultStructure').mockReturnValue({
+			folders: [],
+			projects: ['Projet'],
+			contacts: [],
+			domains: [],
+			inboxFiles: [],
+			templates: [],
+			totalMarkdownFiles: 1
+		});
+		vi.spyOn(VaultContextService.prototype, 'getOrCreateDailyNote').mockResolvedValue({
+			path: '04 - Journal/2026-08-24.md',
+			content: ''
+		} as any);
+		vi.spyOn(VaultContextService.prototype, 'getDailyNote').mockResolvedValue({ content: '' } as any);
+
+		const app = {
+			vault: {
+				getMarkdownFiles: () => [vaultFile],
+				cachedRead: async () => markdown
+			}
+		} as unknown as App;
+		const plugin = {
+			settings: { ...DEFAULT_SETTINGS, energyLevel: 5 },
+			isFeatureEnabled: () => false
+		};
+
+		const data = await MorningBriefingService.collectBriefingData(app, plugin as any, 'Projet');
+
+		expect(data.projectTasks.map(task => task.title)).toEqual(['Nouvelle tâche encore ouverte']);
+		expect(data.projectTasks.some(task => task.title === 'Backend déjà terminé')).toBe(false);
+	});
+
+	it('excludes completed and cancelled tasks even if they appear in input sections', () => {
+		const completedTask: ObsidianTask = {
+			...mockTasks[0],
+			rawText: '- [x] Tâche déjà terminée',
+			title: 'Tâche déjà terminée',
+			completed: true,
+			status: 'done',
+			statusChar: 'x',
+			statusType: 'DONE'
+		};
+		const messages = MorningBriefingService.buildBriefingMessages({
+			dateStr: '2026-08-24',
+			formattedDate: 'Lundi 24 Août 2026',
+			energy: 5,
+			modeText: 'Mode Équilibré',
+			oneThingTask: completedTask,
+			todayTasks: [completedTask],
+			overdueTasks: [completedTask],
+			priorityTasks: [completedTask],
+			userPrioritizedTasks: [completedTask],
+			quickWinTasks: [completedTask],
+			inboxTasks: [completedTask],
+			projectTasks: [completedTask],
+			pausedTasks: [completedTask],
+			canSuggestPausedTasks: true,
+			projects: [],
+			contacts: []
+		});
+
+		expect(messages[1].content).not.toContain('Tâche déjà terminée');
+	});
+
+	it('filters a checked source line even if its parsed status fields say it is open', () => {
+		const staleTask: ObsidianTask = {
+			...mockTasks[0],
+			rawText: '- [x] Tâche terminée avec statut désynchronisé',
+			title: 'Tâche terminée avec statut désynchronisé',
+			completed: false,
+			status: 'todo',
+			statusChar: ' ',
+			statusType: 'TODO'
+		};
+		const messages = MorningBriefingService.buildBriefingMessages({
+			dateStr: '2026-08-24',
+			formattedDate: 'Lundi 24 Août 2026',
+			energy: 5,
+			modeText: 'Mode Équilibré',
+			oneThingTask: staleTask,
+			todayTasks: [staleTask],
+			overdueTasks: [staleTask],
+			priorityTasks: [staleTask],
+			userPrioritizedTasks: [staleTask],
+			inboxTasks: [staleTask],
+			projectTasks: [staleTask],
+			projects: [],
+			contacts: []
+		});
+
+		expect(messages[1].content).not.toContain('Tâche terminée avec statut désynchronisé');
 	});
 
 	it('should integrate focus project directives when a specific project is selected', () => {
@@ -106,7 +222,7 @@ describe('MorningBriefingService', () => {
 		const messages = MorningBriefingService.buildBriefingMessages(data);
 		expect(messages[0].content).toContain('Projet Focus Majeur');
 		expect(messages[0].content).toContain('Projet Jeu Vidéo');
-		expect(messages[1].content).toContain('PROJET PRIORITAIRE DU JOUR');
+		expect(messages[1].content).toContain('PROJET FOCUS DU JOUR');
 		expect(messages[1].content).toContain('Coder le moteur physique');
 	});
 
@@ -246,6 +362,28 @@ describe('MorningBriefingService', () => {
 		expect((proposals[0] as any).newDueDate).toBe('2026-08-28');
 	});
 
+	it('extracts actions from an object wrapper returned as raw JSON', () => {
+		const rawResponse = `Briefing du jour.
+{
+  "actions": [
+    {
+      "type": "move_note",
+      "targetPath": "2 Inbox/KOReader-patches.md",
+      "destinationFolder": "4 Ressources/Internet/logiciel",
+      "newFileName": "KOReader-patches.md",
+      "description": "Archiver cette ressource technique"
+    }
+  ]
+}`;
+
+		const { cleanText, proposals } = MorningBriefingService.extractProposalsFromResponse(rawResponse);
+
+		expect(cleanText).toBe('Briefing du jour.');
+		expect(proposals).toHaveLength(1);
+		expect(proposals[0].type).toBe('move_note');
+		expect(proposals[0].targetPath).toBe('2 Inbox/KOReader-patches.md');
+	});
+
 	it('should trigger recovery mode prompt with wide triage when isRecoveryMode is true', () => {
 		const data: BriefingVaultData = {
 			dateStr: '2026-08-26',
@@ -274,8 +412,11 @@ describe('MorningBriefingService', () => {
 		const messages = MorningBriefingService.buildBriefingMessages(data);
 
 		expect(messages).toHaveLength(2);
-		expect(messages[0].content).toContain('plan de tri et d\'organisation exhaustif');
+		expect(messages[0].content).toContain('plan de tri');
 		expect(messages[0].content).toContain('Plan de Tri & d\'Organisation');
+		// Plus de bloc d'actions obligatoire ni de création forcée
+		expect(messages[0].content).not.toContain('OBLIGATOIRE');
+		expect(messages[0].content).toContain('FACULTATIF');
 		expect(messages[1].content).toContain('THE ONE THING');
 		expect(messages[1].content).toContain('QUICK WINS DISPONIBLES');
 		expect(messages[1].content).toContain('Reprise après 5 jour(s) de pause');
@@ -306,7 +447,7 @@ describe('MorningBriefingService', () => {
 		const messages = MorningBriefingService.buildBriefingMessages(data);
 		expect(messages[0].content).toContain('PRISE EN COMPTE DES AGENDAS');
 		expect(messages[0].content).toContain('Rendez-vous & Contraintes Fixes de l\'Agenda');
-		expect(messages[1].content).toContain('AGENDA & CRÉNEAUX DU JOUR (Google Calendar - PRIORITÉ ABSOLUE)');
+		expect(messages[1].content).toContain('AGENDA & CRÉNEAUX DU JOUR (Google Calendar)');
 		expect(messages[1].content).toContain('Réunion Lancement');
 	});
 
@@ -352,8 +493,8 @@ describe('MorningBriefingService', () => {
 		};
 
 		const messages = MorningBriefingService.buildBriefingMessages(data);
-		expect(messages[0].content).toContain('Dossiers/Fichiers/Tags/Tâches prioritaires');
-		expect(messages[1].content).toContain('FOCUS & PRIORITÉS DU JOUR DÉFINIES PAR L\'UTILISATEUR');
+		expect(messages[0].content).toContain('Éléments de focus sélectionnés');
+		expect(messages[1].content).toContain('FOCUS ET SÉLECTIONS DU JOUR DÉFINIS PAR L\'UTILISATEUR');
 		expect(messages[1].content).toContain('01 - Projets/Rapport');
 		expect(messages[1].content).toContain('01 - Projets/CahierDesCharges.md');
 		expect(messages[1].content).toContain('#urgent, #focus');
@@ -448,10 +589,10 @@ describe('MorningBriefingService', () => {
 		};
 
 		const messages = MorningBriefingService.buildBriefingMessages(dataWithAdhoc);
-		expect(messages[0].content).toContain('Priorité Spécifique Directe de l\'Utilisateur');
+		expect(messages[0].content).toContain('Consigne spécifique de l\'utilisateur');
 		expect(messages[0].content).toContain('Préparer la réunion avec le PDG à 14h');
-		expect(messages[1].content).toContain('OBJECTIF & PRIORITÉ DU JOUR FIXÉE DIRECTEMENT PAR L\'UTILISATEUR (PRIORITÉ ABSOLUE)');
+		expect(messages[1].content).toContain('OBJECTIF OU CONSIGNE DU JOUR FIXÉE DIRECTEMENT PAR L\'UTILISATEUR');
 		expect(messages[1].content).toContain('Préparer la réunion avec le PDG à 14h');
-		expect(messages[1].content).toContain('Tags prioritaires sélectionnés / configurés : #client-vip, #urgence');
+		expect(messages[1].content).toContain('Tags sélectionnés / configurés : #client-vip, #urgence');
 	});
 });

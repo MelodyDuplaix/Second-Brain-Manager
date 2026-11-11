@@ -18,6 +18,7 @@ import { describeFilter, isPresetModified, restoreDefaultPreset, restoreAllDefau
 import type { CalendarFilterPreset } from '../../services/calendarFilters';
 import { renderRewardsGroups } from './rewardsPage';
 import { FEATURE_DEFINITIONS, isFeatureEnabled } from '../../models/features';
+import { DelegationFeature, DelegationMode, DELEGATION_LABELS, DELEGATION_MODES } from '../../models/delegation';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
@@ -513,10 +514,13 @@ export class MainPage extends BaseSettingsPage {
 			id: 'features',
 			name: 'Fonctionnalités',
 			icon: 'toggle-left',
-			desc: 'Activez seulement ce que vous utilisez : calendrier, IA, briefings, gamification.',
+			desc: 'Activez seulement ce que vous utilisez : calendrier, IA, briefings, gamification, tâches données par d’autres.',
 			displayValue: () => {
-				const off = FEATURE_DEFINITIONS.filter(f => !isFeatureEnabled(s, f.key)).length;
-				return off ? `${off} désactivée${off > 1 ? 's' : ''}` : 'Toutes actives';
+				// Les options (désactivées par défaut) ne comptent pas comme « désactivées »
+				const off = FEATURE_DEFINITIONS.filter(f => f.defaultEnabled !== false && !isFeatureEnabled(s, f.key)).length;
+				const extra = FEATURE_DEFINITIONS.filter(f => f.defaultEnabled === false && isFeatureEnabled(s, f.key)).length;
+				const base = off ? `${off} désactivée${off > 1 ? 's' : ''}` : 'Toutes actives';
+				return extra ? `${base} · ${extra} option${extra > 1 ? 's' : ''}` : base;
 			}
 		}, () => this.renderFeatureSettings());
 
@@ -543,6 +547,7 @@ export class MainPage extends BaseSettingsPage {
 			this.renderTaskCreationSettings();
 			this.renderStatusSettings();
 			this.renderPauseSettings();
+			if (isFeatureEnabled(s, 'delegated')) this.renderDelegationSettings();
 			this.renderMatrixSettings();
 			this.renderExclusionSettings();
 		});
@@ -1178,6 +1183,79 @@ export class MainPage extends BaseSettingsPage {
 		}
 	}
 
+	/** Tâches données par d'autres : jeton placé devant le nom de la personne. */
+	private renderDelegationSettings(): void {
+		const settings = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Personnes dans les tâches',
+			'user-check',
+			'Un jeton suivi d’un nom mentionne une personne dans une tâche. Choisissez ce que cette mention signifie pour vous.'
+		);
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Sens de la mention')
+				.setDesc(DELEGATION_LABELS[settings.delegationMode || 'assignee'].modeDesc)
+				.addDropdown((dropdown) => {
+					for (const mode of DELEGATION_MODES) dropdown.addOption(mode, DELEGATION_LABELS[mode].modeName);
+					dropdown
+						.setValue(settings.delegationMode || 'assignee')
+						.onChange(async (value) => {
+							settings.delegationMode = value as DelegationMode;
+							await this.plugin.saveSettings();
+							this.rerender();
+						});
+				});
+		});
+
+		if ((settings.delegationMode || 'assignee') === 'assignee') {
+			group.addSetting((setting: Setting) => {
+				const desc = () => {
+					const names = DelegationFeature.parseNames(settings.delegationMyNames);
+					return names.length
+						? `Une tâche qui mentionne ${names.map(n => `${DelegationFeature.getToken()}${n.split(' ')[0]}`).join(' ou ')} reste la vôtre, même si elle cite aussi quelqu’un d’autre.`
+						: '⚠️ À renseigner : sans votre nom, une tâche qui vous est attribuée (ex. écrite par un proche dans une note partagée) serait considérée comme celle de quelqu’un d’autre.';
+				};
+				setting
+					.setName('Mes noms')
+					.setDesc(desc())
+					.addText((text) => {
+						text
+							.setPlaceholder('Melody, Mélo')
+							.setValue(settings.delegationMyNames || '')
+							.onChange(async (value) => {
+								settings.delegationMyNames = value;
+								await this.plugin.saveSettings();
+								setting.setDesc(desc());
+							});
+					});
+			});
+		}
+
+		const example = (token: string) => {
+			const t = DelegationFeature.normalizeToken(token);
+			const sep = /[:：]$/.test(t) ? ' ' : '';
+			return `Exemples : « Relire le devis ${t}${sep}Antoine », « Appeler la banque ${t}${sep}[[Claire Dupont]] », « Préparer la salle ${t}${sep}"Jean Dupont" ». Un nom seul est relié à la note de contact correspondante quand elle existe (« Antoine » → [[Antoine Dupont]]).`;
+		};
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Jeton')
+				.setDesc(example(settings.delegatedTaskToken))
+				.addText((text) => {
+					text
+						.setPlaceholder('@')
+						.setValue(settings.delegatedTaskToken || '@')
+						.onChange(async (value) => {
+							settings.delegatedTaskToken = DelegationFeature.normalizeToken(value);
+							setting.setDesc(example(value));
+							await this.plugin.saveSettings();
+						});
+					text.inputEl.style.width = '7em';
+				});
+		});
+	}
+
 	private renderMatrixSettings(): void {
 		// =========================================================================
 		// 5. Matrice Eisenhower
@@ -1353,7 +1431,7 @@ export class MainPage extends BaseSettingsPage {
 						btn.setDisabled(true);
 						btn.setButtonText('Analyse…');
 						const reasonLabels: Record<ExclusionReason, string> = {
-							tag: 'tag', 'note-tag': 'tag de la note', word: 'mot', path: 'dossier/fichier', status: 'statut', parent: 'tâche parente'
+							tag: 'tag', 'note-tag': 'tag de la note', word: 'mot', path: 'dossier/fichier', status: 'statut', parent: 'tâche parente', others: 'attribuée à une autre personne'
 						};
 						const rules = getTaskExclusionRules(this.plugin.app, this.plugin.settings);
 						let total = 0;

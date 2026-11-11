@@ -1,6 +1,7 @@
 import { CalendarRole } from '../models/googleCalendar';
 import { TaskPriority } from '../models/task';
 import { MatrixQuadrant } from '../adapters/matrixAdapter';
+import { DelegationFeature } from '../models/delegation';
 
 /* ==========================================================================
    Filtres du calendrier : ce qui est affiché, préréglages intégrés et personnels
@@ -23,6 +24,12 @@ export interface CalendarFilter {
 	tags: string[];
 	/** Tags exclus : tout élément qui en porte un est masqué */
 	excludedTags: string[];
+	/**
+	 * Personnes dans les tâches (fonctionnalité optionnelle) : catégories gardées ; vide : toutes
+	 * (sauf, en mode « attribuée », les tâches des autres, masquées par défaut).
+	 * 'self' = mes tâches, 'others' = toutes celles qui mentionnent quelqu'un, 'person:<clé>' = une personne.
+	 */
+	delegation: string[];
 }
 
 export interface CalendarFilterPreset {
@@ -43,7 +50,8 @@ export const DEFAULT_CALENDAR_FILTER: CalendarFilter = {
 	taskGroups: [],
 	searchText: '',
 	tags: [],
-	excludedTags: []
+	excludedTags: [],
+	delegation: []
 };
 
 const all = (patch: Partial<CalendarFilter>): CalendarFilter => ({ ...DEFAULT_CALENDAR_FILTER, ...patch });
@@ -72,7 +80,8 @@ export function copyFilter(filter: CalendarFilter): CalendarFilter {
 		hiddenCalendars: [...filter.hiddenCalendars],
 		taskGroups: [...filter.taskGroups],
 		tags: [...(filter.tags || [])],
-		excludedTags: [...(filter.excludedTags || [])]
+		excludedTags: [...(filter.excludedTags || [])],
+		delegation: [...(filter.delegation || [])]
 	};
 }
 
@@ -141,8 +150,50 @@ export function normalizeFilter(raw: unknown): CalendarFilter {
 		taskGroups: strings(r.taskGroups),
 		searchText: typeof r.searchText === 'string' ? r.searchText.trim() : '',
 		tags: normalizeTagList(strings(r.tags)),
-		excludedTags: normalizeTagList(strings(r.excludedTags))
+		excludedTags: normalizeTagList(strings(r.excludedTags)),
+		delegation: [...new Set(strings(r.delegation).filter(isDelegationKey))]
 	};
+}
+
+/* ----- Personnes dans les tâches ----- */
+
+export const DELEGATION_SELF = 'self';
+export const DELEGATION_OTHERS = 'others';
+
+function isDelegationKey(key: string): boolean {
+	return key === DELEGATION_SELF || key === DELEGATION_OTHERS || (key.startsWith('person:') && key.length > 7);
+}
+
+export function delegationPersonKey(name: string): string {
+	return `person:${DelegationFeature.personKey(name)}`;
+}
+
+/**
+ * Une tâche passe-t-elle le filtre « personnes » ?
+ * Rien de coché : tout passe, sauf les tâches des autres quand `hideOthers` (mode « attribuée »).
+ */
+export function matchesDelegationFilter(
+	filter: CalendarFilter,
+	task: { person?: string; people?: string[]; forOthers?: boolean },
+	hideOthers = false
+): boolean {
+	const kept = filter.delegation || [];
+	if (!kept.length) return !(hideOthers && task.forOthers);
+	const people = task.people && task.people.length ? task.people : (task.person ? [task.person] : []);
+	// Dans les modes « donnée par » et « contexte », une mention n'enlève pas la tâche de mes tâches.
+	const mine = !task.forOthers;
+	if (kept.includes(DELEGATION_SELF) && mine) return true;
+	// « Autres » : la tâche mentionne quelqu'un d'autre que l'utilisateur
+	if (kept.includes(DELEGATION_OTHERS) && task.person) return true;
+	return people.some(p => kept.includes(delegationPersonKey(p)));
+}
+
+/** Libellé d'une catégorie de personnes, à partir des personnes connues. */
+export function delegationLabel(key: string, people: Array<{ key: string; name: string }> = []): string {
+	if (key === DELEGATION_SELF) return 'Les miennes';
+	if (key === DELEGATION_OTHERS) return DelegationFeature.labels().othersChip;
+	const person = people.find(p => p.key === key);
+	return person ? person.name : key.slice(7);
 }
 
 /* ----- Filtres de description : texte libre et tags ----- */
@@ -226,7 +277,8 @@ export function sameFilter(a: CalendarFilter, b: CalendarFilter): boolean {
 		&& sorted(a.taskGroups) === sorted(b.taskGroups)
 		&& (a.searchText || '').trim().toLowerCase() === (b.searchText || '').trim().toLowerCase()
 		&& sorted(a.tags || []) === sorted(b.tags || [])
-		&& sorted(a.excludedTags || []) === sorted(b.excludedTags || []);
+		&& sorted(a.excludedTags || []) === sorted(b.excludedTags || [])
+		&& sorted(a.delegation || []) === sorted(b.delegation || []);
 }
 
 /* ----- Catégories de tâches : quadrants, ou priorités si les quadrants sont désactivés ----- */
@@ -322,7 +374,15 @@ export interface FilterChip {
 
 export function describeFilter(
 	filter: CalendarFilter,
-	ctx: { matrixEnabled: boolean; googleReady: boolean; entriesAvailable: boolean; legend: Array<{ id: string; name: string; role: CalendarRole }> }
+	ctx: {
+		matrixEnabled: boolean;
+		googleReady: boolean;
+		entriesAvailable: boolean;
+		legend: Array<{ id: string; name: string; role: CalendarRole }>;
+		/** Fonctionnalité « tâches données » active, et personnes connues (pour les libellés) */
+		delegationEnabled?: boolean;
+		people?: Array<{ key: string; name: string }>;
+	}
 ): FilterChip[] {
 	const chips: FilterChip[] = [];
 	if (filter.searchText) {
@@ -367,6 +427,15 @@ export function describeFilter(
 			});
 		}
 	}
+	if (filter.showTasks && ctx.delegationEnabled && (filter.delegation || []).length) {
+		const labels = filter.delegation.map(k => delegationLabel(k, ctx.people));
+		chips.push({
+			id: 'delegation',
+			label: labels.length <= 2 ? labels.join(', ') : `${labels.length} personnes`,
+			detail: `${DelegationFeature.labels().section} : ${labels.join(', ')}`,
+			icon: 'user-check'
+		});
+	}
 	if (ctx.entriesAvailable && !filter.showEntries) chips.push({ id: 'entries', label: 'Sans entrées', icon: 'clock' });
 	if (ctx.googleReady) {
 		if (!filter.showEvents) {
@@ -394,6 +463,7 @@ export function clearFilterChip(filter: CalendarFilter, chipId: string, legend: 
 		case 'tasks': return { ...filter, showTasks: true };
 		case 'done': return { ...filter, showDone: true };
 		case 'groups': return { ...filter, taskGroups: [] };
+		case 'delegation': return { ...filter, delegation: [] };
 		case 'entries': return { ...filter, showEntries: true };
 		case 'events': return { ...filter, showEvents: true };
 		case 'calendars': {

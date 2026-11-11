@@ -4,6 +4,7 @@ import { MatrixFeature } from '../adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig';
 import { DynamicRegexBuilder } from './regexBuilder';
 import { TaskMutator } from '../mutators/taskMutator';
+import { DelegationFeature } from '../models/delegation';
 
 export class TaskParser {
 	private static readonly BLOCK_ID_REGEX = /\^([a-zA-Z0-9_-]+)$/;
@@ -174,6 +175,8 @@ export class TaskParser {
 		const matrixTag = MatrixFeature.isEnabled() && matrixMatch ? matrixMatch[0] : undefined;
 
 		const domainTags = this.extractDomainTags(body, config);
+		// Personnes mentionnées (rien n'est lu si la fonctionnalité est coupée)
+		const mention = DelegationFeature.isEnabled() ? DelegationFeature.analyze(body) : null;
 
 		const rawPauseTag = config.pauseTag ? config.pauseTag.toLowerCase().replace(/^#/, '') : 'pause';
 		const pauseTagRegex = new RegExp(`#(?:${rawPauseTag}|pause|en-pause|on-hold)(?=[^\\w-]|$)`, 'gi');
@@ -232,6 +235,11 @@ export class TaskParser {
 			priorityTag,
 			matrixTag,
 			domainTags,
+			...(mention && mention.people.length ? {
+				person: mention.person,
+				people: mention.people,
+				...(mention.forOthers ? { forOthers: true } : {})
+			} : {}),
 			blockId,
 			subtasks: []
 		};

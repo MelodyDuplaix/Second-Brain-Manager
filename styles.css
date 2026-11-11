@@ -8547,6 +8547,24 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 
+/* Tâche donnée par quelqu'un d'autre (fonctionnalité optionnelle) : badge de la personne */
+.sbm-tcal-meta.delegated {
+	color: var(--color-purple);
+	background: color-mix(in srgb, var(--color-purple) 12%, transparent);
+	font-weight: 600;
+}
+
+.sbm-tcal-chip.is-delegated .sbm-tcal-chip-title::before {
+	content: '👤';
+	font-size: 0.8em;
+	margin-right: 0.3em;
+	opacity: 0.75;
+}
+
+.sbm-tcal-chip.is-delegated:not(.variant-mini) .sbm-tcal-chip-title::before {
+	content: none;
+}
+
 .sbm-tcal-check .sbm-tcal-check-symbol {
 	font-size: 9px;
 	font-weight: 700;

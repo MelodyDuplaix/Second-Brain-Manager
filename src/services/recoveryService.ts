@@ -16,6 +16,18 @@ import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from '../models/syntaxConfig'
 import { GoogleCalendarEvent } from '../models/googleCalendar';
 import { GoogleCalendarService } from './googleCalendarService';
 import SecondBrainPlugin from '../main';
+import { CalendarDate } from './taskCalendarService';
+import {
+	UserRhythm,
+	actionPolicy,
+	buildDelegatedSection,
+	computeUserRhythm,
+	describeRhythm,
+	describeVaultConventions,
+	localDateStr,
+	refineBriefingProposals,
+	sharedStyleGuidelines
+} from './briefingContext';
 import { JsonUtils } from '../utils/jsonUtils';
 
 export interface RecoveryVaultData {
@@ -38,6 +50,11 @@ export interface RecoveryVaultData {
 	calendarEvents?: GoogleCalendarEvent[];
 	calendarEventsText?: string;
 	customPromptInstructions?: string;
+	rhythm?: UserRhythm | null;
+	delegatedTasks?: ObsidianTask[];
+	inboxFolder?: string;
+	googleConnected?: boolean;
+	gamificationEnabled?: boolean;
 }
 
 export class RecoveryService {
@@ -84,7 +101,7 @@ export class RecoveryService {
 	 */
 	public static async collectRecoveryData(app: App, plugin: SecondBrainPlugin): Promise<RecoveryVaultData> {
 		const today = new Date();
-		const dateStr = today.toISOString().split('T')[0];
+		const dateStr = localDateStr(today);
 
 		const formattedDate = today.toLocaleDateString('fr-FR', {
 			weekday: 'long',
@@ -148,7 +165,7 @@ export class RecoveryService {
 		const allOpenTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled' && !filterService.isTaskExcluded(t));
 
 		// Seuil de 7 jours pour identifier les tâches en retard "obsolètes / en souffrance"
-		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+		const sevenDaysAgo = CalendarDate.addDays(dateStr, -7);
 
 		const overdueTasks = allOpenTasks.filter(t =>
 			(t.dueDate && t.dueDate < dateStr) ||
@@ -265,7 +282,12 @@ export class RecoveryService {
 			dailyNoteContent,
 			calendarEvents,
 			calendarEventsText,
-			customPromptInstructions: plugin.settings.customPromptInstructions
+			customPromptInstructions: plugin.settings.customPromptInstructions,
+			rhythm: computeUserRhythm(plugin.pluginData?.completionEvents, dateStr),
+			delegatedTasks: [...overdueTasks, ...staleTasks].filter((t, i, arr) => t.person && arr.indexOf(t) === i),
+			inboxFolder: plugin.settings.inboxFolder,
+			googleConnected: Boolean(plugin.settings.googleRefreshToken) && plugin.isFeatureEnabled?.('calendar') !== false,
+			gamificationEnabled: plugin.isFeatureEnabled?.('gamification') !== false
 		};
 	}
 
@@ -275,8 +297,8 @@ export class RecoveryService {
 	 */
 	public static generateDefaultLighteningProposals(data: RecoveryVaultData, plugin?: SecondBrainPlugin): ActionProposal[] {
 		const proposals: ActionProposal[] = [];
-		const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+		const fourteenDaysAgo = CalendarDate.addDays(data.dateStr, -14);
+		const sevenDaysAgo = CalendarDate.addDays(data.dateStr, -7);
 
 		const matrixAdapter = plugin 
 			? MatrixAdapterFactory.createAdapter(plugin.settings.matrixProvider, plugin.settings.customMatrixMapping)
@@ -530,9 +552,11 @@ export class RecoveryService {
 
 		cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim();
 
+		const refined = refineBriefingProposals(validatedProposals, { existingTaskTitles: vaultTasks.map(t => t.title) });
+
 		return {
 			cleanText: cleanText || responseText.trim(),
-			proposals: validatedProposals.length > 0 ? validatedProposals : defaultProposals
+			proposals: refined.length > 0 ? refined : defaultProposals
 		};
 	}
 
@@ -580,20 +604,33 @@ export class RecoveryService {
 			customInstructionsSection = `\nINSTRUCTIONS ET CONSIGNES PERSONNALISÉES DE L'UTILISATEUR (À RESPECTER SCRUPULEUSEMENT) :\n${data.customPromptInstructions.trim()}\n`;
 		}
 
-		const systemPrompt = `Tu es l'assistant et copilote personnel "Second Brain Manager", expert en productivité personnelle, méthodologie GTD et remise en ordre de coffre.
+		const hasCalendar = Boolean(calendarSectionText);
+		const agendaRules = hasCalendar
+			? `\nPRISE EN COMPTE DES AGENDAS :
+1. Les rendez-vous de l'agenda principal et des agendas secondaires sont des contraintes fermes : place le plan de reprise dans les créneaux libres.
+2. Les agendas d'autres personnes (proches, collègues) sont informatifs : mentionne-les sobrement si c'est utile, sans les compter comme des contraintes ni signaler de conflit.\n`
+			: '';
+		const delegated = buildDelegatedSection(data.delegatedTasks || [], data.contacts || [], formatTaskDetailed);
 
-PRISE EN COMPTE DES AGENDAS :
-1. "Mon Agenda Principal & Secondaires" : Rendez-vous personnels de l'utilisateur. L'agenda principal bloque son temps de travail en priorité n°1. Tu dois impérativement articuler le plan de reprise et les tâches autour des créneaux libres disponibles.
-2. "Agendas Partagés / Proches" : Appartiennent à des tiers (ex: conjoint, collègues). Mentionne-les sobrement si pertinent à titre informatif (ex: "Agenda d'Antoine : ..."), sans formules lourdes ou moralisatrices, et sans les compter comme des contraintes de l'utilisateur ni signaler de conflit.${customInstructionsSection}
+		const systemPrompt = `Tu es "Second Brain Manager", le copilote d'organisation personnelle de l'utilisateur, à l'aise avec la méthode GTD et la remise en ordre d'un coffre.
+
+CE QUE TU SAIS DE L'UTILISATEUR :
+- Énergie déclarée : ${data.energy}/10.
+${describeRhythm(data.rhythm ?? null, data.energy)}${customInstructionsSection}
+
+SON COFFRE :
+${describeVaultConventions({
+	inboxFolder: data.inboxFolder,
+	projects: data.projects,
+	contacts: data.contacts,
+	googleConnected: data.googleConnected ?? hasCalendar,
+	gamificationEnabled: data.gamificationEnabled !== false
+})}
+${agendaRules}
+${sharedStyleGuidelines()}
 
 TON OBJECTIF :
-Accueillir l'utilisateur (${data.inactivityText}) de manière courtoise et constructive, et lui proposer un plan de tri et d'organisation complet, fluide et réaliste pour reprendre le contrôle de ses tâches et notes.
-
-CONSIGNES DE TON ET DE STYLE :
-- **Ton Équilibré, Chaleureux et Professionnel** : Adopte une posture de copilote de confiance : constructif, encourageant, courtois et mature. Évite à la fois le paternalisme infantilisant et la froideur robotique.
-- **Clarté Opérationnelle** : Énonce la situation avec lucidité et présente des actions concrètes et motivantes.
-- **Sobriété Visuelle** : N'utilise AUCUN émoji dans ta réponse textuelle (sauf si le format de tâche configuré l'impose explicitement pour les métadonnées). Reste élégant et soigné.
-- **Liens & Wikilinks Systématiques** : Quand tu mentionnes une note, un projet, ou une personne / contact (dans le texte, dans l'action prioritaire The One Thing, et dans les intitulés des tâches du bloc JSON), utilise TOUJOURS un wikilink direct \`[[Nom]]\` (ex: \`[[Claire Dupont]]\`, \`[[Projet Alpha]]\`, \`Appeler [[Claire]] pour valider [[Devis]]\`). Ne mets jamais de backticks autour des wikilinks.
+Accueillir l'utilisateur (${data.inactivityText}) simplement et sans culpabiliser, puis lui proposer un plan de tri et d'organisation réaliste pour reprendre la main sur ses tâches et ses notes. Mieux vaut quelques décisions nettes qu'un inventaire.${delegated.directive}
 
 DISCERNEMENT SÉMANTIQUE ET SÉCURITÉ :
 - Fais preuve d'un discernement contextuel approfondi :
@@ -601,16 +638,16 @@ DISCERNEMENT SÉMANTIQUE ET SÉCURITÉ :
   - Annule les tâches ou rendez-vous périmés depuis longtemps sans conséquences actuelles (\`newStatus: "cancelled"\`).
   - Range et renomme les notes en vrac vers les dossiers de projets ou de domaines correspondants avec des noms clairs (\`type: "move_note"\` ou \`type: "rename_note"\`).
 
-VARIÉTÉ D'ACTIONS À PROPOSER DANS LE PLAN :
+LEVIERS DISPONIBLES (n'utilise que ceux qui s'appliquent vraiment) :
 1. Annulation / Obsolescence (passer en \`newStatus: "cancelled"\` les tâches obsolètes ou périmées).
 2. Report de date (replanifier à aujourd'hui ou à une date réaliste).
 3. Rangement & Renommage de notes en vrac (\`type: "move_note"\`, \`type: "rename_note"\`).
 ${MatrixFeature.isEnabled() ? '4. Rétrogradation de quadrant (passer de Q1 à Q2 pour ajuster la priorité).' : '4. Baisse de priorité (newPriority) pour les tâches qui ne sont plus pressantes. Les quadrants sont désactivés : n\'utilise jamais newMatrixQuadrant.'}
 5. Délestage d'échéances (mettre \`newDueDate: null\` sur les tâches de fond sans date butoir ferme).
 
-STRUCTURE DE TA RÉPONSE :
+STRUCTURE DE TA RÉPONSE (omets toute partie sans contenu utile) :
 1. Accueil & Synthèse de Reprise (Salutation courtoise et résumé net du volume à réorganiser).
-2. Contraintes de l'Agenda (Rappel des rendez-vous et réunions prioritaires du jour).
+2. Contraintes de l'Agenda (seulement s'il y a des rendez-vous aujourd'hui).
 3. Action Prioritaire (The One Thing - La tâche clé du jour au format \`- [ ] ... [[Note]]\`, calée hors des rendez-vous).
 4. Actions Rapides (Quick Wins - 1 ou 2 micro-tâches simples de 5 min si pertinent pour amorcer l'élan).
 5. Plan de Tri & Organisation Détaillé (Justification claire des annulations, reports, rangements et renommages).
@@ -618,50 +655,22 @@ STRUCTURE DE TA RÉPONSE :
 ${taskSyntaxDesc}
 7. Conseil de Démarrage (Une recommandation motivante et pratique).
 
-BLOC D'ACTIONS STRUCTURÉES (OBLIGATOIRE À LA FIN DU MESSAGE) :
-À la toute fin de ton message, inclus un bloc de code JSON strictement balisé \`\`\`json:actions ... \`\`\` contenant le tableau exhaustif de TOUTES les propositions d'actions pour que l'utilisateur puisse les exécuter en 1 clic :
-\`\`\`json:actions
+${actionPolicy({
+	dailyTargetPath: 'la note quotidienne du jour',
+	allowed: ['update_task', 'move_note', 'rename_note'],
+	example: `\`\`\`json:actions
 [
-  {
-    "type": "update_task",
-    "targetPath": "01 - Projets/Acme.md",
-    "lineNumber": 12,
-    "taskTitle": "Rediger le rapport",
-    "description": "${MatrixFeature.isEnabled() ? 'Retrograder en Q2 et replanifier' : 'Replanifier'}",${MatrixFeature.isEnabled() ? '\n    "newMatrixQuadrant": "q2",' : ''}
-    "newDueDate": "${data.dateStr}",
-    "reason": "Tache non urgente, retrogradee pour soulager la reprise"
-  },
-  {
-    "type": "update_task",
-    "targetPath": "02 - Domaines/Maison.md",
-    "lineNumber": 5,
-    "taskTitle": "Reunion passee",
-    "description": "Marquer comme obsolete / annulee",
-    "newStatus": "cancelled",
-    "reason": "Reunion passee non pertinente"
-  },
-  {
-    "type": "move_note",
-    "targetPath": "Notes en vrac/Liste d'appel VŒUX 2026.md",
-    "destinationFolder": "01 - Projets",
-    "newFileName": "Vœux 2026 - Liste d'appels.md",
-    "description": "Ranger et renommer la liste d'appel dans les projets"
-  },
-  {
-    "type": "rename_note",
-    "targetPath": "00 - Inbox/Sans titre.md",
-    "newFileName": "Idées Projet X.md",
-    "description": "Donner un nom clair et explicite à la note"
-  }
+  { "type": "update_task", "targetPath": "<chemin fourni>", "lineNumber": 12, "taskTitle": "<intitulé exact>", "newDueDate": "${data.dateStr}", "reason": "Échéance réelle : à traiter aujourd'hui" },
+  { "type": "update_task", "targetPath": "<chemin fourni>", "lineNumber": 5, "taskTitle": "<intitulé exact>", "newStatus": "cancelled", "reason": "Réunion passée, plus d'objet" },
+  { "type": "move_note", "targetPath": "<chemin de la note en vrac>", "destinationFolder": "<dossier existant>", "newFileName": "<nom clair>.md", "description": "Ranger la note dans son projet" }
 ]
-\`\`\`
-Utilise les chemins exacts et numeros de ligne fournis.`;
+\`\`\``
+})}
+Pendant une reprise, on trie l'existant : ne propose pas de nouvelles tâches.`;
 
 		const userPrompt = `Voici la situation actuelle de mon coffre pour ma reprise (${data.inactivityText}, Date du jour : ${data.dateStr}, Energie : ${data.energy}/10) :
 
 Dossiers disponibles : ${foldersText}
-Projets actifs : ${(data.projects && data.projects.join(', ')) || 'Aucun'}
-Contacts récents : ${(data.contacts && data.contacts.join(', ')) || 'Aucun'}
 ${calendarSectionText}
 TACHE MAJEURE DETECTEE (THE ONE THING) :
 ${oneThingText}
@@ -677,8 +686,8 @@ ${staleText}
 
 NOTES EN VRAC ET BOITE DE RECEPTION :
 ${looseNotesText}
-
-Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et securise des taches et notes, accompagne du bloc d'actions \`\`\`json:actions\`\`\` pour que je puisse tout appliquer en 1 clic. N'utilise aucun emoji dans ta reponse (sauf si la syntaxe des tâches configurée l'exige).`;
+${delegated.section}
+Prépare-moi un plan de reprise réaliste : quelques décisions nettes pour alléger tâches et notes, avec les modifications utiles dans un bloc json:actions pour que je puisse les appliquer d'un clic.`;
 
 		return [
 			{ role: 'system', content: systemPrompt },
@@ -762,7 +771,7 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et 
 		tasks: ObsidianTask[],
 		targetDateStr?: string
 	): Promise<number> {
-		const today = new Date().toISOString().split('T')[0];
+		const today = localDateStr();
 		const targetDate = targetDateStr || today;
 		let modifiedCount = 0;
 
@@ -802,7 +811,7 @@ Prepare-moi un plan de reprise complet avec un vrai tri et allegement massif et 
 		recoveryMarkdown: string,
 		dateStr?: string
 	): Promise<string> {
-		const today = dateStr || new Date().toISOString().split('T')[0];
+		const today = dateStr || localDateStr();
 		const dailyFolder = normalizePath(plugin.settings.dailyNotesFolder);
 		const dailyPath = normalizePath(`${dailyFolder}/${today}.md`);
 
