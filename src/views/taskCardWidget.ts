@@ -4,6 +4,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import SecondBrainPlugin from '../main';
+import { colorTaskCard } from '../services/ruleStyling';
 
 export class TaskCardWidget {
 	private static popover = new InlineMetaPopover();
@@ -15,6 +16,8 @@ export class TaskCardWidget {
 		onTaskUpdated?: () => void
 	): HTMLElement {
 		const cardEl = containerEl.createDiv({ cls: 'sbm-chat-task-card' });
+		// Couleur des règles d'affichage (réglages › Calendrier › Couleurs selon conditions)
+		colorTaskCard(cardEl, task, plugin.settings.colorRules);
 
 		// 1. En-tête : Checkbox + Titre + Lien fichier
 		const topRow = cardEl.createDiv({ cls: 'sbm-chat-task-top' });

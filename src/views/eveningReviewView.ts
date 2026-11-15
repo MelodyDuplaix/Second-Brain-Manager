@@ -3,6 +3,7 @@ import { ObsidianTask } from '../models/task';
 import { TaskParser } from '../parsers/taskParser';
 import { TaskMutator } from '../mutators/taskMutator';
 import { TaskCardWidget } from './taskCardWidget';
+import { prioritizeTasks } from '../services/ruleStyling';
 import { EveningReviewService, EveningVaultData } from '../services/eveningReviewService';
 import { SecretsManagementModal } from '../modals/secretsManagementModal';
 import { ModelPickerModal } from '../modals/modelPickerModal';
@@ -552,7 +553,8 @@ export class EveningReviewView extends ItemView {
 			if (taskLines.length > 0) {
 				const tasksContainer = document.createElement('div');
 				tasksContainer.className = 'sbm-chat-tasks-container';
-				taskLines.forEach(t => {
+				// Ordre et masquage selon les règles de priorité des réglages
+				prioritizeTasks(taskLines, this.plugin.settings.priorityRules).forEach(t => {
 					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {});
 				});
 				pre.replaceWith(tasksContainer);
@@ -587,7 +589,7 @@ export class EveningReviewView extends ItemView {
 			if (rowTasks.length > 0) {
 				const tasksContainer = document.createElement('div');
 				tasksContainer.className = 'sbm-chat-tasks-container';
-				rowTasks.forEach(t => {
+				prioritizeTasks(rowTasks, this.plugin.settings.priorityRules).forEach(t => {
 					TaskCardWidget.render(tasksContainer, t, this.plugin, () => {});
 				});
 				table.replaceWith(tasksContainer);

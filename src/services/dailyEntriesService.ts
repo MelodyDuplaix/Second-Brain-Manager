@@ -41,6 +41,17 @@ export interface DailyEntriesSettings {
 	calendarGridEndHour: number;
 	/** Heure placée en haut de la grille à l'ouverture */
 	calendarScrollToHour: number;
+	/** Pas d'aimantation (minutes) quand on glisse, étire ou déplace un bloc dans la grille */
+	calendarSnapMinutes: number;
+}
+
+/** Pas d'aimantation proposés dans les réglages (minutes). */
+export const CALENDAR_SNAP_OPTIONS = [1, 5, 10, 15, 30] as const;
+
+/** Pas d'aimantation effectif : une valeur absente ou hors liste retombe sur 5 min. */
+export function calendarSnapMinutes(value: unknown): number {
+	const n = Number(value);
+	return (CALENDAR_SNAP_OPTIONS as readonly number[]).includes(n) ? n : 5;
 }
 
 export const DEFAULT_DAILY_ENTRIES_SETTINGS: DailyEntriesSettings = {
@@ -58,7 +69,8 @@ export const DEFAULT_DAILY_ENTRIES_SETTINGS: DailyEntriesSettings = {
 	dailyEntriesColor: '',
 	calendarGridStartHour: 0,
 	calendarGridEndHour: 24,
-	calendarScrollToHour: 7
+	calendarScrollToHour: 7,
+	calendarSnapMinutes: 5
 };
 
 export interface DailyEntry {

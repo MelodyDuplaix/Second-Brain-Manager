@@ -7,6 +7,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import { TaskCardWidget } from './taskCardWidget';
+import { colorTaskCard, prioritizeTasks } from '../services/ruleStyling';
 import { GamificationService } from '../services/gamificationService';
 import { DomUtils } from '../utils/domUtils';
 import SecondBrainPlugin from '../main';
@@ -309,12 +310,15 @@ export class DashboardView extends ItemView {
 
 		const listEl = sectionEl.createEl('div', { cls: 'sbm-task-list' });
 
+		// Règles de priorité des réglages : avant la limite, pour que les tâches prioritaires restent visibles
+		tasks = prioritizeTasks(tasks, this.plugin.settings.priorityRules);
 		const limit = (allowExpand && !this.showAllTodoTasks) ? 30 : tasks.length;
 		const displayedTasks = tasks.slice(0, limit);
 
 		displayedTasks.forEach(task => {
 			const isPaused = Boolean(task.isPaused || task.status === 'paused');
 			const cardEl = listEl.createEl('div', { cls: `sbm-task-card ${isPaused ? 'is-paused' : ''}` });
+			colorTaskCard(cardEl, task, this.plugin.settings.colorRules);
 
 			const infoEl = cardEl.createEl('div', { cls: 'sbm-task-info' });
 

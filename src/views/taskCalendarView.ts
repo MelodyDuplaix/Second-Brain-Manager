@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, TAbstractFile, Menu, Notice, Modal, App, setIcon, normalizePath, debounce, Events } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, TAbstractFile, Menu, Notice, Modal, App, setIcon, normalizePath, debounce, Events, Platform } from 'obsidian';
 import { ObsidianTask, TaskPriority } from '../models/task';
 import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
@@ -54,6 +54,7 @@ import {
 	toLocalIsoWithOffset
 } from '../services/calendarEventsService';
 import {
+	calendarSnapMinutes,
 	DailyEntry,
 	DailyEntryIndex,
 	entryBounds,
@@ -64,14 +65,12 @@ import {
 } from '../services/dailyEntriesService';
 import { CalendarEventModal } from './calendarView';
 import { DailyEntryModal, DailyEntryDraft } from './dailyEntryModal';
+import { resolveEdgePush, resolveMovePush, PushBlock, PushShift, PushDirection } from '../services/calendarPush';
+import { RuleSubject, prioritize, ruleColor } from '../services/displayRules';
+import { applyRuleColorTo, taskRuleSubject } from '../services/ruleStyling';
 import { getTaskExclusionRules } from '../services/taskExclusionService';
 import { TaskStatusRegistry } from '../models/taskStatusRegistry';
 import SecondBrainPlugin from '../main';
-
-/** Appui long au doigt (le glisser a été armé) relâché sans avoir bougé : on modifie au lieu de déplacer. */
-export function isLongPressWithoutMove(pointerType: string, startX: number, startY: number, endX: number, endY: number): boolean {
-	return pointerType !== 'mouse' && Math.hypot(endX - startX, endY - startY) < 12;
-}
 
 export const VIEW_TYPE_TASK_CALENDAR = 'sbm-task-calendar-view';
 
@@ -96,10 +95,94 @@ interface TimedItem {
 	cols: number;
 }
 
+/**
+ * Libellé horaire d'un bloc de la grille : « 10:00 – 11:30 ».
+ *
+ * Sans heure de fin (entrée ponctuelle), seul le début est affiché. Un bloc commencé la veille
+ * affiche « ↳ » au lieu de son début, un bloc qui finit le lendemain « → » au lieu de sa fin.
+ */
+export function gridTimeLabel(start: number, end: number | null, clippedStart = false, clippedEnd = false): string {
+	const from = clippedStart ? '↳' : formatClock(start);
+	if (end === null) return from;
+	const to = clippedEnd ? '→' : formatClock(end);
+	return `${from} – ${to}`;
+}
+
+/**
+ * Façons de saisir un bloc de la grille horaire.
+ *
+ * `move` : le corps du bloc, déplaçable librement (y compris vers un autre jour).
+ * `resize-start` / `resize-end` : une bande de bord, seule la durée du bloc change.
+ * `push-start` / `push-end` : le mini-bouton d'un bord, le voisin qui fait face suit.
+ * `push-move` : le mini-bouton du milieu, le bloc se déplace en poussant les autres.
+ */
+export type GridDragMode = 'move' | 'push-move' | 'resize-start' | 'resize-end' | 'push-start' | 'push-end';
+
+/** Mini-bouton d'un bord : le voisin du haut ou celui du bas suit le bord tiré. */
+export function pushDirectionOf(mode: GridDragMode): PushDirection | null {
+	if (mode === 'push-start') return 'up';
+	if (mode === 'push-end') return 'down';
+	return null;
+}
+
+/** Le mode agit-il sur le bord haut du bloc ? */
+export function movesStartEdge(mode: GridDragMode): boolean {
+	return mode === 'resize-start' || mode === 'push-start';
+}
+
+/** Le mode déplace-t-il le bloc entier, à durée constante ? */
+export function isMoveMode(mode: GridDragMode): boolean {
+	return mode === 'move' || mode === 'push-move';
+}
+
+/** Poignées posées sur un bloc. */
+export interface GridGrips {
+	/** Bande du bord haut : omise sur un bloc court, sinon il ne resterait presque plus de zone cliquable */
+	topBand: boolean;
+	/** Mini-bouton du haut */
+	topPush: boolean;
+	/** Mini-bouton du milieu */
+	middlePush: boolean;
+	/**
+	 * Les trois mini-boutons ne tiennent pas empilés dans la hauteur du bloc : ils sont posés
+	 * en rangée, centrés verticalement, et débordent au besoin.
+	 */
+	inlineGrips: boolean;
+}
+
+/** Durée minimale, en minutes, pour qu'un bloc reçoive les mini-boutons du haut et du milieu. */
+export const MIN_PUSH_BUTTON_MINUTES = 5;
+
+/**
+ * Poignées à poser sur un bloc.
+ *
+ * Les mini-boutons dépendent de la **durée** du bloc, pas de sa hauteur à l'écran : un bloc de
+ * 5 min les reçoit, même très aplati par le niveau de zoom. Quand la hauteur ne permet pas de
+ * les empiler, ils passent en rangée et débordent du bloc plutôt que de disparaître.
+ *
+ * La bande du bord haut, elle, reste conditionnée à la hauteur : c'est la zone cliquable du
+ * bloc qu'elle gruge, et sur un bloc plat il n'en resterait rien.
+ */
+export function gridItemGrips(durationMinutes: number, heightPx: number, touch: boolean): GridGrips {
+	const hasPushButtons = durationMinutes >= MIN_PUSH_BUTTON_MINUTES;
+	return {
+		topBand: heightPx >= (touch ? 48 : 34),
+		topPush: hasPushButtons,
+		middlePush: hasPushButtons,
+		// Trois boutons empilés demandent leur hauteur cumulée, plus grande au doigt
+		inlineGrips: heightPx < (touch ? 64 : 46)
+	};
+}
+
 interface GridDrag {
 	item: TimedItem;
 	el: HTMLElement;
-	mode: 'move' | 'resize';
+	/**
+	 * `move` : déplacer le bloc entier.
+	 * `resize-start` / `resize-end` : tirer un bord, seule la durée du bloc change.
+	 * `push-start` / `push-end` : tirer un bord en poussant les blocs voisins qui gêneraient.
+	 */
+	mode: GridDragMode;
 	pointerId: number;
 	pointerType: string;
 	startX: number;
@@ -114,6 +197,12 @@ interface GridDrag {
 	targetDay?: string;
 	targetStart?: number;
 	targetEnd?: number;
+	/** Blocs du jour au début du glisser : la poussée se recalcule toujours depuis ces positions. */
+	dayItems: TimedItem[];
+	/** Décalages à appliquer aux voisins (modes « pousser » uniquement) */
+	shifts: PushShift[];
+	/** Styles d'origine des voisins déplacés à l'écran, pour les remettre en place à l'annulation */
+	shiftedEls: Map<HTMLElement, { top: string; height: string }>;
 	scrollRaf?: number;
 }
 
@@ -197,8 +286,11 @@ const WIDE_MIN = 900;
 /** Hauteurs d'heure proposées pour la grille horaire (zoom) */
 const HOUR_HEIGHTS = [28, 36, 44, 56, 72, 96];
 const DEFAULT_HOUR_HEIGHT = 44;
-/** Pas d'aimantation dans la grille horaire (minutes) */
-const GRID_SNAP = 15;
+/**
+ * Durée minimale dessinée d'un bloc (minutes). Le pas d'aimantation, lui, est réglable :
+ * voir `gridSnap()`.
+ */
+const GRID_MIN_SPAN = 5;
 const AGENDA_DAYS_COMPACT = 14;
 const AGENDA_DAYS_WIDE = 28;
 const UNDATED_PAGE = 40;
@@ -254,6 +346,13 @@ export class TaskCalendarView extends ItemView {
 	private undatedLimit = UNDATED_PAGE;
 	private loaded = false;
 	private flash: { key: string; until: number } | null = null;
+	/**
+	 * Interface au doigt : pas de survol, donc les poignées n'apparaissent qu'une fois le bloc
+	 * sélectionné, et elles sont plus grandes.
+	 */
+	private readonly touchUi = Platform.isMobile;
+	/** Bloc sélectionné au doigt : ses poignées sont visibles. Survit aux rendus. */
+	private selectedItemKey: string | null = null;
 
 	private rootEl!: HTMLElement;
 	private bodyEl!: HTMLElement;
@@ -385,6 +484,8 @@ export class TaskCalendarView extends ItemView {
 		this.contentEl.empty();
 		this.contentEl.addClass('sbm-tcal-host');
 		this.rootEl = this.contentEl.createDiv({ cls: 'sbm-tcal' });
+		// Le CSS des poignées suit le même drapeau que le code : pas de divergence possible
+		this.rootEl.toggleClass('is-touch-ui', this.touchUi);
 		this.rootEl.tabIndex = 0;
 		this.rootEl.createDiv({ cls: 'sbm-tcal-loading', text: 'Chargement des tâches…' });
 
@@ -634,9 +735,14 @@ export class TaskCalendarView extends ItemView {
 	private stateRestored = false;
 	private startupPresetApplied = false;
 
-	/** Applique (une fois) le préréglage choisi pour l'ouverture du calendrier, s'il existe encore. */
+	/**
+	 * Applique (une fois, à l'ouverture) les réglages d'ouverture du calendrier : mode de la vue
+	 * étroite (barre latérale) et préréglage de filtres, s'il existe encore.
+	 */
 	private applyStartupPreset(): void {
 		this.startupPresetApplied = true;
+		const sidebarMode = this.plugin.settings.calendarSidebarDefaultMode;
+		if (sidebarMode === 'agenda' || sidebarMode === 'day') this.state.compactMode = sidebarMode;
 		const id = this.plugin.settings.calendarStartupPreset;
 		const preset = id ? (this.plugin.settings.calendarFilterPresets || []).find(p => p.id === id) : undefined;
 		if (!preset) return;
@@ -956,6 +1062,7 @@ export class TaskCalendarView extends ItemView {
 			const accent = this.taskAccent(task, quad);
 			if (accent) el.style.setProperty('--chip-accent', accent);
 			else el.style.removeProperty('--chip-accent');
+			this.applyRuleColor(el, this.taskSubject(task));
 			el.createDiv({ cls: 'sbm-tcal-peek-title', text: this.displayTitle(task.title) });
 			const meta = el.createDiv({ cls: 'sbm-tcal-peek-meta' });
 			if (date) meta.createSpan({ text: `📅 ${CalendarDate.relativeLabel(date, this.today)}` });
@@ -978,6 +1085,7 @@ export class TaskCalendarView extends ItemView {
 	private fillEventPeek(ev: GoogleCalendarEvent): (el: HTMLElement) => void {
 		return (el) => {
 			el.style.setProperty('--chip-accent', this.calendarColor(ev.calendarId));
+			this.applyRuleColor(el, this.eventSubject(ev));
 			el.createDiv({ cls: 'sbm-tcal-peek-title', text: ev.summary || '(Sans titre)' });
 			const meta = el.createDiv({ cls: 'sbm-tcal-peek-meta' });
 			meta.createSpan({ text: `🕒 ${formatEventRange(ev)}` });
@@ -1053,6 +1161,11 @@ export class TaskCalendarView extends ItemView {
 			if (!matchesDescriptionFilter(filter, { texts: [e.text], tags: extractTags(e.text) })) return false;
 			return !q || e.text.toLowerCase().includes(q);
 		});
+	}
+
+	/** Pas d'aimantation de la grille, réglable (5 min par défaut). */
+	private gridSnap(): number {
+		return calendarSnapMinutes(this.plugin.settings.calendarSnapMinutes);
 	}
 
 	private entryDuration(): number {
@@ -1256,6 +1369,7 @@ export class TaskCalendarView extends ItemView {
 	private fillEntryPeek(entry: DailyEntry): (el: HTMLElement) => void {
 		return (el) => {
 			el.style.setProperty('--chip-accent', 'var(--sbm-entry-color)');
+			this.applyRuleColor(el, this.entrySubject(entry));
 			el.createDiv({ cls: 'sbm-tcal-peek-title', text: this.entryTitle(entry) });
 			const meta = el.createDiv({ cls: 'sbm-tcal-peek-meta' });
 			meta.createSpan({ text: `🕒 ${this.entryRangeLabel(entry)}` });
@@ -1740,19 +1854,29 @@ export class TaskCalendarView extends ItemView {
 		dayTasks: ObsidianTask[],
 		dayEvents: GoogleCalendarEvent[]
 	): void {
-		const timed: Array<{ at: number; render: () => void }> = [];
+		type Row = { subject: RuleSubject; render: () => void };
+		const allDay: Row[] = [];
+		const timed: Array<Row & { at: number }> = [];
 		dayEvents.forEach(ev => {
+			const row = { subject: this.eventSubject(ev), render: () => this.renderEventChip(list, ev, variant, day) };
 			if (ev.allDay || !ev.start?.dateTime) {
-				this.renderEventChip(list, ev, variant, day);
+				allDay.push(row);
 				return;
 			}
 			const s = localParts(ev.start.dateTime);
 			const at = s.date < day ? -1 : Number(s.time.slice(0, 2)) * 60 + Number(s.time.slice(3, 5));
-			timed.push({ at, render: () => this.renderEventChip(list, ev, variant, day) });
+			timed.push({ ...row, at });
 		});
-		this.dayEntries(day).forEach(entry => timed.push({ at: entry.start, render: () => this.renderEntryChip(list, entry, variant) }));
-		timed.sort((a, b) => a.at - b.at).forEach(t => t.render());
-		dayTasks.forEach(t => this.renderChip(list, t, variant));
+		this.dayEntries(day).forEach(entry => timed.push({
+			at: entry.start,
+			subject: this.entrySubject(entry),
+			render: () => this.renderEntryChip(list, entry, variant)
+		}));
+		const tasks: Row[] = dayTasks.map(t => ({ subject: this.taskSubject(t), render: () => this.renderChip(list, t, variant) }));
+		// Ordre naturel (journée, heures, tâches), puis les règles de priorité sur la liste entière :
+		// un bloc « en premier » passe devant tout, un bloc « en dernier » derrière tout.
+		const rows = [...allDay, ...timed.sort((a, b) => a.at - b.at), ...tasks];
+		this.prioritized(rows, r => r.subject).forEach(r => r.render());
 	}
 
 	/* ======================================================================
@@ -1805,10 +1929,12 @@ export class TaskCalendarView extends ItemView {
 			const cell = allday.createDiv({ cls: 'sbm-tcal-tg-allday-cell' });
 			this.decorateDayCell(cell, day);
 			const variant = single && this.layout !== 'compact' ? 'card' : 'mini';
+			const rows: Array<{ subject: RuleSubject; render: () => void }> = [];
 			(this.eventBuckets.get(day) || []).forEach(ev => {
-				if (ev.allDay || !ev.start?.dateTime) this.renderEventChip(cell, ev, 'mini', day);
+				if (ev.allDay || !ev.start?.dateTime) rows.push({ subject: this.eventSubject(ev), render: () => this.renderEventChip(cell, ev, 'mini', day) });
 			});
-			(buckets.get(day) || []).forEach(t => this.renderChip(cell, t, variant));
+			(buckets.get(day) || []).forEach(t => rows.push({ subject: this.taskSubject(t), render: () => this.renderChip(cell, t, variant) }));
+			this.prioritized(rows, r => r.subject).forEach(r => r.render());
 			cell.addEventListener('dblclick', (e) => {
 				if ((e.target as HTMLElement).closest('.sbm-tcal-chip')) return;
 				this.promptNewTask(day, cell);
@@ -1874,7 +2000,7 @@ export class TaskCalendarView extends ItemView {
 				end = 1440;
 				clippedEnd = !(e.time === '00:00' && CalendarDate.addDays(day, 1) === e.date);
 			} else end = toMin(e.time);
-			if (end <= start) end = Math.min(1440, start + GRID_SNAP);
+			if (end <= start) end = Math.min(1440, start + GRID_MIN_SPAN);
 			items.push({ kind: 'event', key: eventKey(ev), day, start, end, clippedStart, clippedEnd, point: false, event: ev, col: 0, cols: 1 });
 		});
 		this.dayEntries(day).forEach(entry => {
@@ -1918,8 +2044,8 @@ export class TaskCalendarView extends ItemView {
 	private renderGridItem(col: HTMLElement, item: TimedItem, startH: number, endH: number, hh: number): HTMLElement {
 		const rangeStart = startH * 60;
 		const rangeEnd = endH * 60;
-		const top = Math.max(rangeStart, Math.min(item.start, rangeEnd - GRID_SNAP));
-		const bottom = Math.max(top + GRID_SNAP, Math.min(item.end, rangeEnd));
+		const top = Math.max(rangeStart, Math.min(item.start, rangeEnd - GRID_MIN_SPAN));
+		const bottom = Math.max(top + GRID_MIN_SPAN, Math.min(item.end, rangeEnd));
 		const heightPx = Math.max(18, (bottom - top) / 60 * hh - 2);
 
 		const el = col.createDiv({ cls: `sbm-tcal-tg-item kind-${item.kind}` });
@@ -1933,6 +2059,7 @@ export class TaskCalendarView extends ItemView {
 		if (item.clippedStart) el.addClass('is-clipped-start');
 		if (item.clippedEnd) el.addClass('is-clipped-end');
 		if (this.flash && this.flash.key === item.key && Date.now() < this.flash.until) el.addClass('is-landed');
+		if (this.touchUi && this.selectedItemKey === item.key) el.addClass('is-selected');
 
 		if (item.event) {
 			const ev = item.event;
@@ -1941,13 +2068,20 @@ export class TaskCalendarView extends ItemView {
 			el.addClass(`role-${role}`);
 			const endMs = ev.end?.dateTime ? new Date(ev.end.dateTime).getTime() : null;
 			if (endMs !== null && endMs < Date.now()) el.addClass('is-past-event');
-			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: item.clippedStart ? '↳' : formatClock(item.start) });
+			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: gridTimeLabel(item.start, item.end, item.clippedStart, item.clippedEnd) });
 			el.createSpan({ cls: 'sbm-tcal-tg-item-title', text: ev.summary || '(Sans titre)' });
 			if (ev.location && heightPx >= 52) el.createDiv({ cls: 'sbm-tcal-tg-item-sub', text: `📍 ${ev.location}` });
 			this.attachPeek(el, this.fillEventPeek(ev));
-			el.addEventListener('click', () => {
+			el.addEventListener('click', (e) => {
 				if (Date.now() < this.suppressClickUntil) return;
 				this.hidePeek();
+				// Au doigt : on sélectionne le bloc (ses poignées apparaissent) et on ouvre son menu,
+				// qui donne accès à la fiche. À la souris, le clic ouvre directement la fiche.
+				if (this.touchUi) {
+					this.selectGridItem(item.key, el);
+					this.openEventMenu(e, ev, item.day);
+					return;
+				}
 				this.openEventModal(ev);
 			});
 			el.addEventListener('contextmenu', (e) => {
@@ -1975,13 +2109,21 @@ export class TaskCalendarView extends ItemView {
 				});
 				if (!task) check.disabled = true;
 			}
-			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: formatClock(entry.start) });
+			// Une entrée sans heure de fin n'affiche que son début ; une fin le lendemain reste lisible telle quelle
+			el.createSpan({ cls: 'sbm-tcal-tg-item-time', text: gridTimeLabel(entry.start, entry.end) });
 			el.createSpan({ cls: 'sbm-tcal-tg-item-title', text: this.entryTitle(entry) });
 			this.attachPeek(el, this.fillEntryPeek(entry));
 			el.addEventListener('click', (e) => {
 				if (Date.now() < this.suppressClickUntil) return;
-				if (e.ctrlKey || e.metaKey) void this.openEntryNote(entry, true);
-				else this.openEntryModal(entry);
+				if (e.ctrlKey || e.metaKey) { void this.openEntryNote(entry, true); return; }
+				// Au doigt : sélection du bloc puis menu, qui mène à la fiche comme à la note
+				// quotidienne. À la souris, le clic ouvre directement la fiche.
+				if (this.touchUi) {
+					this.selectGridItem(item.key, el);
+					this.openEntryMenu(e, entry);
+					return;
+				}
+				this.openEntryModal(entry);
 			});
 			el.addEventListener('contextmenu', (e) => {
 				e.preventDefault();
@@ -1992,17 +2134,95 @@ export class TaskCalendarView extends ItemView {
 			});
 		}
 
+		if (item.event) this.applyRuleColor(el, this.eventSubject(item.event));
+		else if (item.entry) this.applyRuleColor(el, this.entrySubject(item.entry));
+
 		// Déplacement et redimensionnement (pas pour les événements qui débordent sur d'autres jours)
 		const movable = !(item.clippedStart || (item.kind === 'event' && item.clippedEnd));
 		if (movable) {
 			el.addClass('is-movable');
-			const handle = el.createDiv({ cls: 'sbm-tcal-tg-resize' });
-			handle.addEventListener('pointerdown', (e) => this.onGridItemPointerDown(e, item, el, 'resize'));
+			// Bords : tirer change la seule durée du bloc.
+			// Mini-boutons (visibles au survol) : tirer pousse en plus les blocs voisins qui gêneraient.
+			this.addGridItemGrips(el, item, heightPx);
 			el.addEventListener('pointerdown', (e) => this.onGridItemPointerDown(e, item, el, 'move'));
 		} else {
 			el.addEventListener('pointerdown', (e) => e.stopPropagation());
 		}
 		return el;
+	}
+
+	/**
+	 * Poignées d'un bloc de la grille.
+	 *
+	 * Les bandes de bord changent la seule durée du bloc. Les mini-boutons, alignés à droite,
+	 * entraînent les voisins : celui du haut et celui du bas font suivre le bord du voisin qui
+	 * fait face, celui du milieu déplace le bloc en poussant les autres.
+	 */
+	private addGridItemGrips(el: HTMLElement, item: TimedItem, heightPx: number): void {
+		const grips = gridItemGrips(item.end - item.start, heightPx, this.touchUi);
+		el.toggleClass('is-grips-inline', grips.inlineGrips);
+
+		if (grips.topBand) this.addGridEdgeBand(el, item, 'start');
+		this.addGridEdgeBand(el, item, 'end');
+
+		if (grips.topPush) {
+			this.addGridPushButton(el, item, 'push-start', 'top', 'chevrons-up',
+				"change l'heure de début et entraîne les blocs au-dessus");
+		}
+		if (grips.middlePush) {
+			this.addGridPushButton(el, item, 'push-move', 'middle', 'move-vertical',
+				'déplace le bloc en poussant les autres');
+		}
+		this.addGridPushButton(el, item, 'push-end', 'bottom', 'chevrons-down',
+			"change l'heure de fin et entraîne les blocs en dessous");
+	}
+
+	/**
+	 * Sélectionne un bloc au doigt : ses poignées deviennent visibles, celles des autres
+	 * disparaîssent. La sélection survit aux rendus, donc le bloc reste manipulable après
+	 * un glisser ou une poussée.
+	 */
+	private selectGridItem(key: string, el: HTMLElement): void {
+		this.selectedItemKey = key;
+		this.rootEl?.querySelectorAll('.sbm-tcal-tg-item.is-selected')
+			.forEach(other => { if (other !== el) other.removeClass('is-selected'); });
+		el.addClass('is-selected');
+	}
+
+	/** Désélectionne le bloc courant (appui ailleurs dans la grille). */
+	private clearGridItemSelection(): void {
+		if (!this.selectedItemKey) return;
+		this.selectedItemKey = null;
+		this.rootEl?.querySelectorAll('.sbm-tcal-tg-item.is-selected')
+			.forEach(el => el.removeClass('is-selected'));
+	}
+
+	/** Bande d'un bord : la tirer change la seule durée du bloc. */
+	private addGridEdgeBand(el: HTMLElement, item: TimedItem, edge: 'start' | 'end'): void {
+		const what = edge === 'start' ? "l'heure de début" : "l'heure de fin";
+		const band = el.createDiv({ cls: `sbm-tcal-tg-resize is-${edge === 'start' ? 'top' : 'bottom'}` });
+		band.setAttribute('aria-label', `Glisser pour changer ${what}`);
+		band.title = `Glisser : change ${what}`;
+		band.addEventListener('pointerdown', (e) =>
+			this.onGridItemPointerDown(e, item, el, edge === 'start' ? 'resize-start' : 'resize-end'));
+	}
+
+	/** Mini-bouton qui entraîne les voisins. */
+	private addGridPushButton(
+		el: HTMLElement,
+		item: TimedItem,
+		mode: GridDragMode,
+		place: 'top' | 'middle' | 'bottom',
+		icon: string,
+		what: string
+	): void {
+		const push = el.createDiv({ cls: `sbm-tcal-tg-push is-${place}` });
+		setIcon(push, icon);
+		push.setAttribute('aria-label', `Glisser : ${what}`);
+		push.title = `Glisser : ${what}`;
+		push.addEventListener('pointerdown', (e) => this.onGridItemPointerDown(e, item, el, mode));
+		// Un appui sec sur la poignée ne doit ni ouvrir la fiche ni, au doigt, le menu du bloc
+		push.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); });
 	}
 
 	/** Place la ligne « maintenant » de la colonne du jour. */
@@ -2019,7 +2239,7 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	/** Minute (aimantée) sous le pointeur dans une colonne de la grille. */
-	private minuteAt(col: HTMLElement, clientY: number, snap = GRID_SNAP, mode: 'round' | 'floor' = 'round'): number {
+	private minuteAt(col: HTMLElement, clientY: number, snap = this.gridSnap(), mode: 'round' | 'floor' = 'round'): number {
 		const { startH, endH } = this.gridHours();
 		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
 		const rect = col.getBoundingClientRect();
@@ -2030,7 +2250,7 @@ export class TaskCalendarView extends ItemView {
 
 	/* ----- Glisser un élément de la grille (déplacer / redimensionner) ----- */
 
-	private onGridItemPointerDown(e: PointerEvent, item: TimedItem, el: HTMLElement, mode: 'move' | 'resize'): void {
+	private onGridItemPointerDown(e: PointerEvent, item: TimedItem, el: HTMLElement, mode: GridDragMode): void {
 		e.stopPropagation();
 		if (e.button !== 0 || this.gridDrag || this.drag) return;
 		this.hidePeek();
@@ -2045,13 +2265,21 @@ export class TaskCalendarView extends ItemView {
 			lastX: e.clientX,
 			lastY: e.clientY,
 			grabOffset: Math.max(0, grabbed - item.start),
+			dayItems: this.timedItemsFor(item.day),
+			shifts: [],
+			shiftedEls: new Map(),
 			active: false
 		};
 		if (e.pointerType !== 'mouse') {
-			// Tactile : appui long pour saisir, sinon la grille défile normalement
-			this.gridDrag.holdTimer = window.setTimeout(() => {
-				if (this.gridDrag && !this.gridDrag.active) this.startGridDrag();
-			}, 280);
+			if (mode === 'move') {
+				// Corps du bloc : appui long pour saisir, sinon la grille défile normalement
+				this.gridDrag.holdTimer = window.setTimeout(() => {
+					if (this.gridDrag && !this.gridDrag.active) this.startGridDrag();
+				}, 280);
+			} else {
+				// Poignée : cible explicite et déjà visible, la prise est immédiate
+				this.startGridDrag();
+			}
 		}
 		document.addEventListener('pointermove', this.onGridPointerMove, { passive: false });
 		document.addEventListener('pointerup', this.onGridPointerUp);
@@ -2074,7 +2302,8 @@ export class TaskCalendarView extends ItemView {
 		const preview = d.el.cloneNode(true) as HTMLElement;
 		preview.removeClass('is-grid-source', 'is-landed');
 		preview.addClass('is-preview');
-		preview.querySelector('.sbm-tcal-tg-resize')?.remove();
+		// L'aperçu ne porte aucune poignée
+		preview.querySelectorAll('.sbm-tcal-tg-resize, .sbm-tcal-tg-push').forEach(h => h.remove());
 		const label = preview.createDiv({ cls: 'sbm-tcal-tg-preview-label' });
 		label.setText('');
 		d.preview = preview;
@@ -2116,34 +2345,109 @@ export class TaskCalendarView extends ItemView {
 			if (found && this.rootEl.contains(found)) col = found;
 		}
 		const day = col.dataset.gridDay as string;
+		const snap = this.gridSnap();
 		const duration = d.item.end - d.item.start;
 		let start = d.item.start;
 		let end = d.item.end;
-		if (d.mode === 'move') {
+		if (isMoveMode(d.mode)) {
 			const pointer = this.minuteAt(col, d.lastY, 1);
-			start = Math.round((pointer - d.grabOffset) / GRID_SNAP) * GRID_SNAP;
+			start = Math.round((pointer - d.grabOffset) / snap) * snap;
 			start = Math.max(0, Math.min(1440 - Math.min(duration, 1440), start));
 			end = start + duration;
+		} else if (movesStartEdge(d.mode)) {
+			// Bord haut : la fin ne bouge pas
+			start = Math.max(0, Math.min(d.item.end - snap, this.minuteAt(col, d.lastY)));
 		} else {
-			end = Math.max(d.item.start + GRID_SNAP, this.minuteAt(col, d.lastY));
+			end = Math.max(d.item.start + snap, this.minuteAt(col, d.lastY));
 		}
 		d.targetDay = day;
 		d.targetStart = start;
 		d.targetEnd = end;
+		this.updatePushPreview(d, start, end);
 
 		if (d.preview.parentElement !== col) col.appendChild(d.preview);
 		const top = Math.max(startH * 60, start);
-		const bottom = Math.min(endH * 60, Math.max(top + GRID_SNAP, end));
+		const bottom = Math.min(endH * 60, Math.max(top + GRID_MIN_SPAN, end));
 		d.preview.style.top = `${(top - startH * 60) / 60 * hh + 1}px`;
 		d.preview.style.height = `${Math.max(18, (bottom - top) / 60 * hh - 2)}px`;
 		d.preview.style.left = '2px';
 		d.preview.style.width = 'calc(100% - 4px)';
-		const time = d.preview.querySelector('.sbm-tcal-tg-item-time');
-		time?.setText(formatClock(start));
 		const label = d.preview.querySelector('.sbm-tcal-tg-preview-label');
 		const dayLabel = day !== d.item.day ? ` · ${CalendarDate.format(day, { weekday: 'short', day: 'numeric' })}` : '';
-		const showEnd = !(d.item.point && d.mode === 'move');
+		const showEnd = !(d.item.point && isMoveMode(d.mode));
+		const time = d.preview.querySelector('.sbm-tcal-tg-item-time');
+		time?.setText(gridTimeLabel(start, showEnd ? end : null));
 		label?.setText(`${formatClock(start)}${showEnd ? ` – ${formatClock(end)}` : ''}${dayLabel}`);
+	}
+
+	/** Un bloc déjà à cheval sur plusieurs jours ne peut pas être poussé : il fait mur. */
+	private pushBlocksOf(items: TimedItem[]): PushBlock[] {
+		return items.map(i => ({
+			key: i.key,
+			start: i.start,
+			end: i.end,
+			movable: !(i.clippedStart || (i.kind === 'event' && i.clippedEnd))
+		}));
+	}
+
+	/** Positionne un bloc de la grille aux minutes données (mêmes bornes et marges que le rendu). */
+	private placeGridItemEl(el: HTMLElement, start: number, end: number): void {
+		const { startH, endH } = this.gridHours();
+		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
+		const rangeStart = startH * 60;
+		const rangeEnd = endH * 60;
+		const top = Math.max(rangeStart, Math.min(start, rangeEnd - GRID_MIN_SPAN));
+		const bottom = Math.max(top + GRID_MIN_SPAN, Math.min(end, rangeEnd));
+		el.style.top = `${(top - rangeStart) / 60 * hh + 1}px`;
+		el.style.height = `${Math.max(18, (bottom - top) / 60 * hh - 2)}px`;
+	}
+
+	/**
+	 * Modes « pousser » : recalcule les voisins à décaler et les montre tout de suite à leur
+	 * nouvelle place. Le calcul repart des positions d'origine, donc revenir en arrière pendant
+	 * le glisser remet les voisins exactement où ils étaient.
+	 */
+	private updatePushPreview(d: GridDrag, start: number, end: number): void {
+		const direction = pushDirectionOf(d.mode);
+		if (!direction && d.mode !== 'push-move') return;
+
+		const blocks = this.pushBlocksOf(d.dayItems);
+		d.shifts = direction
+			// Mini-bouton d'un bord : le voisin qui fait face suit, à écart constant
+			? resolveEdgePush(blocks, d.item.key, direction === 'up' ? start : end, direction, undefined, this.gridSnap())
+			// Mini-bouton du milieu : le bloc pousse devant lui, à durée constante
+			: resolveMovePush(blocks, d.item.key, start, end);
+
+		const col = d.el.parentElement as HTMLElement | null;
+		const shifted = new Set<HTMLElement>();
+		for (const shift of d.shifts) {
+			const target = col?.querySelector<HTMLElement>(`.sbm-tcal-tg-item[data-key="${CSS.escape(shift.key)}"]`);
+			if (!target) continue;
+			if (!d.shiftedEls.has(target)) {
+				d.shiftedEls.set(target, { top: target.style.top, height: target.style.height });
+			}
+			target.addClass('is-pushed');
+			this.placeGridItemEl(target, shift.start, shift.end);
+			shifted.add(target);
+		}
+
+		// Voisins qui ne sont plus poussés : retour à leur place d'origine
+		for (const [el, style] of d.shiftedEls) {
+			if (shifted.has(el)) continue;
+			el.style.top = style.top;
+			el.style.height = style.height;
+			el.removeClass('is-pushed');
+		}
+	}
+
+	/** Remet les voisins poussés à leur place (fin ou annulation du glisser). */
+	private resetPushPreview(d: GridDrag): void {
+		for (const [el, style] of d.shiftedEls) {
+			el.style.top = style.top;
+			el.style.height = style.height;
+			el.removeClass('is-pushed');
+		}
+		d.shiftedEls.clear();
 	}
 
 	private autoScrollGrid(): void {
@@ -2173,30 +2477,52 @@ export class TaskCalendarView extends ItemView {
 		const d = this.gridDrag;
 		if (!d || e.pointerId !== d.pointerId) return;
 		const wasActive = d.active;
-		const { item, mode, targetDay, targetStart, targetEnd } = d;
+		const { item, mode, targetDay, targetStart, targetEnd, dayItems } = d;
+		const shifts = [...d.shifts];
 		this.cleanupGridDrag();
 		if (!wasActive) return;
 		this.suppressClickUntil = Date.now() + 250;
-		// Tactile : appui long relâché sans glisser → fenêtre de modification
-		if (isLongPressWithoutMove(d.pointerType, d.startX, d.startY, e.clientX, e.clientY)) {
-			this.openEditorForItem({ event: item.event, eventDay: item.day, entry: item.entry }, d.el, e.clientX, e.clientY);
-			if (this.pendingRender) this.renderPreservingScroll();
-			return;
-		}
+		// Au doigt, l'appui long sert à déplacer, pas à modifier : la fiche s'ouvre par le menu
+		// du bloc, qu'un appui simple affiche.
 		if (targetDay === undefined || targetStart === undefined || targetEnd === undefined) {
 			if (this.pendingRender) this.renderPreservingScroll();
 			return;
 		}
-		if (item.entry) {
-			const entry = item.entry;
-			// Une entrée ponctuelle déplacée reste ponctuelle ; redimensionnée, elle reçoit une heure de fin
-			const end = mode === 'move' && entry.end === null ? null : targetEnd >= 1440 ? 1440 : targetEnd;
-			void this.moveEntry(entry, targetDay, targetStart, end === targetStart ? null : end);
-		} else if (item.event) {
-			void this.moveEventTo(item.event, targetDay, targetStart, targetEnd);
-		}
-		if (this.pendingRender) this.renderPreservingScroll();
+		void (async () => {
+			if (item.entry) {
+				const entry = item.entry;
+				// Une entrée ponctuelle déplacée reste ponctuelle ; redimensionnée, elle reçoit une heure de fin
+				const end = mode === 'move' && entry.end === null ? null : targetEnd >= 1440 ? 1440 : targetEnd;
+				await this.moveEntry(entry, targetDay, targetStart, end === targetStart ? null : end);
+			} else if (item.event) {
+				await this.moveEventTo(item.event, targetDay, targetStart, targetEnd);
+			}
+			// Puis les voisins poussés, un par un : chaque écriture relit la note ou appelle l'agenda
+			await this.applyPushShifts(shifts, dayItems, targetDay);
+			if (this.pendingRender) this.renderPreservingScroll();
+		})();
 	};
+
+	/**
+	 * Enregistre les décalages des blocs poussés, un par un.
+	 *
+	 * Séquentiel et non en parallèle : plusieurs entrées d'une même note quotidienne sont
+	 * retrouvées par le contenu de leur ligne, et un appel à l'agenda Google peut échouer
+	 * indépendamment des autres.
+	 */
+	private async applyPushShifts(shifts: PushShift[], dayItems: TimedItem[], day: string): Promise<void> {
+		for (const shift of shifts) {
+			const target = dayItems.find(i => i.key === shift.key);
+			if (!target) continue;
+			if (target.entry) {
+				// Une entrée sans heure de fin le reste : seul son début se décale
+				const end = target.entry.end === null ? null : Math.min(1440, shift.end);
+				await this.moveEntry(target.entry, day, shift.start, end);
+			} else if (target.event) {
+				await this.moveEventTo(target.event, day, shift.start, shift.end);
+			}
+		}
+	}
 
 	private onGridPointerCancel = (): void => this.cancelGridDrag();
 
@@ -2223,6 +2549,8 @@ export class TaskCalendarView extends ItemView {
 		if (!d) return;
 		if (d.holdTimer) window.clearTimeout(d.holdTimer);
 		if (d.scrollRaf) window.cancelAnimationFrame(d.scrollRaf);
+		// Les voisins reprennent leur place : le rendu qui suit les repositionnera selon les données
+		this.resetPushPreview(d);
 		d.preview?.remove();
 		d.el.removeClass('is-grid-source');
 		this.rootEl?.removeClass('is-grid-dragging');
@@ -2275,7 +2603,8 @@ export class TaskCalendarView extends ItemView {
 		if (e.button !== 0 || this.drag || this.gridDrag) return;
 		if ((e.target as HTMLElement).closest('.sbm-tcal-tg-item, .sbm-tcal-chip')) return;
 		this.clearGridSelection();
-		const anchor = this.minuteAt(col, e.clientY, GRID_SNAP, 'floor');
+		this.clearGridItemSelection();
+		const anchor = this.minuteAt(col, e.clientY, this.gridSnap(), 'floor');
 		this.gridSelection = {
 			day, col,
 			pointerId: e.pointerId,
@@ -2317,7 +2646,7 @@ export class TaskCalendarView extends ItemView {
 		if (sel.moved) {
 			start = Math.min(sel.anchor, sel.current);
 			end = Math.max(sel.anchor, sel.current);
-			if (end - start < GRID_SNAP) end = start + GRID_SNAP;
+			if (end - start < this.gridSnap()) end = start + this.gridSnap();
 		} else {
 			start = sel.anchor;
 			end = Math.min(1440, start + this.entryDuration());
@@ -2344,7 +2673,7 @@ export class TaskCalendarView extends ItemView {
 		const { startH } = this.gridHours();
 		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
 		const start = Math.min(sel.anchor, sel.current);
-		const end = Math.max(sel.anchor, sel.current, start + GRID_SNAP);
+		const end = Math.max(sel.anchor, sel.current, start + this.gridSnap());
 		if (!sel.box) sel.box = sel.col.createDiv({ cls: 'sbm-tcal-tg-selection' });
 		sel.box.style.top = `${(start - startH * 60) / 60 * hh}px`;
 		sel.box.style.height = `${(end - start) / 60 * hh}px`;
@@ -2676,6 +3005,7 @@ export class TaskCalendarView extends ItemView {
 		icon: string,
 		isDropZone = false
 	): void {
+		tasks = this.prioritized(tasks, t => this.taskSubject(t));
 		const collapsed = this.state.collapsed.includes(id);
 		const tray = container.createDiv({ cls: `sbm-tcal-tray tray-${id} ${collapsed ? 'is-collapsed' : ''}` });
 		if (isDropZone) tray.dataset.dropDate = '';
@@ -2792,6 +3122,46 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	/** Couleur d'une tâche : son quadrant, ou sa priorité quand les quadrants sont désactivés. */
+	/* ----- Règles d'affichage (couleurs et priorités définies dans les réglages) ----- */
+
+	private taskSubject(task: ObsidianTask): RuleSubject {
+		return taskRuleSubject(task, this.state.dateField);
+	}
+
+	private eventSubject(ev: GoogleCalendarEvent): RuleSubject {
+		const text = [ev.summary, ev.description, ev.location].filter(Boolean).join(' ');
+		const calendar = this.legend.find(l => l.id === ev.calendarId)?.name || ev.calendarName || ev.calendarId || '';
+		return {
+			kind: 'event',
+			text,
+			tags: extractTags(text),
+			date: ev.start?.dateTime ? localParts(ev.start.dateTime).date : (ev.start?.date || null),
+			calendar
+		};
+	}
+
+	private entrySubject(entry: DailyEntry): RuleSubject {
+		const type = entry.statusChar !== undefined ? TaskStatusRegistry.typeOf(entry.statusChar) : null;
+		return {
+			kind: 'entry',
+			text: entry.text,
+			tags: extractTags(entry.text),
+			date: entry.date,
+			path: entry.filePath,
+			done: type === 'DONE' || type === 'CANCELLED'
+		};
+	}
+
+	/** Couleur d'une règle des réglages : elle remplace celle de l'agenda, du quadrant ou des entrées. */
+	private applyRuleColor(el: HTMLElement, subject: RuleSubject): void {
+		applyRuleColorTo(el, ruleColor(this.plugin.settings.colorRules, subject, this.today));
+	}
+
+	/** Ordre d'une liste selon les règles de priorité ; les blocs masqués sont retirés. */
+	private prioritized<T>(items: readonly T[], subjectOf: (item: T) => RuleSubject): T[] {
+		return prioritize(items, subjectOf, this.plugin.settings.priorityRules, this.today);
+	}
+
 	private taskAccent(task: ObsidianTask, quad: MatrixQuadrant): string | null {
 		if (quad) return `var(--tcal-${quad})`;
 		const prio = task.priority;
@@ -2823,6 +3193,7 @@ export class TaskCalendarView extends ItemView {
 		const quad = this.quadrantOf(task);
 		if (quad) chip.addClass(`quad-${quad}`);
 		if (this.flash && this.flash.key === key && Date.now() < this.flash.until) chip.addClass('is-landed');
+		this.applyRuleColor(chip, this.taskSubject(task));
 
 		const check = chip.createEl('button', { cls: 'sbm-tcal-check' });
 		check.setAttribute('role', 'checkbox');
@@ -2886,6 +3257,11 @@ export class TaskCalendarView extends ItemView {
 		chip.addEventListener('pointerdown', (e) => this.onChipPointerDown(e, { task }, chip));
 		chip.addEventListener('click', (e) => {
 			if (Date.now() < this.suppressClickUntil) return;
+			// Au doigt : appui simple pour le menu (qui mène à la tâche), appui long pour déplacer
+			if (this.touchUi) {
+				this.openTaskMenu(e, task, chip);
+				return;
+			}
 			this.openTask(task, e.ctrlKey || e.metaKey);
 		});
 		chip.addEventListener('contextmenu', (e) => {
@@ -2918,6 +3294,7 @@ export class TaskCalendarView extends ItemView {
 		const chip = container.createDiv({ cls: `sbm-tcal-chip sbm-tcal-event variant-${variant} role-${role}` });
 		chip.dataset.key = key;
 		chip.style.setProperty('--chip-accent', color);
+		this.applyRuleColor(chip, this.eventSubject(ev));
 		if (ev.allDay) chip.addClass('is-allday');
 		const span = eventDaySpan(ev);
 		if (span && span.first !== span.last) chip.addClass('is-multiday');
@@ -2940,9 +3317,14 @@ export class TaskCalendarView extends ItemView {
 
 		this.attachPeek(chip, this.fillEventPeek(ev));
 		chip.addEventListener('pointerdown', (e) => this.onChipPointerDown(e, { event: ev, eventDay: day }, chip));
-		chip.addEventListener('click', () => {
+		chip.addEventListener('click', (e) => {
 			if (Date.now() < this.suppressClickUntil) return;
 			this.hidePeek();
+			// Au doigt : appui simple pour le menu (qui mène à la fiche), appui long pour déplacer
+			if (this.touchUi) {
+				this.openEventMenu(e, ev, day);
+				return;
+			}
 			this.openEventModal(ev);
 		});
 		chip.addEventListener('contextmenu', (e) => {
@@ -2962,6 +3344,7 @@ export class TaskCalendarView extends ItemView {
 		const key = entryKey(entry);
 		const chip = container.createDiv({ cls: `sbm-tcal-chip sbm-tcal-event sbm-tcal-entry variant-${variant}` });
 		chip.dataset.key = key;
+		this.applyRuleColor(chip, this.entrySubject(entry));
 		if (this.flash && this.flash.key === key && Date.now() < this.flash.until) chip.addClass('is-landed');
 		const bounds = entryBounds(entry, this.entryDuration());
 		if (entry.date < this.today || (entry.date === this.today && bounds.end <= new Date().getHours() * 60 + new Date().getMinutes())) {
@@ -2998,8 +3381,13 @@ export class TaskCalendarView extends ItemView {
 		chip.addEventListener('click', (e) => {
 			if (Date.now() < this.suppressClickUntil) return;
 			this.hidePeek();
-			if (e.ctrlKey || e.metaKey) void this.openEntryNote(entry, true);
-			else this.openEntryModal(entry);
+			if (e.ctrlKey || e.metaKey) { void this.openEntryNote(entry, true); return; }
+			// Au doigt : appui simple pour le menu (fiche et note), appui long pour déplacer
+			if (this.touchUi) {
+				this.openEntryMenu(e, entry);
+				return;
+			}
+			this.openEntryModal(entry);
 		});
 		chip.addEventListener('contextmenu', (e) => {
 			e.preventDefault();
@@ -3291,24 +3679,7 @@ export class TaskCalendarView extends ItemView {
 	   Glisser-déposer (pointer events : souris, stylet et tactile)
 	   ====================================================================== */
 
-	/**
-	 * Fenêtre de modification d'un élément (appui long au doigt) :
-	 * entrée → fenêtre de l'entrée, événement → fenêtre de l'événement, tâche → menu de la tâche.
-	 */
-	private openEditorForItem(item: { task?: ObsidianTask; event?: GoogleCalendarEvent; eventDay?: string; entry?: DailyEntry }, anchor: HTMLElement, x: number, y: number): void {
-		this.hidePeek();
-		if (item.entry) {
-			this.openEntryModal(item.entry);
-		} else if (item.event) {
-			this.openEventModal(item.event);
-		} else if (item.task) {
-			// L'élément d'origine a pu être redessiné pendant l'appui : on vise sa version à jour
-			const fresh = this.rootEl.querySelector<HTMLElement>(`.sbm-tcal-chip[data-key="${CSS.escape(taskKey(item.task))}"]`);
-			this.openTaskMenu(new MouseEvent('contextmenu', { clientX: x, clientY: y }), item.task, fresh || anchor);
-		}
-	}
-
-	/** Le menu contextuel natif d'un appui long au doigt est ignoré : l'appui long ouvre la modification. */
+	/** Le menu contextuel natif d'un appui long au doigt est ignoré : l'appui long déplace. */
 	private isTouchHold(): boolean {
 		return Boolean((this.drag && this.drag.pointerType !== 'mouse') || (this.gridDrag && this.gridDrag.pointerType !== 'mouse'));
 	}
@@ -3384,12 +3755,8 @@ export class TaskCalendarView extends ItemView {
 		this.suppressClickUntil = Date.now() + 250;
 		this.cleanupDrag();
 
-		// Tactile : appui long relâché sans glisser → fenêtre de modification
-		if (isLongPressWithoutMove(d.pointerType, d.startX, d.startY, e.clientX, e.clientY)) {
-			this.openEditorForItem({ task, event, eventDay, entry }, d.sourceEl, e.clientX, e.clientY);
-			if (this.pendingRender) this.renderPreservingScroll();
-			return;
-		}
+		// Même règle que dans la grille : au doigt, l'appui long déplace, et le menu du bloc
+		// (appui simple) donne accès à la fiche.
 
 		if (target && target.dataset.dropDate !== undefined) {
 			const date = target.dataset.dropDate || null;
@@ -3397,7 +3764,7 @@ export class TaskCalendarView extends ItemView {
 			else if (entry && date) {
 				// Déposée dans la grille horaire : l'entrée prend l'heure visée
 				if (target.dataset.gridDay) {
-					const start = Math.min(1440 - GRID_SNAP, this.minuteAt(target, d.lastY));
+					const start = Math.min(1440 - this.gridSnap(), this.minuteAt(target, d.lastY));
 					const duration = entry.end !== null && entry.end > entry.start ? entry.end - entry.start : null;
 					void this.moveEntry(entry, date, start, duration !== null ? Math.min(1440, start + duration) : null);
 				} else {

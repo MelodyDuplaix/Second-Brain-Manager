@@ -12,7 +12,6 @@ import {
 	normalizeFilter,
 	sameFilter
 } from '../../src/services/calendarFilters';
-import { isLongPressWithoutMove } from '../../src/views/taskCalendarView';
 
 describe('Personnes dans les tâches (DelegationFeature)', () => {
 	beforeEach(() => DelegationFeature.configure(true, '@'));
@@ -153,14 +152,5 @@ describe('Filtre « donnée par » du calendrier', () => {
 		const chip = describeFilter(filter, { ...ctx, delegationEnabled: true, people: [{ key: delegationPersonKey('Léa'), name: 'Léa' }] }).find(c => c.id === 'delegation');
 		expect(chip?.label).toBe('Léa, Les miennes');
 		expect(clearFilterChip(filter, 'delegation', []).delegation).toEqual([]);
-	});
-});
-
-describe('Appui long sur mobile', () => {
-	it('un appui long relâché sans bouger ouvre la modification, pas un glisser ni un clic souris', () => {
-		expect(isLongPressWithoutMove('touch', 100, 100, 104, 103)).toBe(true);
-		expect(isLongPressWithoutMove('pen', 100, 100, 100, 100)).toBe(true);
-		expect(isLongPressWithoutMove('touch', 100, 100, 130, 100)).toBe(false);
-		expect(isLongPressWithoutMove('mouse', 100, 100, 100, 100)).toBe(false);
 	});
 });

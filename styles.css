@@ -9359,16 +9359,24 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	position: absolute;
 	left: 0;
 	right: 0;
-	bottom: 0;
 	height: 7px;
 	cursor: ns-resize;
+	/* Le navigateur ne doit pas prendre le geste pour un defilement */
+	touch-action: none;
+}
+
+.sbm-tcal-tg-resize.is-top {
+	top: 0;
+}
+
+.sbm-tcal-tg-resize.is-bottom {
+	bottom: 0;
 }
 
 .sbm-tcal-tg-resize::after {
 	content: "";
 	position: absolute;
 	left: 50%;
-	bottom: 2px;
 	width: 18px;
 	height: 3px;
 	margin-left: -9px;
@@ -9378,8 +9386,188 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	transition: opacity 0.15s ease;
 }
 
-.sbm-tcal-tg-item:hover .sbm-tcal-tg-resize::after {
+.sbm-tcal-tg-resize.is-top::after {
+	top: 2px;
+}
+
+.sbm-tcal-tg-resize.is-bottom::after {
+	bottom: 2px;
+}
+
+.sbm-tcal-tg-item:hover .sbm-tcal-tg-resize::after,
+.sbm-tcal-tg-item.is-selected .sbm-tcal-tg-resize::after {
 	opacity: 0.6;
+}
+
+/* Mini-boutons qui entrainent les voisins : haut, milieu, bas, alignes a droite */
+.sbm-tcal-tg-push {
+	position: absolute;
+	right: 2px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 17px;
+	height: 13px;
+	padding: 0;
+	border: 1px solid var(--chip-accent);
+	border-radius: 3px;
+	background: var(--background-primary);
+	color: var(--chip-accent);
+	cursor: ns-resize;
+	opacity: 0;
+	transition: opacity 0.12s ease, transform 0.12s ease;
+	touch-action: none;
+	z-index: 3;
+}
+
+.sbm-tcal-tg-push.is-top {
+	top: -1px;
+}
+
+.sbm-tcal-tg-push.is-middle {
+	top: 50%;
+	transform: translateY(-50%);
+	cursor: grab;
+}
+
+.sbm-tcal-tg-push.is-bottom {
+	bottom: -1px;
+}
+
+.sbm-tcal-tg-push .svg-icon {
+	width: 11px;
+	height: 11px;
+	stroke-width: 2.4px;
+}
+
+.sbm-tcal-tg-item:hover .sbm-tcal-tg-push,
+.sbm-tcal-tg-item.is-selected .sbm-tcal-tg-push {
+	opacity: 0.9;
+}
+
+.sbm-tcal-tg-push:hover {
+	opacity: 1;
+	background: var(--chip-accent);
+	color: var(--background-primary);
+	transform: scale(1.12);
+}
+
+.sbm-tcal-tg-push.is-middle:hover {
+	transform: translateY(-50%) scale(1.12);
+}
+
+/*
+ * Au doigt : pas de survol, donc les poignees n'apparaissent qu'une fois le bloc selectionne,
+ * et elles sont assez grandes pour etre visees. Le bloc selectionne est souligne d'un contour.
+ */
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-resize {
+	height: 12px;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-push {
+	width: 28px;
+	height: 20px;
+	right: 3px;
+	border-radius: 5px;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-push .svg-icon {
+	width: 15px;
+	height: 15px;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item .sbm-tcal-tg-push,
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item .sbm-tcal-tg-resize::after {
+	opacity: 0;
+}
+
+/*
+ * Tant que le bloc n'est pas selectionne, ses poignees sont inertes : un appui sur le bloc le
+ * selectionne au lieu de demarrer un redimensionnement, meme pres d'un bord.
+ */
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item .sbm-tcal-tg-push,
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item .sbm-tcal-tg-resize {
+	pointer-events: none;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-selected .sbm-tcal-tg-push,
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-selected .sbm-tcal-tg-resize {
+	pointer-events: auto;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-selected .sbm-tcal-tg-push {
+	opacity: 1;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-selected .sbm-tcal-tg-resize::after {
+	opacity: 0.6;
+}
+
+.sbm-tcal-tg-item.is-selected {
+	box-shadow: 0 0 0 2px var(--chip-accent);
+	z-index: 4;
+}
+
+/*
+ * Bloc trop plat pour empiler les trois mini-boutons : ils passent en rangee, centres
+ * verticalement, et debordent du bloc. Celui-ci cesse donc de rogner ses enfants, et son
+ * titre est rogne lui-meme pour ne pas deborder a son tour.
+ */
+.sbm-tcal-tg-item.is-grips-inline {
+	overflow: visible;
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-item-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* La rangee passe au-dessus des blocs voisins, sinon elle serait masquee par eux */
+.sbm-tcal-tg-item.is-grips-inline:hover,
+.sbm-tcal-tg-item.is-grips-inline.is-selected {
+	z-index: 5;
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push {
+	top: 50%;
+	bottom: auto;
+	transform: translateY(-50%);
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-bottom {
+	right: 2px;
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-middle {
+	right: 21px;
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-top {
+	right: 40px;
+}
+
+.sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push:hover {
+	transform: translateY(-50%) scale(1.12);
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-bottom {
+	right: 3px;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-middle {
+	right: 34px;
+}
+
+.sbm-tcal.is-touch-ui .sbm-tcal-tg-item.is-grips-inline .sbm-tcal-tg-push.is-top {
+	right: 65px;
+}
+
+/* Voisin entraine par une poussee en cours */
+.sbm-tcal-tg-item.is-pushed {
+	transition: top 0.08s ease, height 0.08s ease;
+	box-shadow: 0 0 0 1.5px var(--chip-accent);
+	opacity: 0.85;
 }
 
 /* Glisser dans la grille */
@@ -10252,4 +10440,68 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	border-radius: 50%;
 	background: var(--interactive-accent);
 	box-shadow: 0 0 0 2px var(--background-primary);
+}
+
+/* ===== Règles d'affichage (réglages) ===== */
+.sbm-rule-swatch {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	margin-right: 8px;
+	border-radius: 3px;
+	vertical-align: -1px;
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.sbm-rule-modal .sbm-rule-modal-heading {
+	margin: 16px 0 4px;
+}
+
+.sbm-rule-modal .sbm-rule-condition {
+	border-top: none;
+	padding: 6px 0;
+}
+
+.sbm-rule-modal .sbm-rule-condition .setting-item-info {
+	display: none;
+}
+
+.sbm-rule-modal .sbm-rule-condition .setting-item-control {
+	flex-wrap: wrap;
+	justify-content: flex-start;
+	gap: 6px;
+}
+
+.sbm-rule-modal .sbm-rule-condition input[type="text"] {
+	flex: 1 1 140px;
+	min-width: 120px;
+}
+
+.sbm-rule-modal .sbm-rule-modal-summary {
+	margin: 10px 0 4px;
+	font-style: italic;
+}
+
+/*
+ * Bloc coloré par une règle d'affichage (réglages › Calendrier › Couleurs selon conditions) :
+ * le fond entier prend la couleur, pas seulement le liseré. Prioritaire sur les variantes de
+ * puce, l'état survolé et la couleur de l'agenda ou du quadrant.
+ */
+.sbm-tcal-chip.has-rule-color,
+.sbm-tcal-tg-item.has-rule-color,
+.sbm-task-card.has-rule-color,
+.sbm-chat-task-card.has-rule-color {
+	background: color-mix(in srgb, var(--sbm-rule-color) 26%, var(--background-primary)) !important;
+}
+
+.sbm-tcal-chip.has-rule-color:hover,
+.sbm-tcal-tg-item.has-rule-color:hover,
+.sbm-task-card.has-rule-color:hover,
+.sbm-chat-task-card.has-rule-color:hover {
+	background: color-mix(in srgb, var(--sbm-rule-color) 36%, var(--background-primary)) !important;
+}
+
+.sbm-task-card.has-rule-color,
+.sbm-chat-task-card.has-rule-color {
+	border-left: 3px solid var(--sbm-rule-color);
 }

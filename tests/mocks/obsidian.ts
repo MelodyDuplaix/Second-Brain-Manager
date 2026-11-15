@@ -22,6 +22,14 @@ export class TFolder extends TAbstractFile {
 	children: TAbstractFile[] = [];
 }
 
+/** Par defaut les tests simulent le bureau ; un test peut basculer isMobile a true. */
+export const Platform = {
+	isDesktop: true,
+	isMobile: false,
+	isPhone: false,
+	isTablet: false
+};
+
 export class Notice {
 	constructor(public message: string, public duration?: number) {}
 	hide() {}

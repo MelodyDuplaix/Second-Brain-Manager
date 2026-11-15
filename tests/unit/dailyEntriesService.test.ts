@@ -1,3 +1,4 @@
+import { calendarSnapMinutes, CALENDAR_SNAP_OPTIONS, DEFAULT_DAILY_ENTRIES_SETTINGS as SNAP_DEFAULTS } from '../../src/services/dailyEntriesService';
 import { describe, it, expect } from 'vitest';
 import {
 	DailyEntryParser,
@@ -114,5 +115,19 @@ describe('utilitaires', () => {
 	it('retrouve une ligne déplacée', () => {
 		expect(locateEntryLine(['a', 'b', '- 10:00 x'], { line: 1, raw: '- 10:00 x' })).toBe(2);
 		expect(locateEntryLine(['a'], { line: 0, raw: 'zz' })).toBe(-1);
+	});
+});
+
+describe('Pas d’aimantation de la grille', () => {
+	it('vaut 5 min par défaut, y compris pour un réglage absent ou invalide', () => {
+		expect(calendarSnapMinutes(undefined)).toBe(5);
+		expect(calendarSnapMinutes('abc')).toBe(5);
+		expect(calendarSnapMinutes(7)).toBe(5);
+		expect(SNAP_DEFAULTS.calendarSnapMinutes).toBe(5);
+	});
+
+	it('accepte chacune des valeurs proposées dans les réglages', () => {
+		for (const m of CALENDAR_SNAP_OPTIONS) expect(calendarSnapMinutes(m)).toBe(m);
+		expect(calendarSnapMinutes('15')).toBe(15);
 	});
 });

@@ -1,4 +1,5 @@
 import { Plugin, Notice, PluginSettingTab, App, TFile, normalizePath, Editor, MarkdownView, WorkspaceLeaf, setIcon, debounce, Command } from 'obsidian';
+import { ColorRule, PriorityRule } from './services/displayRules';
 import { TaskParser } from './parsers/taskParser';
 import { CustomMatrixTagMapping, MatrixFeature } from './adapters/matrixAdapter';
 import { TaskSyntaxConfig, DEFAULT_SYNTAX_CONFIG } from './models/syntaxConfig';
@@ -80,6 +81,12 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	calendarFilterPresetsSeeded: boolean;
 	/** Préréglage appliqué à l'ouverture du calendrier (vide : derniers filtres utilisés) */
 	calendarStartupPreset: string;
+	/** Mode du calendrier étroit (barre latérale) à l'ouverture : dernier utilisé, liste ou grille horaire */
+	calendarSidebarDefaultMode: 'last' | 'agenda' | 'day';
+	/** Couleurs selon conditions : la première règle active qui correspond colore le bloc */
+	colorRules: ColorRule[];
+	/** Priorités dans les listes du calendrier : remonter, descendre ou masquer des blocs */
+	priorityRules: PriorityRule[];
 
 	// Titre de la section où l'IA ajoute les tâches acceptées (vide : détection automatique)
 	taskInsertHeading: string;
@@ -177,6 +184,9 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	calendarFilterPresets: [],
 	calendarFilterPresetsSeeded: false,
 	calendarStartupPreset: '',
+	calendarSidebarDefaultMode: 'last',
+	colorRules: [],
+	priorityRules: [],
 
 	taskInsertHeading: '',
 

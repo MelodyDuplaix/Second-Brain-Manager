@@ -12,13 +12,15 @@ import { TaskStatusRegistry, TasksStatusType } from '../../models/taskStatusRegi
 import { getTaskExclusionRules, ExclusionReason, TaskExclusionSettings } from '../../services/taskExclusionService';
 import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
-import { DailyEntryParser, DailyEntryInsertPosition, formatClock } from '../../services/dailyEntriesService';
+import { DailyEntryParser, DailyEntryInsertPosition, formatClock, CALENDAR_SNAP_OPTIONS, calendarSnapMinutes } from '../../services/dailyEntriesService';
 import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEventsService';
 import { describeFilter, isPresetModified, restoreDefaultPreset, restoreAllDefaultPresets, BUILTIN_FILTER_PRESETS } from '../../services/calendarFilters';
 import type { CalendarFilterPreset } from '../../services/calendarFilters';
 import { renderRewardsGroups } from './rewardsPage';
 import { FEATURE_DEFINITIONS, isFeatureEnabled } from '../../models/features';
 import { DelegationFeature, DelegationMode, DELEGATION_LABELS, DELEGATION_MODES } from '../../models/delegation';
+import { ColorRule, PriorityRule, PRIORITY_LEVELS, describeConditions, newRuleId } from '../../services/displayRules';
+import { DisplayRuleModal } from '../displayRuleModal';
 
 export class MainPage extends BaseSettingsPage {
 	private discoveredCalendars: GoogleCalendarListEntry[] | null = null;
@@ -238,6 +240,156 @@ export class MainPage extends BaseSettingsPage {
 				.addButton((btn) => {
 					btn.setButtonText('Rétablir').setDisabled(!missing && !modified).onClick(() => void save(restoreAllDefaultPresets(presets)));
 				});
+		});
+	}
+
+	/* ----- Règles d'affichage : couleurs et priorités selon des conditions ----- */
+
+	/**
+	 * Liste de règles éditable : activer, réordonner, modifier, supprimer, ajouter.
+	 * L'ordre compte : la première règle active qui correspond l'emporte.
+	 */
+	private renderRuleList<T extends ColorRule | PriorityRule>(
+		group: SettingGroup,
+		rules: T[],
+		save: (next: T[]) => Promise<void>,
+		badge: (rule: T) => string,
+		decorate: (setting: Setting, rule: T) => void,
+		emptyText: string
+	): void {
+		if (!rules.length) {
+			group.addSetting((setting: Setting) => {
+				setting.setName('Aucune règle').setDesc(emptyText);
+			});
+		}
+		rules.forEach((rule, index) => {
+			group.addSetting((setting: Setting) => {
+				setting
+					.setName(rule.name)
+					.setDesc(`${badge(rule)} — ${describeConditions(rule)}`);
+				decorate(setting, rule);
+				setting
+					.addToggle((toggle) => {
+						toggle.setTooltip(rule.enabled ? 'Désactiver' : 'Activer').setValue(rule.enabled).onChange(async (val) => {
+							rule.enabled = val;
+							await save([...rules]);
+						});
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('arrow-up').setTooltip('Monter (passe avant les règles suivantes)').setDisabled(index === 0).onClick(() => {
+							const next = [...rules];
+							[next[index - 1], next[index]] = [next[index], next[index - 1]];
+							void save(next);
+						});
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('arrow-down').setTooltip('Descendre').setDisabled(index === rules.length - 1).onClick(() => {
+							const next = [...rules];
+							[next[index + 1], next[index]] = [next[index], next[index + 1]];
+							void save(next);
+						});
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('pencil').setTooltip('Modifier').onClick(() => {
+							new DisplayRuleModal(this.plugin.app, rule, async (edited) => {
+								await save(rules.map(r => (r.id === rule.id ? edited as T : r)));
+							}).open();
+						});
+					})
+					.addExtraButton((btn) => {
+						btn.setIcon('trash-2').setTooltip('Supprimer').onClick(() => {
+							void save(rules.filter(r => r.id !== rule.id));
+						});
+					});
+			});
+		});
+	}
+
+	/** Couleurs selon conditions (ex. rouge pour tout ce qui mentionne « @Melody »). */
+	private renderColorRuleSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Couleurs selon conditions',
+			'palette',
+			'Colore les tâches, événements et entrées qui remplissent des conditions (texte, tag, type, date, statut, note, agenda). La première règle active qui correspond l’emporte.'
+		);
+		const rules = s.colorRules || [];
+		const save = async (next: ColorRule[]) => {
+			s.colorRules = next;
+			await this.plugin.saveSettings();
+			this.refreshCalendarViews();
+			this.rerender();
+		};
+		this.renderRuleList(
+			group,
+			rules,
+			save,
+			(rule) => rule.enabled ? 'Active' : 'Désactivée',
+			(setting, rule) => {
+				const swatch = createSpan({ cls: 'sbm-rule-swatch' });
+				swatch.style.background = rule.color;
+				setting.nameEl.prepend(swatch);
+			},
+			'Ajoutez une règle, par exemple : texte contient « @Melody » → rouge.'
+		);
+		group.addSetting((setting: Setting) => {
+			setting.addButton((btn) => {
+				btn.setButtonText('Ajouter une règle de couleur').onClick(() => {
+					const draft: ColorRule = {
+						id: newRuleId(),
+						name: 'Nouvelle règle',
+						enabled: true,
+						match: 'all',
+						conditions: [{ field: 'text', value: '' }],
+						color: '#e11d48'
+					};
+					new DisplayRuleModal(this.plugin.app, draft, async (edited) => {
+						await save([...rules, edited as ColorRule]);
+					}).open();
+				});
+			});
+		});
+	}
+
+	/** Priorités : place des blocs dans les listes du calendrier (en premier, en dernier, masqué…). */
+	private renderPriorityRuleSettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Priorités dans les listes',
+			'list-ordered',
+			'Remonte, descend ou masque des blocs dans les listes du calendrier : bandeau Journée, Sans date, En retard, cases du mois et agenda. À priorité égale, l’ordre habituel est conservé. La grille horaire garde l’ordre des heures.'
+		);
+		const rules = s.priorityRules || [];
+		const save = async (next: PriorityRule[]) => {
+			s.priorityRules = next;
+			await this.plugin.saveSettings();
+			this.refreshCalendarViews();
+			this.rerender();
+		};
+		this.renderRuleList(
+			group,
+			rules,
+			save,
+			(rule) => `${PRIORITY_LEVELS.find(l => l.value === rule.priority)?.label || rule.priority}${rule.enabled ? '' : ' (désactivée)'}`,
+			() => { /* pas de pastille */ },
+			'Ajoutez une règle, par exemple : texte contient « @Antoine » → En premier, ou « réveil » → Masquer.'
+		);
+		group.addSetting((setting: Setting) => {
+			setting.addButton((btn) => {
+				btn.setButtonText('Ajouter une règle de priorité').onClick(() => {
+					const draft: PriorityRule = {
+						id: newRuleId(),
+						name: 'Nouvelle règle',
+						enabled: true,
+						match: 'all',
+						conditions: [{ field: 'text', value: '' }],
+						priority: 'first'
+					};
+					new DisplayRuleModal(this.plugin.app, draft, async (edited) => {
+						await save([...rules, edited as PriorityRule]);
+					}).open();
+				});
+			});
 		});
 	}
 
@@ -493,6 +645,36 @@ export class MainPage extends BaseSettingsPage {
 
 		group.addSetting((setting: Setting) => {
 			setting
+				.setName('Pas d’aimantation dans la grille')
+				.setDesc('Les blocs glissés, étirés ou déplacés s’accrochent à ce pas (minutes). Vaut aussi pour la sélection d’un créneau.')
+				.addDropdown((dropdown) => {
+					CALENDAR_SNAP_OPTIONS.forEach(m => dropdown.addOption(String(m), m === 1 ? '1 minute' : `${m} minutes`));
+					dropdown.setValue(String(calendarSnapMinutes(s.calendarSnapMinutes))).onChange(async (val) => {
+						s.calendarSnapMinutes = Number(val);
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Calendrier dans la barre latérale : mode à l’ouverture')
+				.setDesc('Vue utilisée quand le calendrier est étroit (barre latérale ou fenêtre réduite) : liste des jours ou grille horaire de la journée. Le bouton de la barre d’outils permet toujours de basculer.')
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption('last', 'Dernier mode utilisé')
+						.addOption('agenda', 'Liste')
+						.addOption('day', 'Grille horaire')
+						.setValue(this.plugin.settings.calendarSidebarDefaultMode || 'last')
+						.onChange(async (val) => {
+							this.plugin.settings.calendarSidebarDefaultMode = val as 'last' | 'agenda' | 'day';
+							await this.plugin.saveSettings();
+						});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
 				.setName('Heure visible à l’ouverture')
 				.setDesc('Heure placée en haut de la grille (le jour même, la grille s’ouvre sur l’heure actuelle).')
 				.addDropdown((dropdown) => {
@@ -562,6 +744,8 @@ export class MainPage extends BaseSettingsPage {
 			this.renderCalendarEntriesSettings();
 			this.renderCalendarColorSettings();
 			this.renderCalendarFilterPresetSettings();
+			this.renderColorRuleSettings();
+			this.renderPriorityRuleSettings();
 			this.section({
 				id: 'google',
 				name: 'Google Agenda',
