@@ -110,19 +110,19 @@ describe('Garde-fou sur les propositions de l’IA', () => {
 describe('Section des tâches données par d’autres', () => {
 	afterEach(() => DelegationFeature.configure(false, '@'));
 
-	const task = (title: string, delegatedBy?: string): ObsidianTask => ({
+	const task = (title: string, person?: string): ObsidianTask => ({
 		rawText: `- [ ] ${title}`, cleanText: title, title, completed: false, statusChar: ' ', status: 'todo',
-		filePath: 'Projets/Acme.md', lineNumber: 1, indentLevel: 0, domainTags: [], subtasks: [], delegatedBy
+		filePath: 'Projets/Acme.md', lineNumber: 1, indentLevel: 0, domainTags: [], subtasks: [], person
 	});
 
 	it('est vide quand la fonctionnalité est coupée ou sans tâche concernée', () => {
 		expect(buildDelegatedSection([task('A', 'Léa')], [], t => t.title).count).toBe(0);
-		DelegationFeature.configure(true, '@');
+		DelegationFeature.configure(true, '@', 'from');
 		expect(buildDelegatedSection([task('A')], [], t => t.title).count).toBe(0);
 	});
 
 	it('regroupe par personne, reliée à sa note de contact', () => {
-		DelegationFeature.configure(true, '@');
+		DelegationFeature.configure(true, '@', 'from');
 		const res = buildDelegatedSection([task('A', 'Antoine'), task('B', 'antoine'), task('C', 'Léa')], ['Antoine Dupont'], t => t.title);
 		expect(res.count).toBe(3);
 		expect(res.section).toContain('Données par [[Antoine Dupont]] (2)');
