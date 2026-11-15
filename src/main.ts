@@ -12,6 +12,7 @@ import { VIEW_TYPE_RECOVERY } from './views/recoveryView';
 import { TaskCalendarView, VIEW_TYPE_TASK_CALENDAR } from './views/taskCalendarView';
 import { Wallet, Reward, CompletionEvent, StreakData, UserBadge, WorkflowCounts, RewardPurchase } from './models/gamification';
 import { GamificationService, PluginData } from './services/gamificationService';
+import { findDuplicateLeaves, LeafPlacement } from './services/viewLayout';
 import { PluginDataSyncService, SyncableData, WalletBaseline } from './services/pluginDataSyncService';
 import { SettingsPageManager, SettingsPageType } from './settings/settingsPageManager';
 import { SettingGroup } from './settings/settingGroup';
@@ -289,6 +290,10 @@ export default class SecondBrainPlugin extends Plugin {
 	private featureRibbons = new Map<string, HTMLElement>();
 	/** Identifiants courts des commandes de fonctionnalités actuellement enregistrées */
 	private featureCommandIds = new Set<string>();
+	/** Ouverture des vues de démarrage en cours : évite qu'un second appel n'ouvre des doublons. */
+	private startupSidebarViewsRun: Promise<void> | null = null;
+	/** Nettoyage des doublons en cours : `detach()` déclenche lui-même un événement de mise en page. */
+	private pruningDuplicateViews = false;
 
 	public getPrompts(): ConfiguredPrompt[] {
 		if (!this.settings.configuredPrompts || this.settings.configuredPrompts.length === 0) {
@@ -428,8 +433,18 @@ export default class SecondBrainPlugin extends Plugin {
 		// Ouverture des vues choisies dans la barre latérale, en arrière-plan
 		this.app.workspace.onLayoutReady(() => {
 			this.closeDisabledFeatureViews();
-			void this.mergeLegacyCalendarLeaves();
-			void this.openStartupSidebarViews();
+			// En séquence : la fusion des anciens calendriers doit être terminée avant la vérification
+			// des vues déjà ouvertes, sinon un calendrier converti serait ouvert une seconde fois.
+			void (async () => {
+				// Avant : un doublon resté dans `workspace.json` est restauré par Obsidian à chaque
+				// démarrage ; on le retire pour repartir d'un onglet unique par vue.
+				this.pruneDuplicateViewLeaves();
+				await this.mergeLegacyCalendarLeaves();
+				await this.openStartupSidebarViews();
+				// Après : filet de sécurité si un onglet est apparu pendant les `await`.
+				this.pruneDuplicateViewLeaves();
+				this.watchDuplicateViewLeaves();
+			})();
 			// Après un rechargement du plugin, les onglets restés en arrière-plan perdent leur icône :
 			// on la redessine tout de suite, puis une seconde fois une fois qu'Obsidian a reconstruit les onglets.
 			this.restoreViewTabHeaders();
@@ -851,12 +866,90 @@ export default class SecondBrainPlugin extends Plugin {
 		commands?.removeCommand?.(`${this.manifest.id}:${id}`);
 	}
 
+	/**
+	 * Onglets d'un type de vue donné, onglets non chargés compris (« deferred », Obsidian ≥ 1.7).
+	 * `getLeavesOfType` interroge la vue instanciée et peut donc ignorer un onglet restauré mais pas
+	 * encore chargé ; on lit l'état déclaré du volet, qui est renseigné dès la restauration.
+	 */
+	/** Charge un onglet resté en arrière-plan, pour que `leaf.view` soit la vue réelle et non `DeferredView`. */
+	private async loadLeafIfDeferred(leaf: WorkspaceLeaf): Promise<void> {
+		if (!leaf.isDeferred) return;
+		try {
+			await leaf.loadIfDeferred();
+		} catch (e) {
+			console.warn("[Second Brain Manager] Chargement de l'onglet impossible :", e);
+		}
+	}
+
+	private getLeavesByViewType(viewType: string): WorkspaceLeaf[] {
+		const leaves: WorkspaceLeaf[] = [];
+		this.app.workspace.iterateAllLeaves(leaf => {
+			if (leaf.getViewState()?.type === viewType) leaves.push(leaf);
+		});
+		return leaves;
+	}
+
+	/** Emplacement d'un onglet : les vues du plugin n'existent qu'en un exemplaire par emplacement. */
+	private leafPlacement(leaf: WorkspaceLeaf): LeafPlacement {
+		const root = leaf.getRoot();
+		if (root === this.app.workspace.rightSplit) return 'right';
+		if (root === this.app.workspace.leftSplit) return 'left';
+		return 'main';
+	}
+
+	/**
+	 * Ferme les onglets du plugin présents en double au même endroit, en conservant le premier
+	 * (celui restauré par Obsidian, qui a gardé son état).
+	 *
+	 * Filet de sécurité nécessaire : un doublon créé une fois est enregistré dans
+	 * `workspace.json`, puis restauré par Obsidian à chaque démarrage suivant. Vérifier
+	 * avant d'ouvrir ne suffit donc pas : il faut aussi nettoyer l'existant.
+	 * Le calendrier reste autorisé à la fois en barre latérale et en vue principale.
+	 */
+	private pruneDuplicateViewLeaves(): number {
+		if (this.pruningDuplicateViews) return 0;
+		this.pruningDuplicateViews = true;
+		const all: WorkspaceLeaf[] = [];
+		this.app.workspace.iterateAllLeaves(leaf => { all.push(leaf); });
+		// Uniquement les vues du plugin : on ne touche ni aux onglets d'Obsidian ni à ceux des autres plugins
+		const duplicates = findDuplicateLeaves(
+			all,
+			leaf => leaf.getViewState()?.type,
+			leaf => this.leafPlacement(leaf),
+			type => Boolean(VIEW_TAB_HEADERS[type])
+		);
+		try {
+			for (const leaf of duplicates) leaf.detach();
+		} finally {
+			this.pruningDuplicateViews = false;
+		}
+		if (duplicates.length > 0) {
+			console.info(`[Second Brain Manager] ${duplicates.length} onglet(s) en double fermé(s).`);
+		}
+		return duplicates.length;
+	}
+
+	/**
+	 * Surveille en continu l'apparition d'onglets du plugin en double.
+	 *
+	 * Une seule vérification au démarrage ne suffit pas : Obsidian construit les onglets d'une
+	 * barre latérale repliée plus tard, parfois bien après `onLayoutReady` (quand elle est dépliée).
+	 * Un doublon pourrait donc apparaître après notre vérification initiale.
+	 *
+	 * Fermer un onglet ainsi reste sûr : les vues du plugin sont des singletons, chaque commande et
+	 * chaque icône réutilise l'onglet existant au lieu d'en créer un second au même endroit.
+	 */
+	private watchDuplicateViewLeaves(): void {
+		const prune = debounce(() => this.pruneDuplicateViewLeaves(), 300, false);
+		this.registerEvent(this.app.workspace.on('layout-change', () => prune()));
+	}
+
 	/** Ferme les vues des fonctionnalités désactivées (elles resteraient ouvertes après un changement). */
 	private closeDisabledFeatureViews(): void {
 		for (const [key, views] of Object.entries(SecondBrainPlugin.FEATURE_VIEWS)) {
 			if (this.isFeatureEnabled(key as FeatureKey)) continue;
 			for (const viewType of views) {
-				this.app.workspace.getLeavesOfType(viewType).forEach(leaf => leaf.detach());
+				this.getLeavesByViewType(viewType).forEach(leaf => leaf.detach());
 			}
 		}
 	}
@@ -964,7 +1057,7 @@ export default class SecondBrainPlugin extends Plugin {
 
 	async activateDashboardView() {
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)[0];
+		let leaf = this.getLeavesByViewType(VIEW_TYPE_DASHBOARD)[0];
 
 		if (!leaf) {
 			const rightLeaf = workspace.getRightLeaf(false);
@@ -975,7 +1068,8 @@ export default class SecondBrainPlugin extends Plugin {
 		}
 
 		if (leaf) {
-			workspace.revealLeaf(leaf);
+			await workspace.revealLeaf(leaf);
+			await this.loadLeafIfDeferred(leaf);
 			if (leaf.view instanceof DashboardView) {
 				await (leaf.view as DashboardView).render();
 			}
@@ -985,7 +1079,7 @@ export default class SecondBrainPlugin extends Plugin {
 	async activateBriefingView(requestedEnergy?: number) {
 		if (this.featureUnavailable('briefings')) return;
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_BRIEFING)[0];
+		let leaf = this.getLeavesByViewType(VIEW_TYPE_BRIEFING)[0];
 
 		if (!leaf) {
 			const rightLeaf = workspace.getRightLeaf(false);
@@ -996,7 +1090,8 @@ export default class SecondBrainPlugin extends Plugin {
 		}
 
 		if (leaf) {
-			workspace.revealLeaf(leaf);
+			await workspace.revealLeaf(leaf);
+			await this.loadLeafIfDeferred(leaf);
 			if (leaf.view instanceof BriefingView) {
 				if (requestedEnergy !== undefined) {
 					await (leaf.view as BriefingView).launchBriefingWithEnergy(requestedEnergy);
@@ -1021,7 +1116,7 @@ export default class SecondBrainPlugin extends Plugin {
 	async activateEveningReviewView() {
 		if (this.featureUnavailable('briefings')) return;
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_EVENING_REVIEW)[0];
+		let leaf = this.getLeavesByViewType(VIEW_TYPE_EVENING_REVIEW)[0];
 
 		if (!leaf) {
 			const rightLeaf = workspace.getRightLeaf(false);
@@ -1045,7 +1140,7 @@ export default class SecondBrainPlugin extends Plugin {
 	async activateHistoryView() {
 		if (this.featureUnavailable('gamification')) return;
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_GAMIFICATION_HISTORY)[0];
+		let leaf = this.getLeavesByViewType(VIEW_TYPE_GAMIFICATION_HISTORY)[0];
 
 		if (!leaf) {
 			const rightLeaf = workspace.getRightLeaf(false);
@@ -1070,9 +1165,9 @@ export default class SecondBrainPlugin extends Plugin {
 			const root = leaf.getRoot();
 			return root === workspace.rightSplit || root === workspace.leftSplit;
 		};
-		for (const leaf of workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+		for (const leaf of this.getLeavesByViewType(VIEW_TYPE_CALENDAR)) {
 			const side = isSide(leaf);
-			const duplicate = workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR).some(l => isSide(l) === side);
+			const duplicate = this.getLeavesByViewType(VIEW_TYPE_TASK_CALENDAR).some(l => isSide(l) === side);
 			if (duplicate) {
 				leaf.detach();
 			} else {
@@ -1121,6 +1216,14 @@ export default class SecondBrainPlugin extends Plugin {
 	 * ni leur donner le focus. Les vues déjà présentes (restaurées par Obsidian) sont ignorées.
 	 */
 	async openStartupSidebarViews(): Promise<void> {
+		// Un appel déjà en cours : on attend son résultat au lieu d'ouvrir une seconde série d'onglets.
+		if (this.startupSidebarViewsRun) return this.startupSidebarViewsRun;
+		this.startupSidebarViewsRun = this.doOpenStartupSidebarViews()
+			.finally(() => { this.startupSidebarViewsRun = null; });
+		return this.startupSidebarViewsRun;
+	}
+
+	private async doOpenStartupSidebarViews(): Promise<void> {
 		const { workspace } = this.app;
 		const wanted = (this.settings.startupSidebarViews || [])
 			.filter(type => STARTUP_SIDEBAR_VIEWS.some(v => v.type === type))
@@ -1144,7 +1247,9 @@ export default class SecondBrainPlugin extends Plugin {
 		rememberTabs();
 
 		for (const view of ordered) {
-			if (workspace.getLeavesOfType(view.type).length > 0) continue;
+			// Vérification réévaluée à chaque tour : l'état de l'espace de travail peut avoir changé
+			// pendant les `await` précédents (restauration, fusion des anciens calendriers…).
+			if (this.getLeavesByViewType(view.type).length > 0) continue;
 			try {
 				const leaf = workspace.getRightLeaf(false);
 				if (!leaf) continue;
@@ -1172,7 +1277,7 @@ export default class SecondBrainPlugin extends Plugin {
 			const root = leaf.getRoot();
 			return root === workspace.rightSplit || root === workspace.leftSplit;
 		};
-		const existing = workspace.getLeavesOfType(VIEW_TYPE_TASK_CALENDAR);
+		const existing = this.getLeavesByViewType(VIEW_TYPE_TASK_CALENDAR);
 		let leaf: WorkspaceLeaf | null = existing.find(l => (location === 'sidebar') === isSide(l)) || null;
 
 		if (!leaf) {
@@ -1194,7 +1299,7 @@ export default class SecondBrainPlugin extends Plugin {
 	async activateChatView() {
 		if (this.featureUnavailable('ai')) return;
 		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+		let leaf = this.getLeavesByViewType(VIEW_TYPE_CHAT)[0];
 
 		if (!leaf) {
 			const rightLeaf = workspace.getRightLeaf(false);
