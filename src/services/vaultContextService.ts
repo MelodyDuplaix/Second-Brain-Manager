@@ -669,19 +669,28 @@ export class VaultContextService {
 
 		const dailyFolder = config.folder;
 		const targetPath = normalizePath(`${dailyFolder}/${chosenName}.md`);
+		// Le format peut contenir des sous-dossiers (ex. « YYYY/MM/DD-MM-YYYY ») : le nom de la note
+		// est son dernier segment, les segments précédents sont des dossiers.
+		const chosenBase = chosenName.split('/').pop() || chosenName;
 
-		if (dailyFolder && dailyFolder !== '/' && dailyFolder !== '.') {
-			const folderExists = this.app.vault.getAbstractFileByPath(dailyFolder);
-			if (!folderExists && typeof this.app.vault.createFolder === 'function') {
+		// Création de l'arborescence complète du dossier cible (dossier du journal + sous-dossiers du format)
+		const parentFolder = targetPath.split('/').slice(0, -1).join('/');
+		if (parentFolder && parentFolder !== '/' && parentFolder !== '.' && typeof this.app.vault.createFolder === 'function') {
+			let current = '';
+			for (const segment of parentFolder.split('/').filter(Boolean)) {
+				current = current ? `${current}/${segment}` : segment;
+				if (this.app.vault.getAbstractFileByPath(current)) continue;
 				try {
-					await this.app.vault.createFolder(dailyFolder);
+					await this.app.vault.createFolder(current);
 				} catch {
-					// Dossier créé
+					// Dossier déjà créé entre-temps
 				}
 			}
 		}
 
-		let initialContent = `# Note du ${chosenName}\n\n`;
+		let initialContent = `# Note du ${chosenBase}
+
+`;
 		let rawTemplate = '';
 		const effectiveTemplatePath = templatePath || config.template;
 
@@ -729,33 +738,13 @@ export class VaultContextService {
 					console.warn('[Second Brain Manager] Erreur lors de l\'exécution de Templater:', tpErr);
 				}
 			} else if (rawTemplate) {
-				const dateObj = new Date(targetIso);
-				const yesterday = new Date(dateObj);
-				yesterday.setDate(yesterday.getDate() - 1);
-				const yesterdayFr = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
-				const yesterdayIso = yesterday.toISOString().split('T')[0];
-
-				const tomorrow = new Date(dateObj);
-				tomorrow.setDate(tomorrow.getDate() + 1);
-				const tomorrowFr = `${String(tomorrow.getDate()).padStart(2, '0')}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${tomorrow.getFullYear()}`;
-				const tomorrowIso = tomorrow.toISOString().split('T')[0];
-
-				const parsedContent = rawTemplate
-					.replace(/\{\{date\}\}/gi, chosenName)
-					.replace(/\{\{title\}\}/gi, chosenName)
-					.replace(/\{\{yesterday\}\}/gi, yesterdayFr)
-					.replace(/\{\{tomorrow\}\}/gi, tomorrowFr)
-					// Remplacement de secours si Templater n'est pas actif
-					.replace(/<%\s*tp\.date\.now\([^)]*-[0-9]+[^)]*\)\s*%>/gi, yesterdayFr)
-					.replace(/<%\s*tp\.date\.now\([^)]*\+[0-9]+[^)]*\)\s*%>/gi, tomorrowFr)
-					.replace(/<%\s*tp\.date\.now\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, targetIso)
-					.replace(/<%\s*tp\.date\.now\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, frDate)
-					.replace(/<%\s*tp\.date\.now\(\)\s*%>/gi, chosenName)
-					.replace(/<%\s*tp\.date\.tomorrow\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, tomorrowIso)
-					.replace(/<%\s*tp\.date\.tomorrow\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, tomorrowFr)
-					.replace(/<%\s*tp\.date\.yesterday\([^)]*YYYY-MM-DD[^)]*\)\s*%>/gi, yesterdayIso)
-					.replace(/<%\s*tp\.date\.yesterday\([^)]*DD-MM-YYYY[^)]*\)\s*%>/gi, yesterdayFr)
-					.replace(/<%\s*tp\.file\.title\s*%>/gi, chosenName);
+				// Templater absent : rendu des placeholders par le service de modèles, qui remplit
+				// {{date}} au format ISO (2026-11-13) et non avec le nom de fichier formaté.
+				const parsedContent = TemplateService.renderTemplate(rawTemplate, {
+					title: chosenBase,
+					date: targetIso,
+					folder: parentFolder
+				}, this.app);
 
 				if (parsedContent !== rawTemplate) {
 					await this.app.vault.modify(createdFile, parsedContent);
