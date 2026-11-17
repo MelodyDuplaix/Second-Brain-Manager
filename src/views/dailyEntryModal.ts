@@ -86,7 +86,7 @@ export class DailyEntryModal extends Modal {
 		const cancel = actions.createEl('button', { type: 'button', text: 'Annuler' });
 		cancel.addEventListener('click', () => this.close());
 		const saveBtn = actions.createEl('button', { type: 'submit', text: 'Enregistrer', cls: 'mod-cta' });
-		saveBtn.title = 'Enregistrer (Ctrl+Entrée)';
+		saveBtn.title = 'Enregistrer (Entrée)';
 
 		let saved = false;
 		const save = () => {
@@ -115,19 +115,25 @@ export class DailyEntryModal extends Modal {
 			save();
 		});
 
-		// Ctrl+Entrée (Cmd+Entrée sur Mac) enregistre depuis n'importe quel champ, suggestions ouvertes ou non
+		// Entrée enregistre depuis n'importe quel champ ; Ctrl/Cmd+Entrée enregistre même suggestions ouvertes
 		form.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.isComposing) return;
+			if (e.key !== 'Enter' || e.isComposing) return;
+			const mod = e.ctrlKey || e.metaKey;
+			// Entrée sur un bouton déclenche ce bouton ; pendant les suggestions, elle en choisit une
+			if (!mod && (e.target instanceof HTMLButtonElement || suggest.isBusy())) return;
 			e.preventDefault();
 			e.stopPropagation();
 			suggest.close();
 			save();
 		}, true);
-		this.scope.register(['Mod'], 'Enter', () => {
+		const saveFromScope = (force: boolean) => {
+			if (!force && suggest.isBusy()) return true;
 			suggest.close();
 			save();
 			return false;
-		});
+		};
+		this.scope.register([], 'Enter', () => saveFromScope(false));
+		this.scope.register(['Mod'], 'Enter', () => saveFromScope(true));
 
 		window.setTimeout(() => {
 			text.focus();
