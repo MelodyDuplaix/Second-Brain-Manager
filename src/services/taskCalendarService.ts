@@ -188,6 +188,139 @@ export function dayEnergyLoad(tasks: ObsidianTask[] | undefined): number {
 	return tasks.filter(isTaskOpen).reduce((sum, t) => sum + (t.energy || 3), 0);
 }
 
+/** Bloc minuté (entrée de note quotidienne) déjà résolu par la vue. */
+export interface EnergyTimedItem {
+	/** Début en minutes depuis minuit */
+	start: number;
+	/** Fin en minutes, null : durée par défaut */
+	end: number | null;
+	/** Case cochée (terminée) */
+	done?: boolean;
+	/** Case annulée : ne compte pas */
+	cancelled?: boolean;
+}
+
+/** Événement réduit à ce qui sert au calcul de charge. */
+export interface EnergyEventLike {
+	allDay: boolean;
+	status?: string;
+	start: { dateTime?: string };
+	end: { dateTime?: string };
+}
+
+export interface DayEnergyOptions {
+	/** Jour calculé (YYYY-MM-DD) */
+	day: string;
+	/** Instant présent : ce qui est terminé ou passé compte comme fait */
+	now: Date;
+	countEvents: boolean;
+	countEntries: boolean;
+	/** Points par heure d'événement ou d'entrée */
+	pointsPerHour: number;
+	/** Durée d'une entrée sans heure de fin (minutes) */
+	entryDefaultMinutes: number;
+}
+
+export interface DayEnergyPart {
+	count: number;
+	points: number;
+	/** Minutes cumulées (événements et entrées) */
+	minutes: number;
+}
+
+export interface DayEnergyBreakdown {
+	/** Charge totale de la journée */
+	total: number;
+	/** Part déjà faite (tâches terminées, blocs passés) */
+	done: number;
+	tasks: DayEnergyPart;
+	events: DayEnergyPart;
+	entries: DayEnergyPart;
+}
+
+/** Points d'un bloc minuté : au moins 1, proportionnel à la durée. */
+export function energyPointsForMinutes(minutes: number, pointsPerHour: number): number {
+	if (minutes <= 0) return 0;
+	return Math.max(1, Math.round((minutes / 60) * Math.max(0, pointsPerHour)));
+}
+
+/** Minutes d'un événement minuté comprises dans le jour, et minute de fin dans ce jour (null si journée entière). */
+export function eventSpanOnDay(ev: EnergyEventLike, day: string): { minutes: number; endMs: number } | null {
+	if (ev.allDay || !ev.start.dateTime || !ev.end.dateTime) return null;
+	const start = new Date(ev.start.dateTime).getTime();
+	const end = new Date(ev.end.dateTime).getTime();
+	if (isNaN(start) || isNaN(end) || end <= start) return null;
+	const [y, m, d] = day.split('-').map(Number);
+	const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+	const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0).getTime();
+	const from = Math.max(start, dayStart);
+	const to = Math.min(end, dayEnd);
+	if (to <= from) return null;
+	return { minutes: Math.round((to - from) / 60000), endMs: to };
+}
+
+/**
+ * Charge d'énergie d'une journée et part déjà accomplie :
+ * - tâches : énergie ⚡ (3 par défaut), faites si cochées, annulées ignorées ;
+ * - événements minutés et entrées : points selon la durée, faits une fois passés (ou cochés).
+ */
+export function computeDayEnergy(
+	tasks: ObsidianTask[],
+	events: EnergyEventLike[],
+	entries: EnergyTimedItem[],
+	opts: DayEnergyOptions
+): DayEnergyBreakdown {
+	const result: DayEnergyBreakdown = {
+		total: 0,
+		done: 0,
+		tasks: { count: 0, points: 0, minutes: 0 },
+		events: { count: 0, points: 0, minutes: 0 },
+		entries: { count: 0, points: 0, minutes: 0 }
+	};
+	const add = (part: DayEnergyPart, points: number, done: boolean, minutes = 0) => {
+		part.count++;
+		part.points += points;
+		part.minutes += minutes;
+		result.total += points;
+		if (done) result.done += points;
+	};
+
+	for (const t of tasks) {
+		if (t.status === 'cancelled') continue;
+		add(result.tasks, t.energy || 3, !isTaskOpen(t));
+	}
+
+	const nowMs = opts.now.getTime();
+	if (opts.countEvents) {
+		for (const ev of events) {
+			if (ev.status === 'cancelled') continue;
+			const span = eventSpanOnDay(ev, opts.day);
+			if (!span) continue;
+			add(result.events, energyPointsForMinutes(span.minutes, opts.pointsPerHour), span.endMs <= nowMs, span.minutes);
+		}
+	}
+
+	if (opts.countEntries) {
+		const today = CalendarDate.toISO(opts.now);
+		const nowMin = opts.now.getHours() * 60 + opts.now.getMinutes();
+		for (const e of entries) {
+			if (e.cancelled) continue;
+			const end = e.end !== null && e.end > e.start ? e.end : e.start + opts.entryDefaultMinutes;
+			const minutes = end - e.start;
+			const past = opts.day < today || (opts.day === today && end <= nowMin);
+			add(result.entries, energyPointsForMinutes(minutes, opts.pointsPerHour), !!e.done || past, minutes);
+		}
+	}
+	return result;
+}
+
+/** Capacité du jour : réglage de base, ajusté aujourd'hui selon le niveau d'énergie déclaré (5/10 = normal). */
+export function dayEnergyCapacity(base: number, isToday: boolean, followLevel: boolean, energyLevel: number | undefined): number {
+	const cap = Math.max(1, Number(base) || 15);
+	if (!isToday || !followLevel || !energyLevel) return cap;
+	return Math.max(1, Math.round(cap * Math.max(1, Math.min(10, energyLevel)) / 5));
+}
+
 /* ==========================================================================
    Localisation robuste d'une ligne de tâche dans un fichier
    ========================================================================== */

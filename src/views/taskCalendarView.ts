@@ -11,7 +11,9 @@ import {
 	TaskWriter,
 	bucketTasksByDate,
 	compareTasks,
-	dayEnergyLoad,
+	computeDayEnergy,
+	dayEnergyCapacity,
+	EnergyTimedItem,
 	getTaskDate,
 	isTaskOpen,
 	taskKey
@@ -1670,6 +1672,11 @@ export class TaskCalendarView extends ItemView {
 			menu.addItem(i => i.setTitle('Grille horaire plus aérée').setIcon('zoom-in').setDisabled(idx >= HOUR_HEIGHTS.length - 1).onClick(() => this.zoomGrid(1)));
 			menu.addItem(i => i.setTitle('Grille horaire plus compacte').setIcon('zoom-out').setDisabled(idx <= 0).onClick(() => this.zoomGrid(-1)));
 		}
+		menu.addItem(i => i.setTitle('Jauge d\'énergie par jour').setIcon('battery-medium').setChecked(this.plugin.settings.calendarEnergyMeter !== false).onClick(async () => {
+			this.plugin.settings.calendarEnergyMeter = this.plugin.settings.calendarEnergyMeter === false;
+			await this.plugin.saveSettings();
+			this.renderPreservingScroll();
+		}));
 		menu.addSeparator();
 		menu.addItem(i => i.setTitle('Placer selon l\'échéance 📅').setIcon('calendar').setChecked(this.state.dateField === 'due').onClick(() => this.setDateField('due')));
 		menu.addItem(i => i.setTitle('Placer selon la date prévue ⏳').setIcon('hourglass').setChecked(this.state.dateField === 'scheduled').onClick(() => this.setDateField('scheduled')));
@@ -1855,7 +1862,7 @@ export class TaskCalendarView extends ItemView {
 					this.state.anchor = day;
 					this.setMode('week');
 				});
-				this.renderLoadMeter(header, dayTasks);
+				this.renderLoadMeter(header, day, dayTasks);
 				this.addQuickAddButton(header, day);
 
 				// Tout est visible : la case s'agrandit, la grille du mois défile
@@ -1945,7 +1952,7 @@ export class TaskCalendarView extends ItemView {
 				});
 			}
 			this.addQuickAddButton(line, day);
-			this.renderLoadMeter(h, dayTasks, true);
+			this.renderLoadMeter(h, day, dayTasks, 'wide');
 		});
 
 		// Bandeau « journée » : événements sur la journée entière et tâches
@@ -2861,7 +2868,7 @@ export class TaskCalendarView extends ItemView {
 				if (dayTasks.length) parts.push(open ? `${open} à faire` : 'tout est fait ✨');
 				label.createSpan({ cls: 'sbm-tcal-agenda-count', text: parts.join(' · ') });
 			}
-			this.renderLoadMeter(head, dayTasks);
+			this.renderLoadMeter(head, day, dayTasks, 'labeled');
 			this.addQuickAddButton(head, day);
 
 			const items = section.createDiv({ cls: 'sbm-tcal-agenda-items' });
@@ -3084,17 +3091,56 @@ export class TaskCalendarView extends ItemView {
 		if (currentMonth && day.slice(0, 7) !== currentMonth) el.addClass('is-outside');
 	}
 
-	private renderLoadMeter(container: HTMLElement, dayTasks: ObsidianTask[], wide = false): void {
-		const load = dayEnergyLoad(dayTasks);
-		if (!load) return;
-		const capacity = Math.max(10, (this.plugin.settings.energyLevel || 5) * 3);
-		const ratio = Math.min(1, load / capacity);
-		const meter = container.createDiv({ cls: `sbm-tcal-load ${wide ? 'is-wide' : ''}` });
-		meter.title = `Charge d'énergie : ${load} (capacité estimée ${capacity})`;
-		const fill = meter.createDiv({ cls: 'sbm-tcal-load-fill' });
-		fill.style.setProperty('--sbm-load', String(ratio));
-		if (ratio >= 1) meter.addClass('is-over');
-		else if (ratio >= 0.7) meter.addClass('is-high');
+	/**
+	 * Jauge d'énergie du jour : charge (tâches, événements minutés, entrées) rapportée à la capacité,
+	 * avec la part déjà accomplie en plein et le reste en clair. Désactivable dans les réglages.
+	 */
+	private renderLoadMeter(container: HTMLElement, day: string, dayTasks: ObsidianTask[], variant: 'compact' | 'wide' | 'labeled' = 'compact'): void {
+		const s = this.plugin.settings;
+		if (s.calendarEnergyMeter === false) return;
+		const entries: EnergyTimedItem[] = this.entriesEnabled()
+			? this.entries.entriesFor(day).map(e => {
+				const type = e.statusChar !== undefined ? TaskStatusRegistry.typeOf(e.statusChar) : null;
+				return { start: e.start, end: e.end, done: type === 'DONE', cancelled: type === 'CANCELLED' };
+			})
+			: [];
+		const load = computeDayEnergy(dayTasks, this.eventBuckets.get(day) || [], entries, {
+			day,
+			now: new Date(),
+			countEvents: s.calendarEnergyCountEvents !== false,
+			countEntries: s.calendarEnergyCountEntries !== false,
+			pointsPerHour: Number(s.calendarEnergyPointsPerHour ?? 2),
+			entryDefaultMinutes: this.entryDuration()
+		});
+		if (!load.total) return;
+		const isToday = day === this.today;
+		const followLevel = s.calendarEnergyFollowLevel !== false;
+		const capacity = dayEnergyCapacity(s.calendarEnergyCapacity, isToday, followLevel, s.energyLevel);
+		const ratio = load.total / capacity;
+		const scale = Math.max(capacity, load.total);
+
+		const wrap = container.createDiv({ cls: `sbm-tcal-load is-${variant}` });
+		if (ratio > 1) wrap.addClass('is-over');
+		else if (ratio >= 0.8) wrap.addClass('is-high');
+		if (load.done >= load.total) wrap.addClass('is-complete');
+		const track = wrap.createDiv({ cls: 'sbm-tcal-load-track' });
+		track.createDiv({ cls: 'sbm-tcal-load-done' }).style.setProperty('--sbm-load', String(load.done / scale));
+		track.createDiv({ cls: 'sbm-tcal-load-rest' }).style.setProperty('--sbm-load', String((load.total - load.done) / scale));
+		if (load.total > capacity) track.createDiv({ cls: 'sbm-tcal-load-cap' }).style.setProperty('--sbm-load', String(capacity / scale));
+		if (variant !== 'compact') wrap.createSpan({ cls: 'sbm-tcal-load-label', text: `⚡${load.total}/${capacity}` });
+
+		const duration = (min: number) => {
+			const h = Math.floor(min / 60);
+			const m = min % 60;
+			return h ? `${h} h${m ? ` ${String(m).padStart(2, '0')}` : ''}` : `${m} min`;
+		};
+		const lines = [`Énergie du jour : ${load.total} / ${capacity} (${Math.round(ratio * 100)} %)`];
+		if (load.done) lines.push(`✓ Déjà fait : ${load.done} (${Math.round((load.done / load.total) * 100)} %)`);
+		if (load.tasks.count) lines.push(`Tâches : ${load.tasks.count} → ${load.tasks.points} pts`);
+		if (load.events.count) lines.push(`Événements : ${load.events.count} (${duration(load.events.minutes)}) → ${load.events.points} pts`);
+		if (load.entries.count) lines.push(`Entrées : ${load.entries.count} (${duration(load.entries.minutes)}) → ${load.entries.points} pts`);
+		if (isToday && followLevel && s.energyLevel) lines.push(`Capacité ajustée à ton énergie du jour (${s.energyLevel}/10)`);
+		wrap.title = lines.join('\n');
 	}
 
 	private renderDots(container: HTMLElement, dayTasks: ObsidianTask[], dayEvents: GoogleCalendarEvent[] = [], entryCount = 0): void {

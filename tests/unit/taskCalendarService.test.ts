@@ -6,7 +6,10 @@ import {
 	getTaskDisplayDate,
 	locateTaskLine,
 	TaskWriter,
-	dayEnergyLoad
+	dayEnergyLoad,
+	computeDayEnergy,
+	dayEnergyCapacity,
+	energyPointsForMinutes
 } from '../../src/services/taskCalendarService';
 import { TaskParser } from '../../src/parsers/taskParser';
 import { DEFAULT_SYNTAX_CONFIG } from '../../src/models/syntaxConfig';
@@ -182,5 +185,52 @@ describe('TaskWriter', () => {
 		const writer = new TaskWriter(app, () => DEFAULT_SYNTAX_CONFIG);
 		const ghost = parse('- [ ] Fantôme 📅 2026-11-10')[0];
 		expect(await writer.setDueDate(ghost, '2026-11-11')).toBe(false);
+	});
+});
+
+describe('computeDayEnergy', () => {
+	const base = { day: '2026-11-20', countEvents: true, countEntries: true, pointsPerHour: 2, entryDefaultMinutes: 30 };
+	const tasks = TaskParser.parseAllTasks([
+		'- [ ] Lourde 📅 2026-11-20 [energie:: 6]',
+		'- [ ] Normale 📅 2026-11-20',
+		'- [x] Faite 📅 2026-11-20',
+		'- [-] Annulée 📅 2026-11-20'
+	].join('\n'), 'T.md', DEFAULT_SYNTAX_CONFIG);
+	const event = (start: string, end: string) => ({ allDay: false, start: { dateTime: start }, end: { dateTime: end } });
+
+	it('counts tasks (3 by default), skips cancelled ones and tracks what is done', () => {
+		const load = computeDayEnergy(tasks, [], [], { ...base, now: new Date(2026, 10, 20, 8, 0) });
+		expect(load.tasks.count).toBe(3);
+		expect(load.total).toBe(load.tasks.points);
+		expect(load.done).toBe(3);
+	});
+
+	it('weights events and entries by duration, done once past', () => {
+		const ev = [
+			event(new Date(2026, 10, 20, 9, 0).toISOString(), new Date(2026, 10, 20, 10, 30).toISOString()),
+			event(new Date(2026, 10, 20, 14, 0).toISOString(), new Date(2026, 10, 20, 15, 0).toISOString()),
+			{ allDay: true, start: {}, end: {} }
+		];
+		const entries = [{ start: 11 * 60, end: null }, { start: 16 * 60, end: 18 * 60, done: true }, { start: 7 * 60, end: 8 * 60, cancelled: true }];
+		const load = computeDayEnergy([], ev, entries, { ...base, now: new Date(2026, 10, 20, 12, 0) });
+		expect(load.events).toMatchObject({ count: 2, minutes: 150, points: 5 });
+		expect(load.entries).toMatchObject({ count: 2, minutes: 150, points: 5 });
+		// passé : réunion 9h-10h30 (3), entrée 11h (1) ; coché : entrée 16h-18h (4)
+		expect(load.done).toBe(8);
+		expect(computeDayEnergy([], ev, entries, { ...base, countEvents: false, countEntries: false, now: new Date() }).total).toBe(0);
+	});
+
+	it('only counts the part of an event on that day', () => {
+		const overnight = event(new Date(2026, 10, 19, 23, 0).toISOString(), new Date(2026, 10, 20, 1, 0).toISOString());
+		const load = computeDayEnergy([], [overnight], [], { ...base, now: new Date(2026, 10, 19, 0, 0) });
+		expect(load.events.minutes).toBe(60);
+	});
+
+	it('gives at least one point per slot and scales today with the energy level', () => {
+		expect(energyPointsForMinutes(10, 2)).toBe(1);
+		expect(energyPointsForMinutes(0, 2)).toBe(0);
+		expect(dayEnergyCapacity(15, false, true, 2)).toBe(15);
+		expect(dayEnergyCapacity(15, true, true, 10)).toBe(30);
+		expect(dayEnergyCapacity(15, true, false, 10)).toBe(15);
 	});
 });

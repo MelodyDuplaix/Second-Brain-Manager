@@ -136,6 +136,95 @@ export class MainPage extends BaseSettingsPage {
 		});
 	}
 
+	/** Jauge d'énergie par jour du calendrier. */
+	private renderCalendarEnergySettings(): void {
+		const s = this.plugin.settings;
+		const group = new SettingGroup(this.containerEl).setHeading(
+			'Jauge d’énergie par jour',
+			'battery-medium',
+			'Petite barre sous chaque jour : la charge de la journée (tâches ⚡, événements et entrées selon leur durée) comparée à votre capacité. La partie pleine est déjà faite (tâches cochées, créneaux passés), la partie claire reste à faire ; elle vire à l’orange vers 80 % et au rouge au-delà de la capacité.'
+		);
+		const save = async (rerender = false) => {
+			await this.plugin.saveSettings();
+			this.refreshCalendarViews();
+			if (rerender) this.rerender();
+		};
+		const on = s.calendarEnergyMeter !== false;
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Afficher la jauge d’énergie')
+				.setDesc('Aussi activable depuis le menu ⋯ du calendrier.')
+				.addToggle((toggle) => {
+					toggle.setValue(on).onChange(async (val) => {
+						s.calendarEnergyMeter = val;
+						await save(true);
+					});
+				});
+		});
+		if (!on) return;
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Capacité d’une journée')
+				.setDesc('Points d’énergie qu’une journée normale peut absorber. Une tâche sans ⚡ vaut 3 points.')
+				.addSlider((slider) => {
+					slider.setLimits(5, 50, 1).setValue(Number(s.calendarEnergyCapacity) || 15).setDynamicTooltip().onChange(async (val) => {
+						s.calendarEnergyCapacity = val;
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Adapter aujourd’hui à mon niveau d’énergie')
+				.setDesc('La capacité du jour suit le niveau d’énergie indiqué (5/10 = capacité normale, 10/10 = double, 2/10 = 40 %).')
+				.addToggle((toggle) => {
+					toggle.setValue(s.calendarEnergyFollowLevel !== false).onChange(async (val) => {
+						s.calendarEnergyFollowLevel = val;
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Compter les événements Google')
+				.setDesc('Les événements minutés comptent selon leur durée ; les événements sur la journée entière sont ignorés.')
+				.addToggle((toggle) => {
+					toggle.setValue(s.calendarEnergyCountEvents !== false).onChange(async (val) => {
+						s.calendarEnergyCountEvents = val;
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Compter les entrées des notes quotidiennes')
+				.setDesc('Les lignes horodatées comptent selon leur durée (durée par défaut si l’heure de fin manque).')
+				.addToggle((toggle) => {
+					toggle.setValue(s.calendarEnergyCountEntries !== false).onChange(async (val) => {
+						s.calendarEnergyCountEntries = val;
+						await save();
+					});
+				});
+		});
+
+		group.addSetting((setting: Setting) => {
+			setting
+				.setName('Points par heure de créneau')
+				.setDesc('Coût d’une heure d’événement ou d’entrée (au moins 1 point par créneau). 2 : une réunion d’1 h 30 vaut autant qu’une tâche moyenne.')
+				.addSlider((slider) => {
+					slider.setLimits(0.5, 6, 0.5).setValue(Number(s.calendarEnergyPointsPerHour ?? 2)).setDynamicTooltip().onChange(async (val) => {
+						s.calendarEnergyPointsPerHour = val;
+						await save();
+					});
+				});
+		});
+	}
+
 	/** Préréglages de filtres créés depuis le bouton Filtres du calendrier : renommer, supprimer. */
 	private renderCalendarFilterPresetSettings(): void {
 		const s = this.plugin.settings;
@@ -742,6 +831,7 @@ export class MainPage extends BaseSettingsPage {
 			displayValue: () => s.googleRefreshToken ? 'Google connecté' : ''
 		}, () => {
 			this.renderCalendarEntriesSettings();
+			this.renderCalendarEnergySettings();
 			this.renderCalendarColorSettings();
 			this.renderCalendarFilterPresetSettings();
 			this.renderColorRuleSettings();

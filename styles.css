@@ -7080,8 +7080,25 @@ textarea.sbm-chat-textarea:focus {
 
 .sbm-tcal-load {
 	flex: 0 0 auto;
-	width: 28px;
-	height: 4px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	--sbm-load-color: var(--color-green);
+}
+
+.sbm-tcal-load.is-high {
+	--sbm-load-color: var(--color-orange);
+}
+
+.sbm-tcal-load.is-over {
+	--sbm-load-color: var(--color-red);
+}
+
+.sbm-tcal-load-track {
+	position: relative;
+	display: flex;
+	width: 32px;
+	height: 5px;
 	border-radius: 999px;
 	background: var(--background-modifier-border);
 	overflow: hidden;
@@ -7092,20 +7109,55 @@ textarea.sbm-chat-textarea:focus {
 	margin-top: calc(6px * var(--sbm-density, 1));
 }
 
-.sbm-tcal-load-fill {
+.sbm-tcal-load.is-wide .sbm-tcal-load-track {
+	flex: 1 1 auto;
+	width: auto;
+}
+
+.sbm-tcal-load.is-labeled .sbm-tcal-load-track {
+	width: 48px;
+}
+
+.sbm-tcal-load-done,
+.sbm-tcal-load-rest {
 	height: 100%;
 	width: calc(var(--sbm-load, 0) * 100%);
-	border-radius: inherit;
-	background: var(--color-green);
 	transition: width 0.3s ease;
 }
 
-.sbm-tcal-load.is-high .sbm-tcal-load-fill {
-	background: var(--color-orange);
+.sbm-tcal-load-done {
+	background: var(--sbm-load-color);
 }
 
-.sbm-tcal-load.is-over .sbm-tcal-load-fill {
-	background: var(--color-red);
+.sbm-tcal-load-rest {
+	background: color-mix(in srgb, var(--sbm-load-color) 38%, transparent);
+}
+
+/* Repère de la capacité quand la journée la dépasse */
+.sbm-tcal-load-cap {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(var(--sbm-load, 0) * 100%);
+	width: 2px;
+	margin-left: -1px;
+	background: var(--background-primary);
+}
+
+.sbm-tcal-load-label {
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	white-space: nowrap;
+	line-height: 1;
+}
+
+.sbm-tcal-load.is-over .sbm-tcal-load-label {
+	color: var(--color-red);
+}
+
+.sbm-tcal-load.is-complete .sbm-tcal-load-label {
+	color: var(--color-green);
 }
 
 /* ----- Vue semaine ----- */

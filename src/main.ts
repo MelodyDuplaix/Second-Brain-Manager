@@ -83,6 +83,18 @@ export interface SecondBrainSettings extends TaskSyntaxConfig, GoogleCalendarSet
 	calendarStartupPreset: string;
 	/** Mode du calendrier étroit (barre latérale) à l'ouverture : dernier utilisé, liste ou grille horaire */
 	calendarSidebarDefaultMode: 'last' | 'agenda' | 'day';
+	/** Jauge d'énergie par jour dans le calendrier */
+	calendarEnergyMeter: boolean;
+	/** Capacité d'une journée normale, en points d'énergie */
+	calendarEnergyCapacity: number;
+	/** Aujourd'hui, la capacité suit le niveau d'énergie déclaré (5/10 = capacité normale) */
+	calendarEnergyFollowLevel: boolean;
+	/** Compter les événements Google minutés dans la charge */
+	calendarEnergyCountEvents: boolean;
+	/** Compter les entrées horodatées des notes quotidiennes dans la charge */
+	calendarEnergyCountEntries: boolean;
+	/** Points d'énergie par heure d'événement ou d'entrée */
+	calendarEnergyPointsPerHour: number;
 	/** Couleurs selon conditions : la première règle active qui correspond colore le bloc */
 	colorRules: ColorRule[];
 	/** Priorités dans les listes du calendrier : remonter, descendre ou masquer des blocs */
@@ -185,6 +197,12 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
 	calendarFilterPresetsSeeded: false,
 	calendarStartupPreset: '',
 	calendarSidebarDefaultMode: 'last',
+	calendarEnergyMeter: true,
+	calendarEnergyCapacity: 15,
+	calendarEnergyFollowLevel: true,
+	calendarEnergyCountEvents: true,
+	calendarEnergyCountEntries: true,
+	calendarEnergyPointsPerHour: 2,
 	colorRules: [],
 	priorityRules: [],
 
