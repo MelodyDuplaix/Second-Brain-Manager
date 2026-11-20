@@ -48,6 +48,8 @@ export class NoteActionModal extends Modal {
 		const { contentEl, modalEl } = this;
 		contentEl.empty();
 		modalEl.addClass('sbm-note-action-modal');
+		// Fenêtre non bloquante : pas de voile, la note en dessous reste cliquable et sélectionnable
+		(this.containerEl as HTMLElement | undefined)?.addClass('sbm-note-action-container');
 
 		// 1. En-tête personnalisé (Icône + Titre + Bouton de fermeture)
 		const header = contentEl.createDiv({ cls: 'sbm-note-action-header' });
@@ -61,6 +63,8 @@ export class NoteActionModal extends Modal {
 		});
 		this.updateHeaderModelBadge();
 
+		this.makeDraggable(header);
+		if (NoteActionModal.lastPosition) this.placeAt(NoteActionModal.lastPosition.left, NoteActionModal.lastPosition.top);
 
 		// 2. Zone de prévisualisation / Résultat éditable
 		const contentBox = contentEl.createDiv({ cls: 'sbm-note-action-content-box' });
@@ -157,7 +161,9 @@ export class NoteActionModal extends Modal {
 		this.replaceBtnEl.addEventListener('click', () => this.handleReplace());
 
 		// Raccourcis clavier de la modale
+		// Les raccourcis ne valent que si le focus est dans la fenêtre (la note reste éditable en dessous)
 		this.scope.register(['Mod'], 'Enter', () => {
+			if (!this.hasFocusInside()) return true;
 			if (!this.isLoading && this.currentResult.trim()) {
 				this.handleReplace();
 			}
@@ -165,6 +171,7 @@ export class NoteActionModal extends Modal {
 		});
 
 		this.scope.register(['Mod', 'Shift'], 'Enter', () => {
+			if (!this.hasFocusInside()) return true;
 			if (!this.isLoading && this.currentResult.trim()) {
 				this.handleInsert();
 			}
@@ -176,6 +183,123 @@ export class NoteActionModal extends Modal {
 	}
 
 	public readyPromise: Promise<void> | null = null;
+
+	private floating = false;
+	private scopePushed = false;
+
+	private get keymap(): { pushScope(s: unknown): void; popScope(s: unknown): void } | undefined {
+		return (this.app as unknown as { keymap?: { pushScope(s: unknown): void; popScope(s: unknown): void } })?.keymap;
+	}
+
+	private pushScope(): void {
+		if (this.scopePushed || !this.keymap) return;
+		this.keymap.pushScope(this.scope);
+		this.scopePushed = true;
+	}
+
+	private popScope(): void {
+		if (!this.scopePushed || !this.keymap) return;
+		this.keymap.popScope(this.scope);
+		this.scopePushed = false;
+	}
+
+	/**
+	 * Ouverture en fenêtre flottante non modale : la `Modal` d'Obsidian ramène le focus dans la fenêtre
+	 * dès qu'on clique ailleurs, ce qui rend la sélection dans la note impossible (scintillement).
+	 * On attache donc nous-mêmes la fenêtre, et ses raccourcis ne sont actifs que si le focus y est.
+	 */
+	open(): void {
+		if (!this.keymap || !this.containerEl) {
+			super.open();
+			return;
+		}
+		if (this.floating) return;
+		this.floating = true;
+		document.body.appendChild(this.containerEl);
+		this.modalEl.addEventListener('focusin', () => this.pushScope());
+		this.modalEl.addEventListener('focusout', (e: FocusEvent) => {
+			const next = e.relatedTarget as Node | null;
+			if (!next || !this.modalEl.contains(next)) this.popScope();
+		});
+		this.modalEl.querySelector('.modal-close-button')?.addEventListener('click', () => this.close());
+		this.scope.register([], 'Escape', () => {
+			this.close();
+			return false;
+		});
+		this.modalEl.tabIndex = -1;
+		this.onOpen();
+		if (!this.modalEl.contains(document.activeElement)) this.modalEl.focus();
+	}
+
+	close(): void {
+		if (!this.floating) {
+			super.close();
+			return;
+		}
+		this.floating = false;
+		this.popScope();
+		this.containerEl.detach();
+		this.onClose();
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+
+	private hasFocusInside(): boolean {
+		const active = document.activeElement;
+		return !active || active === document.body || this.modalEl.contains(active);
+	}
+
+	/** Dernière position choisie par glisser-déposer, réutilisée à la prochaine ouverture (durée de la session). */
+	private static lastPosition: { left: number; top: number } | null = null;
+
+	/** Positionne la fenêtre en coordonnées écran, en la gardant au moins en partie visible. */
+	private placeAt(left: number, top: number): void {
+		const { modalEl } = this;
+		const width = modalEl.offsetWidth || 300;
+		const margin = 40;
+		const x = Math.min(Math.max(left, margin - width), window.innerWidth - margin);
+		const y = Math.min(Math.max(top, 0), window.innerHeight - margin);
+		modalEl.addClass('sbm-note-action-modal--moved');
+		modalEl.style.left = `${x}px`;
+		modalEl.style.top = `${y}px`;
+	}
+
+	/** Permet de déplacer la fenêtre en tirant son en-tête ; double-clic pour la recentrer. */
+	private makeDraggable(handle: HTMLElement): void {
+		const { modalEl } = this;
+		handle.addClass('sbm-note-action-drag-handle');
+		handle.setAttribute('title','Glisser pour déplacer · double-clic pour recentrer');
+		handle.addEventListener('pointerdown', (e: PointerEvent) => {
+			if (e.button !== 0 || (e.target as HTMLElement).closest('button, input, textarea, a')) return;
+			e.preventDefault();
+			const rect = modalEl.getBoundingClientRect();
+			const offsetX = e.clientX - rect.left;
+			const offsetY = e.clientY - rect.top;
+			this.placeAt(rect.left, rect.top);
+			modalEl.addClass('is-dragging');
+			handle.setPointerCapture(e.pointerId);
+			const onMove = (ev: PointerEvent) => this.placeAt(ev.clientX - offsetX, ev.clientY - offsetY);
+			const onUp = () => {
+				handle.removeEventListener('pointermove', onMove);
+				handle.removeEventListener('pointerup', onUp);
+				handle.removeEventListener('pointercancel', onUp);
+				modalEl.removeClass('is-dragging');
+				const r = modalEl.getBoundingClientRect();
+				NoteActionModal.lastPosition = { left: r.left, top: r.top };
+			};
+			handle.addEventListener('pointermove', onMove);
+			handle.addEventListener('pointerup', onUp);
+			handle.addEventListener('pointercancel', onUp);
+		});
+		handle.addEventListener('dblclick', () => {
+			NoteActionModal.lastPosition = null;
+			modalEl.removeClass('sbm-note-action-modal--moved');
+			modalEl.style.left = '';
+			modalEl.style.top = '';
+		});
+	}
 
 	private setButtonsDisabled(disabled: boolean): void {
 		if (this.copyBtnEl) this.copyBtnEl.disabled = disabled;

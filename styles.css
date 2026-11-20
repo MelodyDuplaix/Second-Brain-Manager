@@ -6060,6 +6060,34 @@ textarea.sbm-chat-textarea:focus {
 	overflow: hidden;
 }
 
+/* Commande rapide IA non bloquante : on clique et sélectionne à travers le conteneur */
+.modal-container.sbm-note-action-container {
+	pointer-events: none;
+}
+
+.modal-container.sbm-note-action-container .modal-bg {
+	display: none;
+}
+
+.modal-container.sbm-note-action-container .modal {
+	pointer-events: auto;
+}
+
+.modal.sbm-note-action-modal.sbm-note-action-modal--moved {
+	position: fixed;
+	margin: 0;
+}
+
+.modal.sbm-note-action-modal.is-dragging {
+	user-select: none;
+	opacity: 0.92;
+}
+
+.sbm-note-action-drag-handle {
+	cursor: move;
+	touch-action: none;
+}
+
 .sbm-note-action-header {
 	display: flex;
 	align-items: center;
