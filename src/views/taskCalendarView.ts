@@ -1336,9 +1336,36 @@ export class TaskCalendarView extends ItemView {
 		}).open();
 	}
 
+	/** Insère une copie de la ligne de l'entrée juste en dessous (sans l'identifiant de bloc, qui doit rester unique). */
+	private async duplicateEntry(entry: DailyEntry): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(entry.filePath));
+		if (!(file instanceof TFile)) {
+			new Notice('Note quotidienne introuvable.');
+			return;
+		}
+		let ok = false;
+		try {
+			await this.app.vault.process(file, content => {
+				const eol = content.includes('\r\n') ? '\r\n' : '\n';
+				const lines = content.split(/\r?\n/);
+				const idx = locateEntryLine(lines, entry);
+				if (idx === -1) return content;
+				ok = true;
+				lines.splice(idx + 1, 0, lines[idx].replace(/\s+\^[A-Za-z0-9-]+\s*$/, ''));
+				return lines.join(eol);
+			});
+		} catch (err) {
+			new Notice(`Duplication impossible : ${err instanceof Error ? err.message : String(err)}`);
+			return;
+		}
+		if (ok) new Notice(`📄 Entrée dupliquée : ${this.entryTitle(entry)}`, 2500);
+		else new Notice('Entrée introuvable : la note a changé entre-temps.');
+	}
+
 	private openEntryMenu(e: MouseEvent, entry: DailyEntry): void {
 		const menu = new Menu();
 		menu.addItem(i => i.setTitle('Modifier l’entrée…').setIcon('pencil').onClick(() => this.openEntryModal(entry)));
+		menu.addItem(i => i.setTitle('Dupliquer').setIcon('copy').onClick(() => void this.duplicateEntry(entry)));
 		menu.addItem(i => i.setTitle('Ouvrir la note quotidienne').setIcon('file-text').onClick(() => this.openEntryNote(entry)));
 		menu.addItem(i => i.setTitle('Ouvrir dans un nouvel onglet').setIcon('file-plus').onClick(() => this.openEntryNote(entry, true)));
 		const task = this.taskForEntry(entry);
