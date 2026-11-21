@@ -118,7 +118,7 @@ export class MainPage extends BaseSettingsPage {
 		const group = new SettingGroup(this.containerEl).setHeading(
 			'Création de tâches',
 			'list-plus',
-			'Emplacement des tâches ajoutées quand vous acceptez une proposition de l’IA (briefing du matin, chat) ou importez les rendez-vous de l’agenda.'
+			'Emplacement des tâches ajoutées quand vous acceptez une proposition de l’IA (briefing du matin, chat), importez les rendez-vous de l’agenda ou créez une tâche depuis le calendrier.'
 		);
 		group.addSetting((setting: Setting) => {
 			setting

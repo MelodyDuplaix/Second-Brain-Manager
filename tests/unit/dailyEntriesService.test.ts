@@ -100,6 +100,15 @@ describe('DailyEntryParser', () => {
 		expect(out[13]).toBe('# Repas');
 	});
 
+	it('préfère la section des nouvelles tâches parmi les sections lues', () => {
+		const p = new DailyEntryParser(settings({ dailyEntriesHeadings: 'Recap du jour, Repas' }));
+		const out = p.insert(NOTE, '- [ ] 13:00 Café', 780, 'repas').split('\n');
+		expect(out[14]).toBe('- [ ] 13:00 Café');
+		// Section introuvable : première section lue, comme avant
+		const fallback = p.insert(NOTE, '- [ ] 13:00 Café', 780, 'Inconnue').split('\n');
+		expect(fallback[10]).toBe('- [ ] 13:00 Café');
+	});
+
 	it('crée la section si elle manque', () => {
 		const p = new DailyEntryParser(settings({ dailyEntriesHeadings: 'Agenda' }));
 		expect(p.insert('# Note\n', '- 09:00 Café', 540)).toBe('# Note\n\n## Agenda\n- 09:00 Café\n');

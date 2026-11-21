@@ -4,6 +4,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import { VaultContextService } from '../services/vaultContextService';
+import { ActionExecutor } from '../services/actionExecutor';
 import {
 	CalendarDate,
 	CalendarDateField,
@@ -22,6 +23,9 @@ import { GoogleCalendarService } from '../services/googleCalendarService';
 import { GoogleCalendarEvent, CalendarRole } from '../models/googleCalendar';
 import { CalendarFilterPopover } from './calendarFilterPopover';
 import { LinkTagSuggest } from '../suggesters/linkTagSuggest';
+import {
+	TOUCH_HOLD_MS, TOUCH_SLOP_PX, PointerSample, pushSample, isFlingRelease, viewShifted, selectionRange
+} from '../services/touchGesture';
 import {
 	CalendarFilter,
 	DEFAULT_CALENDAR_FILTER,
@@ -62,6 +66,7 @@ import {
 	entryBounds,
 	entryKey,
 	entryTaskKey,
+	asTaskLine,
 	formatClock,
 	locateEntryLine
 } from '../services/dailyEntriesService';
@@ -206,6 +211,10 @@ interface GridDrag {
 	/** Styles d'origine des voisins déplacés à l'écran, pour les remettre en place à l'annulation */
 	shiftedEls: Map<HTMLElement, { top: string; height: string }>;
 	scrollRaf?: number;
+	/** Position du panneau au début du geste : s'il glisse, la barre latérale se referme */
+	viewLeft: number;
+	/** Derniers points du doigt, pour reconnaître un balayage au relâcher */
+	trail: PointerSample[];
 }
 
 interface GridSelection {
@@ -215,8 +224,19 @@ interface GridSelection {
 	pointerType: string;
 	anchor: number;
 	current: number;
+	startX: number;
 	startY: number;
+	lastY: number;
+	/**
+	 * Sélection en cours de tracé. À la souris : dès que le pointeur bouge. Au doigt : après
+	 * l'appui long, le glisser étire alors le créneau au lieu de faire défiler la grille.
+	 */
 	moved: boolean;
+	/** Au doigt : le créneau a été étiré après l'appui long (sinon, durée par défaut) */
+	extended: boolean;
+	holdTimer?: number;
+	scrollRaf?: number;
+	viewLeft: number;
 	box?: HTMLElement;
 }
 
@@ -281,6 +301,8 @@ interface DragSession extends DragItem {
 	scrollRaf?: number;
 	lastX: number;
 	lastY: number;
+	viewLeft: number;
+	trail: PointerSample[];
 }
 
 const COMPACT_MAX = 520;
@@ -1229,9 +1251,20 @@ export class TaskCalendarView extends ItemView {
 		try {
 			const parser = this.entries.getParser();
 			const file = await this.getOrCreateDailyFile(draft.date);
-			const line = parser.formatNewLine(draft.start, draft.end, draft.text);
-			await this.app.vault.process(file, content => parser.insert(content, line, draft.start));
-			new Notice(`🕒 Ajouté à ${file.basename} : ${formatClock(draft.start)} ${draft.text}`, 2500);
+			const formatted = parser.formatNewLine(draft.start, draft.end, draft.text);
+			const line = draft.task ? asTaskLine(formatted) : formatted;
+			const taskHeading = this.plugin.settings.taskInsertHeading || '';
+			await this.app.vault.process(file, content => {
+				if (!draft.task) return parser.insert(content, line, draft.start);
+				// Tâche horodatée : si la note entière est lue, la section des nouvelles tâches
+				// convient toujours ; sinon on la préfère parmi les sections d'entrées, pour que la
+				// tâche reste affichée à son heure.
+				if (parser.readsWholeNote()) {
+					return ActionExecutor.insertTaskIntoNoteContent(content, line, taskHeading, { replaceSimilar: false });
+				}
+				return parser.insert(content, line, draft.start, taskHeading);
+			});
+			new Notice(`${draft.task ? '✅' : '🕒'} Ajouté à ${file.basename} : ${formatClock(draft.start)} ${draft.text}`, 2500);
 		} catch (err) {
 			new Notice(`Impossible d’ajouter l’entrée : ${err instanceof Error ? err.message : String(err)}`);
 		}
@@ -1312,12 +1345,13 @@ export class TaskCalendarView extends ItemView {
 		}
 		const start = draft?.start ?? this.defaultNewStart(draft?.date ?? this.today);
 		new DailyEntryModal(this.app, {
-			title: 'Nouvelle entrée dans la note quotidienne',
+			title: draft?.task ? 'Nouvelle tâche horodatée' : 'Nouvelle entrée dans la note quotidienne',
 			draft: {
 				date: draft?.date ?? this.today,
 				start,
 				end: draft?.end !== undefined ? draft.end : null,
-				text: draft?.text ?? ''
+				text: draft?.text ?? '',
+				task: draft?.task
 			},
 			onSubmit: (d) => this.createEntry(d)
 		}).open();
@@ -1995,6 +2029,10 @@ export class TaskCalendarView extends ItemView {
 			items.forEach(item => this.renderGridItem(col, item, startH, endH, hh));
 			if (day === this.today) col.createDiv({ cls: 'sbm-tcal-tg-now' });
 			col.addEventListener('pointerdown', (e) => this.onGridPointerDown(e, col, day));
+			// Appui long au doigt sur un créneau vide : il sélectionne, pas de menu natif
+			col.addEventListener('contextmenu', (e) => {
+				if (this.gridSelection && this.gridSelection.pointerType !== 'mouse') e.preventDefault();
+			});
 		});
 		this.updateNowLine(wrap);
 
@@ -2302,14 +2340,20 @@ export class TaskCalendarView extends ItemView {
 			dayItems: this.timedItemsFor(item.day),
 			shifts: [],
 			shiftedEls: new Map(),
-			active: false
+			active: false,
+			viewLeft: this.viewLeft(),
+			trail: [{ x: e.clientX, y: e.clientY, t: e.timeStamp }]
 		};
 		if (e.pointerType !== 'mouse') {
 			if (mode === 'move') {
 				// Corps du bloc : appui long pour saisir, sinon la grille défile normalement
 				this.gridDrag.holdTimer = window.setTimeout(() => {
-					if (this.gridDrag && !this.gridDrag.active) this.startGridDrag();
-				}, 280);
+					const d = this.gridDrag;
+					if (!d || d.active) return;
+					// Le panneau a bougé pendant l'appui : c'est un balayage de la barre latérale
+					if (viewShifted(d.viewLeft, this.viewLeft())) this.cancelGridDrag();
+					else this.startGridDrag();
+				}, TOUCH_HOLD_MS);
 			} else {
 				// Poignée : cible explicite et déjà visible, la prise est immédiate
 				this.startGridDrag();
@@ -2352,16 +2396,22 @@ export class TaskCalendarView extends ItemView {
 		if (!d || e.pointerId !== d.pointerId) return;
 		d.lastX = e.clientX;
 		d.lastY = e.clientY;
+		pushSample(d.trail, { x: e.clientX, y: e.clientY, t: e.timeStamp });
 		const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
 		if (!d.active) {
 			if (d.pointerType === 'mouse') {
 				if (dist > 4) this.startGridDrag();
-			} else if (dist > 10) {
+			} else if (dist > TOUCH_SLOP_PX) {
 				this.cancelGridDrag();
 			}
 			return;
 		}
 		e.preventDefault();
+		// Au doigt, le panneau qui glisse veut dire qu'Obsidian referme la barre latérale
+		if (d.pointerType !== 'mouse' && viewShifted(d.viewLeft, this.viewLeft())) {
+			this.cancelGridDrag();
+			return;
+		}
 		this.updateGridDrag();
 		this.autoScrollGrid();
 	};
@@ -2486,25 +2536,55 @@ export class TaskCalendarView extends ItemView {
 
 	private autoScrollGrid(): void {
 		const d = this.gridDrag;
-		if (!d || d.scrollRaf) return;
+		if (!d) return;
+		this.autoScrollGridFor(d, () => this.gridDrag === d && d.active, () => this.updateGridDrag());
+	}
+
+	/**
+	 * Fait défiler la grille tant que le pointeur reste près d'un bord (glisser d'un bloc ou
+	 * tracé d'un créneau).
+	 */
+	private autoScrollGridFor(
+		state: { lastY: number; scrollRaf?: number },
+		isActive: () => boolean,
+		onScroll: () => void
+	): void {
+		if (state.scrollRaf) return;
 		const step = () => {
-			const drag = this.gridDrag;
-			if (!drag?.active) return;
-			drag.scrollRaf = undefined;
+			state.scrollRaf = undefined;
+			if (!isActive()) return;
 			const scroller = this.rootEl.querySelector<HTMLElement>('.sbm-tcal-tg-scroll');
 			if (!scroller) return;
 			const rect = scroller.getBoundingClientRect();
 			const edge = 40;
 			let dy = 0;
-			if (drag.lastY < rect.top + edge) dy = -Math.ceil((rect.top + edge - drag.lastY) / 3);
-			else if (drag.lastY > rect.bottom - edge) dy = Math.ceil((drag.lastY - (rect.bottom - edge)) / 3);
+			if (state.lastY < rect.top + edge) dy = -Math.ceil((rect.top + edge - state.lastY) / 3);
+			else if (state.lastY > rect.bottom - edge) dy = Math.ceil((state.lastY - (rect.bottom - edge)) / 3);
 			if (dy !== 0) {
 				scroller.scrollTop += dy;
-				this.updateGridDrag();
-				drag.scrollRaf = window.requestAnimationFrame(step);
+				onScroll();
+				state.scrollRaf = window.requestAnimationFrame(step);
 			}
 		};
-		d.scrollRaf = window.requestAnimationFrame(step);
+		state.scrollRaf = window.requestAnimationFrame(step);
+	}
+
+	/** Position horizontale du panneau du calendrier (elle change quand la barre latérale glisse). */
+	private viewLeft(): number {
+		return this.rootEl?.getBoundingClientRect().left ?? 0;
+	}
+
+	/**
+	 * Au doigt, un relâcher qui ne doit rien déposer : le panneau a glissé (la barre latérale se
+	 * referme) ou le doigt partait en plein balayage horizontal.
+	 */
+	private isAccidentalTouchDrop(d: { pointerType: string; viewLeft: number; trail: PointerSample[] }, e: PointerEvent): boolean {
+		if (d.pointerType === 'mouse') return false;
+		if (viewShifted(d.viewLeft, this.viewLeft())) return true;
+		pushSample(d.trail, { x: e.clientX, y: e.clientY, t: e.timeStamp });
+		if (!isFlingRelease(d.trail, e.timeStamp)) return false;
+		new Notice('Geste de balayage : déplacement annulé', 2000);
+		return true;
 	}
 
 	private onGridPointerUp = (e: PointerEvent): void => {
@@ -2513,6 +2593,10 @@ export class TaskCalendarView extends ItemView {
 		const wasActive = d.active;
 		const { item, mode, targetDay, targetStart, targetEnd, dayItems } = d;
 		const shifts = [...d.shifts];
+		if (wasActive && this.isAccidentalTouchDrop(d, e)) {
+			this.cancelGridDrag();
+			return;
+		}
 		this.cleanupGridDrag();
 		if (!wasActive) return;
 		this.suppressClickUntil = Date.now() + 250;
@@ -2639,48 +2723,99 @@ export class TaskCalendarView extends ItemView {
 		this.clearGridSelection();
 		this.clearGridItemSelection();
 		const anchor = this.minuteAt(col, e.clientY, this.gridSnap(), 'floor');
-		this.gridSelection = {
+		const sel: GridSelection = {
 			day, col,
 			pointerId: e.pointerId,
 			pointerType: e.pointerType,
 			anchor,
 			current: anchor,
+			startX: e.clientX,
 			startY: e.clientY,
-			moved: false
+			lastY: e.clientY,
+			moved: false,
+			extended: false,
+			viewLeft: this.viewLeft()
 		};
+		this.gridSelection = sel;
+		if (e.pointerType !== 'mouse') {
+			// Au doigt : une touche simple crée au créneau touché ; un appui long commence une
+			// sélection que le glisser étire (la grille cesse alors de défiler).
+			sel.holdTimer = window.setTimeout(() => this.startTouchSelection(sel), TOUCH_HOLD_MS);
+			document.addEventListener('touchmove', this.onGridTouchMove, { passive: false });
+		}
 		document.addEventListener('pointermove', this.onSelectMove, { passive: false });
 		document.addEventListener('pointerup', this.onSelectUp);
 		document.addEventListener('pointercancel', this.onSelectCancel);
 		document.addEventListener('keydown', this.onGridKey, true);
 	}
 
+	/** Appui long sur un créneau vide : la sélection suit désormais le doigt. */
+	private startTouchSelection(sel: GridSelection): void {
+		sel.holdTimer = undefined;
+		if (this.gridSelection !== sel || sel.moved) return;
+		if (viewShifted(sel.viewLeft, this.viewLeft())) {
+			this.clearGridSelection();
+			return;
+		}
+		sel.moved = true;
+		this.drawSelection();
+		sel.box?.addClass('is-touch-selecting');
+		if (navigator.vibrate) {
+			try { navigator.vibrate(12); } catch { /* ignore */ }
+		}
+	}
+
 	private onSelectMove = (e: PointerEvent): void => {
 		const sel = this.gridSelection;
 		if (!sel || e.pointerId !== sel.pointerId || sel.box?.dataset.locked) return;
+		sel.lastY = e.clientY;
 		if (!sel.moved) {
-			if (Math.abs(e.clientY - sel.startY) < 6) return;
-			// Au doigt, glisser fait défiler la grille : seule une touche simple crée
 			if (sel.pointerType !== 'mouse') {
-				this.clearGridSelection();
+				// Avant la fin de l'appui long, bouger le doigt fait défiler la grille (ou balaie
+				// la barre latérale) : pas de création
+				if (Math.hypot(e.clientX - sel.startX, e.clientY - sel.startY) > TOUCH_SLOP_PX) this.clearGridSelection();
 				return;
 			}
+			if (Math.abs(e.clientY - sel.startY) < 6) return;
 			sel.moved = true;
 		}
 		e.preventDefault();
-		sel.current = this.minuteAt(sel.col, e.clientY);
-		this.drawSelection();
+		if (sel.pointerType !== 'mouse' && viewShifted(sel.viewLeft, this.viewLeft())) {
+			this.clearGridSelection();
+			return;
+		}
+		this.updateSelectionFromPointer(sel);
+		this.autoScrollGridFor(sel, () => this.gridSelection === sel && !sel.box?.dataset.locked,
+			() => this.updateSelectionFromPointer(sel));
 	};
+
+	private updateSelectionFromPointer(sel: GridSelection): void {
+		sel.current = this.minuteAt(sel.col, sel.lastY);
+		if (sel.current !== sel.anchor) sel.extended = true;
+		this.drawSelection();
+	}
 
 	private onSelectUp = (e: PointerEvent): void => {
 		const sel = this.gridSelection;
 		if (!sel || e.pointerId !== sel.pointerId || sel.box?.dataset.locked) return;
+		if (sel.holdTimer) {
+			window.clearTimeout(sel.holdTimer);
+			sel.holdTimer = undefined;
+		}
+		if (sel.pointerType !== 'mouse' && viewShifted(sel.viewLeft, this.viewLeft())) {
+			this.clearGridSelection();
+			return;
+		}
 		this.detachSelectListeners();
+		if (sel.scrollRaf) window.cancelAnimationFrame(sel.scrollRaf);
+		sel.scrollRaf = undefined;
+		// Souris : tout glisser trace un créneau. Doigt : seulement s'il a été étiré après l'appui long.
+		const ranged = sel.pointerType === 'mouse' ? sel.moved : sel.extended;
 		let start: number;
 		let end: number;
-		if (sel.moved) {
-			start = Math.min(sel.anchor, sel.current);
-			end = Math.max(sel.anchor, sel.current);
-			if (end - start < this.gridSnap()) end = start + this.gridSnap();
+		if (ranged) {
+			({ start, end } = selectionRange(sel.anchor, sel.current, this.gridSnap()));
+			end = Math.min(1440, end);
 		} else {
 			start = sel.anchor;
 			end = Math.min(1440, start + this.entryDuration());
@@ -2689,7 +2824,8 @@ export class TaskCalendarView extends ItemView {
 		sel.current = end;
 		this.drawSelection();
 		if (sel.box) sel.box.dataset.locked = '1';
-		this.openCreateMenu(e, sel.day, start, end, sel.moved);
+		if (sel.pointerType !== 'mouse') this.suppressClickUntil = Date.now() + 250;
+		this.openCreateMenu(e, sel.day, start, end, ranged);
 	};
 
 	private onSelectCancel = (): void => this.clearGridSelection();
@@ -2698,7 +2834,10 @@ export class TaskCalendarView extends ItemView {
 		document.removeEventListener('pointermove', this.onSelectMove);
 		document.removeEventListener('pointerup', this.onSelectUp);
 		document.removeEventListener('pointercancel', this.onSelectCancel);
-		if (!this.gridDrag) document.removeEventListener('keydown', this.onGridKey, true);
+		if (!this.gridDrag) {
+			document.removeEventListener('keydown', this.onGridKey, true);
+			document.removeEventListener('touchmove', this.onGridTouchMove);
+		}
 	}
 
 	private drawSelection(): void {
@@ -2706,8 +2845,8 @@ export class TaskCalendarView extends ItemView {
 		if (!sel) return;
 		const { startH } = this.gridHours();
 		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
-		const start = Math.min(sel.anchor, sel.current);
-		const end = Math.max(sel.anchor, sel.current, start + this.gridSnap());
+		const { start, end: rawEnd } = selectionRange(sel.anchor, sel.current, this.gridSnap());
+		const end = Math.min(1440, rawEnd);
 		if (!sel.box) sel.box = sel.col.createDiv({ cls: 'sbm-tcal-tg-selection' });
 		sel.box.style.top = `${(start - startH * 60) / 60 * hh}px`;
 		sel.box.style.height = `${(end - start) / 60 * hh}px`;
@@ -2715,8 +2854,11 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	private clearGridSelection(): void {
-		if (!this.gridSelection) return;
-		this.gridSelection.box?.remove();
+		const sel = this.gridSelection;
+		if (!sel) return;
+		if (sel.holdTimer) window.clearTimeout(sel.holdTimer);
+		if (sel.scrollRaf) window.cancelAnimationFrame(sel.scrollRaf);
+		sel.box?.remove();
 		this.gridSelection = null;
 		this.detachSelectListeners();
 		if (this.pendingRender) this.scheduleRender();
@@ -2730,6 +2872,12 @@ export class TaskCalendarView extends ItemView {
 		if (entriesOn) {
 			menu.addItem(i => i.setTitle(`Entrée dans la note quotidienne (${label})`).setIcon('clock').onClick(() =>
 				this.openEntryModal(undefined, { date: day, start, end: explicitEnd ? end : null })));
+			// Tâche à l'heure du créneau : une case à cocher dans la note quotidienne, lue comme
+			// entrée horodatée (sinon elle ne s'afficherait pas à son heure)
+			if (this.plugin.settings.dailyEntriesIncludeTasks !== false) {
+				menu.addItem(i => i.setTitle(`Tâche horodatée (${label})`).setIcon('alarm-clock-check').onClick(() =>
+					this.openEntryModal(undefined, { date: day, start, end: explicitEnd ? end : null, task: true })));
+			}
 		}
 		if (this.googleReady()) {
 			menu.addItem(i => i.setTitle(`Événement Google (${label})`).setIcon('calendar-plus').onClick(() =>
@@ -3737,11 +3885,11 @@ export class TaskCalendarView extends ItemView {
 			const vaultContext = new VaultContextService(this.app, settings);
 			const daily = await vaultContext.getOrCreateDailyNote(this.today, settings.dailyNoteTemplatePath);
 			if (!daily.file) throw new Error('note quotidienne introuvable');
-			await this.app.vault.process(daily.file, (content) => {
-				const eol = content.includes('\r\n') ? '\r\n' : '\n';
-				const trimmed = content.replace(/\s+$/, '');
-				return `${trimmed}${trimmed ? eol : ''}${line}${eol}`;
-			});
+			// Même emplacement que les autres tâches créées par le plugin : la section des nouvelles
+			// tâches (réglage), sinon une section de tâches reconnue. Une tâche proche déjà présente
+			// n'est jamais remplacée : c'est une saisie explicite.
+			await this.app.vault.process(daily.file, (content) =>
+				ActionExecutor.insertTaskIntoNoteContent(content, line, settings.taskInsertHeading || '', { replaceSimilar: false }));
 			new Notice(`✅ Tâche ajoutée à ${daily.file.basename}`, 2500);
 		} catch (err) {
 			new Notice(`Impossible de créer la tâche : ${err instanceof Error ? err.message : String(err)}`);
@@ -3754,7 +3902,9 @@ export class TaskCalendarView extends ItemView {
 
 	/** Le menu contextuel natif d'un appui long au doigt est ignoré : l'appui long déplace. */
 	private isTouchHold(): boolean {
-		return Boolean((this.drag && this.drag.pointerType !== 'mouse') || (this.gridDrag && this.gridDrag.pointerType !== 'mouse'));
+		return Boolean((this.drag && this.drag.pointerType !== 'mouse')
+			|| (this.gridDrag && this.gridDrag.pointerType !== 'mouse')
+			|| (this.gridSelection && this.gridSelection.pointerType !== 'mouse'));
 	}
 
 	private onChipPointerDown(e: PointerEvent, item: DragItem, chip: HTMLElement): void {
@@ -3772,14 +3922,20 @@ export class TaskCalendarView extends ItemView {
 			offsetX: e.clientX - rect.left,
 			offsetY: e.clientY - rect.top,
 			pointerType: e.pointerType,
-			active: false
+			active: false,
+			viewLeft: this.viewLeft(),
+			trail: [{ x: e.clientX, y: e.clientY, t: e.timeStamp }]
 		};
 
 		if (e.pointerType !== 'mouse') {
-			// Tactile : appui long pour attraper la tâche, sinon on laisse défiler
+			// Tactile : appui long, doigt immobile, pour attraper la tâche ; sinon on laisse
+			// défiler la vue ou glisser la barre latérale
 			this.drag.holdTimer = window.setTimeout(() => {
-				if (this.drag && !this.drag.active) this.startDrag();
-			}, 260);
+				const d = this.drag;
+				if (!d || d.active) return;
+				if (viewShifted(d.viewLeft, this.viewLeft())) this.cancelDrag();
+				else this.startDrag();
+			}, TOUCH_HOLD_MS);
 		}
 
 		document.addEventListener('pointermove', this.onPointerMove, { passive: false });
@@ -3798,19 +3954,25 @@ export class TaskCalendarView extends ItemView {
 		if (!d || e.pointerId !== d.pointerId) return;
 		d.lastX = e.clientX;
 		d.lastY = e.clientY;
+		pushSample(d.trail, { x: e.clientX, y: e.clientY, t: e.timeStamp });
 		const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
 
 		if (!d.active) {
 			if (d.pointerType === 'mouse') {
 				if (dist > 5) this.startDrag();
-			} else if (dist > 10) {
-				// L'utilisateur fait défiler : on abandonne
+			} else if (dist > TOUCH_SLOP_PX) {
+				// L'utilisateur fait défiler ou balaie la barre latérale : on abandonne
 				this.cancelDrag();
 			}
 			return;
 		}
 
 		e.preventDefault();
+		// Le panneau glisse sous le doigt : Obsidian referme la barre latérale, rien à déposer
+		if (d.pointerType !== 'mouse' && viewShifted(d.viewLeft, this.viewLeft())) {
+			this.cancelDrag();
+			return;
+		}
 		this.positionGhost(e.clientX, e.clientY);
 		this.updateDropTarget(e.clientX, e.clientY);
 		this.autoScroll();
@@ -3821,6 +3983,10 @@ export class TaskCalendarView extends ItemView {
 		if (!d || e.pointerId !== d.pointerId) return;
 		if (!d.active) {
 			this.cleanupDrag();
+			return;
+		}
+		if (this.isAccidentalTouchDrop(d, e)) {
+			this.cancelDrag();
 			return;
 		}
 		const target = d.target;

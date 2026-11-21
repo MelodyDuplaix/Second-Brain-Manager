@@ -65,3 +65,22 @@ describe('insertion des tâches créées par l’IA', () => {
 		expect(out.slice(0, 3)).toEqual(['---', 'title: x', '---']);
 	});
 });
+
+describe('insertion des tâches créées depuis le calendrier', () => {
+	it('respects the task section instead of appending at the end of the note', () => {
+		const line = '- [ ] Appeler le garage 📅 2026-11-12';
+		const out = ActionExecutor.insertTaskIntoNoteContent(daily, line, 'Recap du jour', { replaceSimilar: false }).split('\n');
+		const heading = out.findIndex(l => l.startsWith('# Recap du jour'));
+		expect(out[heading + 2]).toBe(line);
+		expect(out[out.length - 1]).toBe('# Notes du jour');
+	});
+
+	it('never replaces a similar existing task with an explicit entry', () => {
+		const existing = '- [ ] Appeler le garage pour la révision';
+		const note = daily.replace('- réveil ', `- réveil \n${existing}`);
+		const line = '- [ ] Appeler le garage pour la révision 📅 2026-11-12';
+		const out = ActionExecutor.insertTaskIntoNoteContent(note, line, 'Recap du jour', { replaceSimilar: false }).split('\n');
+		expect(out).toContain(existing);
+		expect(out).toContain(line);
+	});
+});

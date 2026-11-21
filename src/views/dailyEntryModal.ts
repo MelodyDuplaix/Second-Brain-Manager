@@ -7,6 +7,8 @@ export interface DailyEntryDraft {
 	start: number;
 	end: number | null;
 	text: string;
+	/** Création seulement : la ligne reçoit une case à cocher (tâche horodatée) */
+	task?: boolean;
 }
 
 export interface DailyEntryModalOptions {
@@ -105,7 +107,7 @@ export class DailyEntryModal extends Modal {
 			const en = hasEnd.checked ? parseClock(end.value) : null;
 			saved = true;
 			this.close();
-			void opts.onSubmit({ date: date.value, start: s, end: en, text: value });
+			void opts.onSubmit({ date: date.value, start: s, end: en, text: value, task: opts.draft.task });
 		};
 
 		form.addEventListener('submit', (e) => {

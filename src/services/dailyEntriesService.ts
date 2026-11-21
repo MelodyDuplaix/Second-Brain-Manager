@@ -287,6 +287,17 @@ function compileLineFormat(format: string, time: TimeFormat): CompiledLineFormat
 
 const LIST_PREFIX = /^(\s*)(?:([-*+]|\d+[.)])\s+(?:\[(.)\]\s+)?)?/;
 
+/**
+ * Transforme une ligne d'entrée en tâche horodatée : case à cocher après la puce, ou puce et
+ * case ajoutées si le modèle d'écriture n'en met pas. Une ligne déjà cochable reste telle quelle.
+ */
+export function asTaskLine(line: string): string {
+	const p = LIST_PREFIX.exec(line) as RegExpExecArray;
+	if (p[3] !== undefined) return line;
+	if (p[2]) return `${p[0]}[ ] ${line.slice(p[0].length)}`;
+	return `${p[1]}- [ ] ${line.slice(p[0].length)}`;
+}
+
 export function normalizeHeading(text: string): string {
 	return text
 		.replace(/^#+\s*/, '')
@@ -479,11 +490,19 @@ export class DailyEntryParser {
 		return entry.prefix + this.formatBody(start, end, text);
 	}
 
+	/** La note entière est lue (aucune section d'entrées configurée). */
+	public readsWholeNote(): boolean {
+		return this.headings.length === 0;
+	}
+
 	/**
 	 * Insère une ligne d'entrée dans le contenu d'une note quotidienne, dans la première section
 	 * reconnue (créée à la fin de la note si elle manque).
+	 *
+	 * `preferredHeading` : quand plusieurs sections sont lues, celle dont le titre commence ainsi
+	 * est choisie (section des nouvelles tâches pour une tâche horodatée).
 	 */
-	public insert(content: string, line: string, start: number): string {
+	public insert(content: string, line: string, start: number, preferredHeading = ''): string {
 		const eol = content.includes('\r\n') ? '\r\n' : '\n';
 		const lines = content.split(/\r?\n/);
 		const ranges = this.sectionRanges(lines);
@@ -496,8 +515,10 @@ export class DailyEntryParser {
 			return `${trimmed}${trimmed ? `${eol}${eol}` : ''}${heading}${eol}${line}${eol}`;
 		}
 
-		const [from, to] = ranges[0];
-		const wholeNote = this.headings.length === 0;
+		const wholeNote = this.readsWholeNote();
+		const preferred = foldHeading(preferredHeading);
+		const [from, to] = (preferred && !wholeNote
+			&& ranges.find(([f]) => f > 0 && foldHeading(lines[f - 1]).startsWith(preferred))) || ranges[0];
 		let lastContent = -1;
 		let firstContent = -1;
 		for (let i = from; i < to; i++) {
@@ -534,6 +555,11 @@ export class DailyEntryParser {
 		lines.splice(index, 0, line);
 		return lines.join(eol);
 	}
+}
+
+/** Titre comparable sans casse ni accents (choix d'une section par le début de son titre). */
+function foldHeading(text: string): string {
+	return normalizeHeading(text).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
 /** Index de la première ligne après le frontmatter YAML. */

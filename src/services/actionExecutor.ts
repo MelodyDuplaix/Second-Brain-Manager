@@ -280,8 +280,16 @@ export class ActionExecutor {
 	/**
 	 * Insère une ligne de tâche dans le corps d'une note (jamais dans ses propriétés).
 	 * `preferredHeading` : titre de section choisi dans les réglages, utilisé en priorité s'il existe dans la note.
+	 * `replaceSimilar` : une tâche identique ou proche déjà présente est remplacée au lieu d'être
+	 * doublée (propositions de l'IA). À désactiver pour une saisie explicite de l'utilisateur.
 	 */
-	public static insertTaskIntoNoteContent(content: string, taskLine: string, preferredHeading = ''): string {
+	public static insertTaskIntoNoteContent(
+		content: string,
+		taskLine: string,
+		preferredHeading = '',
+		options: { replaceSimilar?: boolean } = {}
+	): string {
+		const replaceSimilar = options.replaceSimilar !== false;
 		const isCRLF = content.includes('\r\n');
 		const lines = content.replace(/\r\n/g, '\n').split('\n');
 		// Premier index du corps de la note : les propriétés ne reçoivent jamais de tâche
@@ -333,7 +341,7 @@ export class ActionExecutor {
 		// Garde-fou strict anti-doublon & remplacement intelligent en place :
 		// Si une tâche identique ou similaire existe déjà dans la note (ex: draft sans métadonnées),
 		// on la remplace directement par la version complète pour éviter toute duplication
-		for (let i = bodyStart; i < lines.length; i++) {
+		for (let i = bodyStart; replaceSimilar && i < lines.length; i++) {
 			const trimmed = lines[i].trim();
 			if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [/]') || trimmed.startsWith('- [-]')) {
 				if (isSameOrSimilarTask(trimmed, taskLine)) {
