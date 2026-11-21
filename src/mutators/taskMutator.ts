@@ -183,6 +183,23 @@ export class TaskMutator {
 		return this.insertMetaBeforeBlockId(lineWithIndent, meta);
 	}
 
+	/** Date de création (➕), comme l'écrit le plugin Tasks à la création d'une tâche. */
+	public static setCreatedDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
+		const indent = (/^(\s*)/.exec(rawLine) as RegExpExecArray)[1];
+		const cleaned = rawLine
+			.replace(DynamicRegexBuilder.buildDateSignifierRegex('➕'), '')
+			.replace(DynamicRegexBuilder.buildDataviewFieldRegex(['created']), '')
+			.replace(DynamicRegexBuilder.buildTagDateRegex(['created']), '')
+			.replace(/\s+/g, ' ')
+			.trim();
+		if (!dateStr) return `${indent}${cleaned}`;
+		const formattedDate = this.formatDate(dateStr, config);
+		let meta = `➕ ${formattedDate}`;
+		if (config.taskFormat === 'dataview') meta = `[created:: ${formattedDate}]`;
+		else if (config.taskFormat === 'tag') meta = `#created/${formattedDate}`;
+		return this.insertMetaBeforeBlockId(`${indent}${cleaned}`, meta);
+	}
+
 	public static setScheduledDate(rawLine: string, dateStr: string | null, config: TaskSyntaxConfig = DEFAULT_SYNTAX_CONFIG): string {
 		const scheduledDateRegex = DynamicRegexBuilder.buildDateSignifierRegex(config.scheduledDateSignifier);
 		const stdScheduledRegex = DynamicRegexBuilder.buildDateSignifierRegex('⏳');

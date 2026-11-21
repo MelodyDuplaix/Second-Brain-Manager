@@ -9798,6 +9798,52 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	margin-right: auto;
 }
 
+/* ----- Fenêtre de création de tâche (calendrier) ----- */
+
+.sbm-new-task-modal {
+	width: min(560px, 94vw);
+}
+
+.sbm-new-task-modal .sbm-new-task-text {
+	width: 100%;
+	font-size: var(--font-ui-medium);
+	padding: 8px 10px;
+}
+
+.sbm-entry-field select {
+	width: 100%;
+}
+
+.sbm-new-task-quick {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: -4px;
+}
+
+.sbm-new-task-chip {
+	padding: 2px 10px;
+	height: auto;
+	font-size: var(--font-ui-smaller);
+	border-radius: 999px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.sbm-new-task-chip:hover {
+	color: var(--text-normal);
+	border-color: var(--interactive-accent);
+}
+
+.sbm-new-task-chip.is-active {
+	background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--text-normal);
+}
+
 /* Aperçu dans les réglages des entrées */
 .sbm-entry-preview {
 	margin-top: 6px;

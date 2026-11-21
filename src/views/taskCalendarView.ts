@@ -4,6 +4,7 @@ import { TaskMutator } from '../mutators/taskMutator';
 import { MatrixAdapterFactory, MatrixQuadrant, MatrixFeature } from '../adapters/matrixAdapter';
 import { InlineMetaPopover } from './inlineMetaPopover';
 import { VaultContextService } from '../services/vaultContextService';
+import { NewTaskModal } from './newTaskModal';
 import { ActionExecutor } from '../services/actionExecutor';
 import {
 	CalendarDate,
@@ -17,12 +18,12 @@ import {
 	EnergyTimedItem,
 	getTaskDate,
 	isTaskOpen,
-	taskKey
+	taskKey,
+	locateTaskLine
 } from '../services/taskCalendarService';
 import { GoogleCalendarService } from '../services/googleCalendarService';
 import { GoogleCalendarEvent, CalendarRole } from '../models/googleCalendar';
 import { CalendarFilterPopover } from './calendarFilterPopover';
-import { LinkTagSuggest } from '../suggesters/linkTagSuggest';
 import {
 	TOUCH_HOLD_MS, TOUCH_SLOP_PX, PointerSample, pushSample, isFlingRelease, viewShifted, selectionRange
 } from '../services/touchGesture';
@@ -68,7 +69,8 @@ import {
 	entryTaskKey,
 	asTaskLine,
 	formatClock,
-	locateEntryLine
+	locateEntryLine,
+	untimedEntryLine
 } from '../services/dailyEntriesService';
 import { CalendarEventModal } from './calendarView';
 import { DailyEntryModal, DailyEntryDraft } from './dailyEntryModal';
@@ -215,6 +217,8 @@ interface GridDrag {
 	viewLeft: number;
 	/** Derniers points du doigt, pour reconnaître un balayage au relâcher */
 	trail: PointerSample[];
+	/** Case du bandeau « Journée » visée : la tâche horodatée y perdra son heure */
+	allDayTarget?: HTMLElement | null;
 }
 
 interface GridSelection {
@@ -1015,7 +1019,7 @@ export class TaskCalendarView extends ItemView {
 			menu.addItem(i => i.setTitle(label).setIcon(icon).onClick(() => this.moveEvent(ev, CalendarDate.diffDays(day, target))));
 		});
 		menu.addSeparator();
-		menu.addItem(i => i.setTitle('Créer une tâche à partir de l’événement').setIcon('check-square').onClick(() => this.createTask(ev.summary || 'Événement', day)));
+		menu.addItem(i => i.setTitle('Créer une tâche à partir de l’événement').setIcon('check-square').onClick(() => this.promptNewTask(day, ev.summary || 'Événement')));
 		menu.addSeparator();
 		menu.addItem(i => {
 			i.setTitle('Supprimer l’événement').setIcon('trash-2').onClick(() => {
@@ -1252,7 +1256,8 @@ export class TaskCalendarView extends ItemView {
 			const parser = this.entries.getParser();
 			const file = await this.getOrCreateDailyFile(draft.date);
 			const formatted = parser.formatNewLine(draft.start, draft.end, draft.text);
-			const line = draft.task ? asTaskLine(formatted) : formatted;
+			// Tâche horodatée : date de création (➕) comme toute tâche créée par le plugin
+			const line = draft.task ? TaskMutator.setCreatedDate(asTaskLine(formatted), this.today, this.plugin.settings) : formatted;
 			const taskHeading = this.plugin.settings.taskInsertHeading || '';
 			await this.app.vault.process(file, content => {
 				if (!draft.task) return parser.insert(content, line, draft.start);
@@ -1307,6 +1312,108 @@ export class TaskCalendarView extends ItemView {
 		} catch (err) {
 			new Notice(`Déplacement impossible : ${err instanceof Error ? err.message : String(err)}`);
 			return false;
+		}
+	}
+
+	/** Les tâches peuvent recevoir une heure : entrées actives et cases à cocher lues comme entrées. */
+	private timedTasksAvailable(): boolean {
+		const s = this.plugin.settings;
+		return s.dailyEntriesEnabled !== false && s.dailyEntriesIncludeTasks !== false;
+	}
+
+	/**
+	 * Tâche de journée → tâche horodatée. Une heure ne se lit que dans la note quotidienne : la
+	 * ligne y est déplacée (section des nouvelles tâches si elle fait partie des sections lues),
+	 * avec les heures écrites selon le modèle des entrées. Une tâche rangée ailleurs (note de
+	 * projet) n'est déplacée qu'après confirmation.
+	 */
+	private async scheduleTaskAt(task: ObsidianTask, day: string, start: number): Promise<void> {
+		if (!this.timedTasksAvailable()) {
+			new Notice('Pour placer une tâche à une heure, activez les entrées des notes quotidiennes et « Inclure les tâches horodatées ».', 5000);
+			await this.moveTask(task, day);
+			return;
+		}
+		if (task.subtasks.length > 0) {
+			new Notice('Une tâche avec des sous-tâches ne peut pas recevoir d’heure : seul son jour change.', 4000);
+			await this.moveTask(task, day);
+			return;
+		}
+		const source = this.app.vault.getAbstractFileByPath(normalizePath(task.filePath));
+		if (!(source instanceof TFile)) return;
+		const end = Math.min(1440, start + this.entryDuration());
+		const title = this.displayTitle(task.title);
+		const run = () => void this.writeTimedTask(task, source, day, start, end);
+		if (this.entries.computeDate(source.path, source.basename) !== null) {
+			run();
+			return;
+		}
+		new ConfirmModal(
+			this.app,
+			`Placer « ${title} » à ${formatClock(start)} ?`,
+			`Cette tâche est rangée dans « ${source.basename} ». Une tâche à heure fixe vit dans la note quotidienne : elle y sera déplacée.`,
+			run,
+			'Déplacer'
+		).open();
+	}
+
+	private async writeTimedTask(task: ObsidianTask, source: TFile, day: string, start: number, end: number): Promise<void> {
+		const settings = this.plugin.settings;
+		const parser = this.entries.getParser();
+		const heading = settings.taskInsertHeading || '';
+		// Le jour vient de la note quotidienne ; une date déjà écrite sur la ligne suit le déplacement
+		let raw = task.rawText;
+		if (task.dueDate) raw = TaskMutator.setDueDate(raw, day, settings);
+		if (task.scheduledDate) raw = TaskMutator.setScheduledDate(raw, day, settings);
+		const line = parser.toTimedLine(raw, start, end);
+		const insert = (content: string) => parser.readsWholeNote()
+			? ActionExecutor.insertTaskIntoNoteContent(content, line, heading, { replaceSimilar: false })
+			: parser.insert(content, line, start, heading);
+		try {
+			const target = await this.getOrCreateDailyFile(day);
+			let found = true;
+			if (target.path === source.path) {
+				// Même note : retrait et insertion d'un seul tenant
+				await this.app.vault.process(target, content => {
+					const eol = content.includes('\r\n') ? '\r\n' : '\n';
+					const lines = content.split(/\r?\n/);
+					const idx = locateTaskLine(lines, task);
+					if (idx === -1) { found = false; return content; }
+					lines.splice(idx, 1);
+					return insert(lines.join(eol));
+				});
+			} else {
+				// D'abord l'écriture, puis le retrait : en cas d'échec, mieux vaut un doublon qu'une perte
+				await this.app.vault.process(target, insert);
+				found = await this.writer.deleteTask(task);
+				if (!found) new Notice(`La tâche d’origine est introuvable dans « ${source.basename} » : vérifiez qu’elle n’y est pas en double.`, 6000);
+			}
+			if (!found && target.path === source.path) {
+				new Notice(`Impossible de retrouver la tâche : ${task.title}`);
+				return;
+			}
+			new Notice(`🕒 ${this.displayTitle(task.title)} → ${CalendarDate.relativeLabel(day, this.today)} ${formatClock(start)}`, 2500);
+		} catch (err) {
+			new Notice(`Impossible de placer la tâche : ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/**
+	 * Tâche horodatée → tâche de journée : les heures sont retirées, la ligne reste dans sa note
+	 * et reçoit la date du jour visé (échéance ou date prévue, selon l'affichage).
+	 */
+	private async unscheduleEntry(entry: DailyEntry, day: string): Promise<void> {
+		const settings = this.plugin.settings;
+		let line = untimedEntryLine(entry);
+		const task = this.taskForEntry(entry);
+		// Une date déjà présente est mise à jour ; sinon on écrit celle qui sert au placement
+		if (task?.scheduledDate || (!task?.dueDate && this.state.dateField === 'scheduled')) {
+			line = TaskMutator.setScheduledDate(line, day, settings);
+		}
+		if (task?.dueDate || (!task?.scheduledDate && this.state.dateField === 'due')) {
+			line = TaskMutator.setDueDate(line, day, settings);
+		}
+		if (await this.rewriteEntryLine(entry, line)) {
+			new Notice(`📅 ${this.entryTitle(entry)} → ${CalendarDate.relativeLabel(day, this.today)}, sans heure`, 2500);
 		}
 	}
 
@@ -1398,7 +1505,11 @@ export class TaskCalendarView extends ItemView {
 		else new Notice('Entrée introuvable : la note a changé entre-temps.');
 	}
 
-	private openEntryMenu(e: MouseEvent, entry: DailyEntry): void {
+	/**
+	 * Menu d'une entrée. Une tâche horodatée y reçoit aussi les actions des tâches (statut,
+	 * priorité, énergie…) et de quoi retirer son heure.
+	 */
+	private openEntryMenu(e: MouseEvent, entry: DailyEntry, anchor: HTMLElement = this.rootEl): void {
 		const menu = new Menu();
 		menu.addItem(i => i.setTitle('Modifier l’entrée…').setIcon('pencil').onClick(() => this.openEntryModal(entry)));
 		menu.addItem(i => i.setTitle('Dupliquer').setIcon('copy').onClick(() => void this.duplicateEntry(entry)));
@@ -1407,9 +1518,11 @@ export class TaskCalendarView extends ItemView {
 		const task = this.taskForEntry(entry);
 		if (task) {
 			menu.addSeparator();
-			menu.addItem(i => i.setTitle(task.completed ? 'Rouvrir' : 'Terminer').setIcon(task.completed ? 'rotate-ccw' : 'check-circle-2').onClick(() => {
-				void this.writer.setCompleted(task, !task.completed);
-			}));
+			this.addTaskStatusItems(menu, e, task, anchor);
+			menu.addSeparator();
+			this.addTaskMetaItems(menu, task, anchor);
+			menu.addItem(i => i.setTitle('Retirer l’heure (tâche de la journée)').setIcon('calendar').onClick(() =>
+				void this.unscheduleEntry(entry, entry.date)));
 		}
 		menu.addSeparator();
 		const choices: Array<[string, string, string]> = [
@@ -1720,7 +1833,7 @@ export class TaskCalendarView extends ItemView {
 		} else {
 			menu.addItem(i => i.setTitle('Ouvrir dans la barre latérale').setIcon('panel-right').onClick(() => this.plugin.activateTaskCalendarView('sidebar')));
 		}
-		menu.addItem(i => i.setTitle('Nouvelle tâche aujourd\'hui').setIcon('plus').onClick(() => this.promptNewTask(this.today, this.rootEl.querySelector('.sbm-tcal-toolbar') as HTMLElement)));
+		menu.addItem(i => i.setTitle('Nouvelle tâche aujourd\'hui').setIcon('plus').onClick(() => this.promptNewTask(this.today)));
 		if (this.plugin.settings.dailyEntriesEnabled !== false) {
 			menu.addItem(i => i.setTitle('Nouvelle entrée dans la note quotidienne').setIcon('clock').onClick(() => this.openEntryModal(undefined, { date: this.today })));
 		}
@@ -1905,7 +2018,7 @@ export class TaskCalendarView extends ItemView {
 
 				cell.addEventListener('dblclick', (e) => {
 					if ((e.target as HTMLElement).closest('.sbm-tcal-chip')) return;
-					this.promptNewTask(day, cell);
+					this.promptNewTask(day);
 				});
 			});
 		}
@@ -2005,7 +2118,7 @@ export class TaskCalendarView extends ItemView {
 			this.prioritized(rows, r => r.subject).forEach(r => r.render());
 			cell.addEventListener('dblclick', (e) => {
 				if ((e.target as HTMLElement).closest('.sbm-tcal-chip')) return;
-				this.promptNewTask(day, cell);
+				this.promptNewTask(day);
 			});
 		});
 
@@ -2192,7 +2305,7 @@ export class TaskCalendarView extends ItemView {
 				// quotidienne. À la souris, le clic ouvre directement la fiche.
 				if (this.touchUi) {
 					this.selectGridItem(item.key, el);
-					this.openEntryMenu(e, entry);
+					this.openEntryMenu(e, entry, el);
 					return;
 				}
 				this.openEntryModal(entry);
@@ -2202,7 +2315,7 @@ export class TaskCalendarView extends ItemView {
 				e.stopPropagation();
 				if (this.isTouchHold()) return;
 				this.hidePeek();
-				this.openEntryMenu(e, entry);
+				this.openEntryMenu(e, entry, el);
 			});
 		}
 
@@ -2425,6 +2538,12 @@ export class TaskCalendarView extends ItemView {
 		let col = sourceCol;
 		if (d.mode === 'move') {
 			const under = document.elementFromPoint(d.lastX, d.lastY) as HTMLElement | null;
+			// Tâche horodatée lâchée dans le bandeau « Journée » : elle y perd son heure
+			const cell = d.item.entry?.statusChar !== undefined
+				? under?.closest<HTMLElement>('.sbm-tcal-tg-allday-cell') ?? null
+				: null;
+			this.setGridAllDayTarget(d, cell && this.rootEl.contains(cell) ? cell : null);
+			if (d.allDayTarget) return;
 			const found = under?.closest<HTMLElement>('.sbm-tcal-tg-col');
 			if (found && this.rootEl.contains(found)) col = found;
 		}
@@ -2537,7 +2656,17 @@ export class TaskCalendarView extends ItemView {
 	private autoScrollGrid(): void {
 		const d = this.gridDrag;
 		if (!d) return;
-		this.autoScrollGridFor(d, () => this.gridDrag === d && d.active, () => this.updateGridDrag());
+		// Au-dessus de la grille, dans le bandeau « Journée », la grille ne défile pas
+		this.autoScrollGridFor(d, () => this.gridDrag === d && d.active && !d.allDayTarget, () => this.updateGridDrag());
+	}
+
+	/** Cible « Journée » d'un bloc glissé : surlignée, l'aperçu horaire est masqué pendant ce temps. */
+	private setGridAllDayTarget(d: GridDrag, cell: HTMLElement | null): void {
+		if (d.allDayTarget === cell) return;
+		d.allDayTarget?.removeClass('is-drop-target');
+		d.allDayTarget = cell;
+		cell?.addClass('is-drop-target');
+		if (d.preview) d.preview.style.display = cell ? 'none' : '';
 	}
 
 	/**
@@ -2593,6 +2722,7 @@ export class TaskCalendarView extends ItemView {
 		const wasActive = d.active;
 		const { item, mode, targetDay, targetStart, targetEnd, dayItems } = d;
 		const shifts = [...d.shifts];
+		const allDayDate = d.allDayTarget?.dataset.dropDate;
 		if (wasActive && this.isAccidentalTouchDrop(d, e)) {
 			this.cancelGridDrag();
 			return;
@@ -2600,6 +2730,10 @@ export class TaskCalendarView extends ItemView {
 		this.cleanupGridDrag();
 		if (!wasActive) return;
 		this.suppressClickUntil = Date.now() + 250;
+		if (allDayDate && item.entry) {
+			void this.unscheduleEntry(item.entry, allDayDate);
+			return;
+		}
 		// Au doigt, l'appui long sert à déplacer, pas à modifier : la fiche s'ouvre par le menu
 		// du bloc, qu'un appui simple affiche.
 		if (targetDay === undefined || targetStart === undefined || targetEnd === undefined) {
@@ -2669,6 +2803,7 @@ export class TaskCalendarView extends ItemView {
 		if (d.scrollRaf) window.cancelAnimationFrame(d.scrollRaf);
 		// Les voisins reprennent leur place : le rendu qui suit les repositionnera selon les données
 		this.resetPushPreview(d);
+		d.allDayTarget?.removeClass('is-drop-target');
 		d.preview?.remove();
 		d.el.removeClass('is-grid-source');
 		this.rootEl?.removeClass('is-grid-dragging');
@@ -2883,10 +3018,7 @@ export class TaskCalendarView extends ItemView {
 			menu.addItem(i => i.setTitle(`Événement Google (${label})`).setIcon('calendar-plus').onClick(() =>
 				this.openEventModal(undefined, day, formatClock(start), formatClock(Math.min(end, 1439)))));
 		}
-		menu.addItem(i => i.setTitle('Tâche ce jour-là').setIcon('check-square').onClick(() => {
-			const anchor = this.rootEl.querySelector<HTMLElement>(`.sbm-tcal-tg-dayhead[data-drop-date="${day}"]`) || this.rootEl;
-			this.promptNewTask(day, anchor);
-		}));
+		menu.addItem(i => i.setTitle('Tâche ce jour-là').setIcon('check-square').onClick(() => this.promptNewTask(day)));
 		menu.onHide(() => window.setTimeout(() => this.clearGridSelection(), 0));
 		menu.showAtPosition({ x: e.clientX, y: e.clientY });
 	}
@@ -3318,11 +3450,11 @@ export class TaskCalendarView extends ItemView {
 		btn.addEventListener('click', (e) => {
 			e.stopPropagation();
 			if (!this.googleReady() && !entriesOn) {
-				this.promptNewTask(day, btn);
+				this.promptNewTask(day);
 				return;
 			}
 			const menu = new Menu();
-			menu.addItem(i => i.setTitle('Nouvelle tâche').setIcon('check-square').onClick(() => this.promptNewTask(day, btn)));
+			menu.addItem(i => i.setTitle('Nouvelle tâche').setIcon('check-square').onClick(() => this.promptNewTask(day)));
 			if (entriesOn) {
 				menu.addItem(i => i.setTitle('Nouvelle entrée dans la note quotidienne').setIcon('clock').onClick(() => this.openEntryModal(undefined, { date: day })));
 			}
@@ -3605,7 +3737,7 @@ export class TaskCalendarView extends ItemView {
 			if (e.ctrlKey || e.metaKey) { void this.openEntryNote(entry, true); return; }
 			// Au doigt : appui simple pour le menu (fiche et note), appui long pour déplacer
 			if (this.touchUi) {
-				this.openEntryMenu(e, entry);
+				this.openEntryMenu(e, entry, chip);
 				return;
 			}
 			this.openEntryModal(entry);
@@ -3617,7 +3749,7 @@ export class TaskCalendarView extends ItemView {
 			if (this.drag?.active) return;
 			this.cancelDrag();
 			this.hidePeek();
-			this.openEntryMenu(e, entry);
+			this.openEntryMenu(e, entry, chip);
 		});
 		return chip;
 	}
@@ -3735,16 +3867,10 @@ export class TaskCalendarView extends ItemView {
 		else if (success) new Notice(success, 2500);
 	}
 
-	private openTaskMenu(e: MouseEvent, task: ObsidianTask, chip: HTMLElement): void {
+	/** Actions de statut d'une tâche (terminer, statut, personne, pause), partagées par les menus. */
+	private addTaskStatusItems(menu: Menu, e: MouseEvent, task: ObsidianTask, chip: HTMLElement): void {
 		const settings = this.plugin.settings;
-		const menu = new Menu();
 		const paused = Boolean(task.isPaused || task.status === 'paused');
-		const date = getTaskDate(task, this.state.dateField);
-
-		menu.addItem(i => i.setTitle('Ouvrir la note').setIcon('file-text').onClick(() => this.openTask(task)));
-		menu.addItem(i => i.setTitle('Ouvrir dans un nouvel onglet').setIcon('file-plus').onClick(() => this.openTask(task, true)));
-		menu.addSeparator();
-
 		menu.addItem(i => i.setTitle(task.completed ? 'Rouvrir' : 'Terminer').setIcon(task.completed ? 'rotate-ccw' : 'check-circle-2').onClick(() => {
 			void this.setTaskDone(task, chip, !task.completed);
 		}));
@@ -3779,30 +3905,11 @@ export class TaskCalendarView extends ItemView {
 			menu.addItem(i => i.setTitle(paused ? 'Reprendre' : 'Mettre en pause').setIcon(paused ? 'play' : 'pause').onClick(() =>
 				this.mutate(task, l => TaskMutator.setPaused(l, !paused, settings), paused ? '▶️ Tâche reprise' : '⏸️ Tâche en pause')));
 		}
-		menu.addSeparator();
+	}
 
-		const nextMonday = CalendarDate.addDays(CalendarDate.startOfWeek(this.today), 7);
-		const dateChoices: Array<[string, string, string]> = [
-			['Aujourd\'hui', 'sun', this.today],
-			['Demain', 'sunrise', CalendarDate.addDays(this.today, 1)],
-			[`Lundi prochain (${CalendarDate.format(nextMonday, { day: 'numeric', month: 'short' })})`, 'calendar-range', nextMonday],
-			['Dans une semaine', 'calendar-plus', CalendarDate.addDays(date || this.today, 7)]
-		];
-		dateChoices.forEach(([label, icon, value]) => {
-			if (value === date) return;
-			menu.addItem(i => i.setTitle(label).setIcon(icon).onClick(() => this.moveTask(task, value)));
-		});
-		menu.addItem(i => i.setTitle('Choisir une date…').setIcon('calendar-days').onClick(() => {
-			this.popover.open(chip, {
-				title: 'Nouvelle date',
-				type: 'date',
-				initialValue: date || this.today,
-				onSubmit: (val) => this.moveTask(task, CalendarDate.normalize(val))
-			});
-		}));
-		if (date) menu.addItem(i => i.setTitle('Retirer la date').setIcon('calendar-x').onClick(() => this.moveTask(task, null)));
-		menu.addSeparator();
-
+	/** Métadonnées d'une tâche (priorité, énergie, pièces, quadrant), partagées par les menus. */
+	private addTaskMetaItems(menu: Menu, task: ObsidianTask, chip: HTMLElement): void {
+		const settings = this.plugin.settings;
 		menu.addItem(i => i.setTitle(`Priorité…${task.priority && task.priority !== 'normal' ? ` (${PRIORITY_ICONS[task.priority] || ''})` : ''}`).setIcon('flag').onClick(() => {
 			this.popover.open(chip, {
 				title: 'Priorité',
@@ -3847,6 +3954,42 @@ export class TaskCalendarView extends ItemView {
 					this.mutate(task, l => adapter.setQuadrant(l, currentQuad === q ? null : q), currentQuad === q ? 'Quadrant retiré' : `Classée en ${String(q).toUpperCase()}`)));
 			});
 		}
+	}
+
+	private openTaskMenu(e: MouseEvent, task: ObsidianTask, chip: HTMLElement): void {
+		const menu = new Menu();
+		const date = getTaskDate(task, this.state.dateField);
+
+		menu.addItem(i => i.setTitle('Ouvrir la note').setIcon('file-text').onClick(() => this.openTask(task)));
+		menu.addItem(i => i.setTitle('Ouvrir dans un nouvel onglet').setIcon('file-plus').onClick(() => this.openTask(task, true)));
+		menu.addSeparator();
+
+		this.addTaskStatusItems(menu, e, task, chip);
+		menu.addSeparator();
+
+		const nextMonday = CalendarDate.addDays(CalendarDate.startOfWeek(this.today), 7);
+		const dateChoices: Array<[string, string, string]> = [
+			['Aujourd\'hui', 'sun', this.today],
+			['Demain', 'sunrise', CalendarDate.addDays(this.today, 1)],
+			[`Lundi prochain (${CalendarDate.format(nextMonday, { day: 'numeric', month: 'short' })})`, 'calendar-range', nextMonday],
+			['Dans une semaine', 'calendar-plus', CalendarDate.addDays(date || this.today, 7)]
+		];
+		dateChoices.forEach(([label, icon, value]) => {
+			if (value === date) return;
+			menu.addItem(i => i.setTitle(label).setIcon(icon).onClick(() => this.moveTask(task, value)));
+		});
+		menu.addItem(i => i.setTitle('Choisir une date…').setIcon('calendar-days').onClick(() => {
+			this.popover.open(chip, {
+				title: 'Nouvelle date',
+				type: 'date',
+				initialValue: date || this.today,
+				onSubmit: (val) => this.moveTask(task, CalendarDate.normalize(val))
+			});
+		}));
+		if (date) menu.addItem(i => i.setTitle('Retirer la date').setIcon('calendar-x').onClick(() => this.moveTask(task, null)));
+		menu.addSeparator();
+
+		this.addTaskMetaItems(menu, task, chip);
 		menu.addSeparator();
 
 		menu.addItem(i => {
@@ -3862,25 +4005,33 @@ export class TaskCalendarView extends ItemView {
 		menu.showAtMouseEvent(e);
 	}
 
-	private promptNewTask(day: string, anchorEl: HTMLElement): void {
-		this.popover.open(anchorEl, {
-			title: `Nouvelle tâche · ${CalendarDate.relativeLabel(day, this.today)}`,
-			type: 'text',
-			placeholder: 'Que faut-il faire ? [[note]] #tag',
-			initialValue: '',
-			attachSuggest: (input) => new LinkTagSuggest(this.app, input),
-			onSubmit: (val) => this.createTask(val, day)
-		});
+	/** Fenêtre de création d'une tâche, pré-remplie avec le jour visé et le type de date affiché. */
+	private promptNewTask(day: string, text = ''): void {
+		this.popover.close();
+		this.hidePeek();
+		const section = (this.plugin.settings.taskInsertHeading || '').trim();
+		new NewTaskModal(this.app, {
+			draft: { text, date: day, dateField: this.state.dateField },
+			destination: `Note quotidienne d’aujourd’hui${section ? ` · section « ${section} »` : ''}`,
+			onSubmit: (d) => this.createTask(d.text, d.date, { dateField: d.dateField, priority: d.priority })
+		}).open();
 	}
 
 	/** Ajoute la tâche dans la note quotidienne du jour (créée si besoin). */
-	private async createTask(title: string, day: string): Promise<void> {
+	private async createTask(
+		title: string,
+		day: string,
+		opts: { dateField?: CalendarDateField; priority?: TaskPriority | null } = {}
+	): Promise<void> {
 		const clean = title.trim();
 		if (!clean) return;
 		const settings = this.plugin.settings;
-		const line = this.state.dateField === 'scheduled'
+		const dateField = opts.dateField ?? this.state.dateField;
+		let line = dateField === 'scheduled'
 			? TaskMutator.setScheduledDate(`- [ ] ${clean}`, day, settings)
 			: TaskMutator.setDueDate(`- [ ] ${clean}`, day, settings);
+		if (opts.priority && opts.priority !== 'normal') line = TaskMutator.setPriority(line, opts.priority, settings);
+		line = TaskMutator.setCreatedDate(line, this.today, settings);
 		try {
 			const vaultContext = new VaultContextService(this.app, settings);
 			const daily = await vaultContext.getOrCreateDailyNote(this.today, settings.dailyNoteTemplatePath);
@@ -4010,6 +4161,10 @@ export class TaskCalendarView extends ItemView {
 					void this.moveEntry(entry, date, entry.start, entry.end);
 				}
 			}
+			else if (task && date && target.dataset.gridDay) {
+				// Tâche de journée lâchée dans la grille : elle devient une tâche horodatée
+				void this.scheduleTaskAt(task, date, Math.min(1440 - this.gridSnap(), this.minuteAt(target, d.lastY)));
+			}
 			else if (task) void this.moveTask(task, date);
 		} else if (this.pendingRender) {
 			this.renderPreservingScroll();
@@ -4085,6 +4240,18 @@ export class TaskCalendarView extends ItemView {
 		}
 
 		const target = inView ? el.closest<HTMLElement>('[data-drop-date]') : null;
+		// Tâche de journée au-dessus de la grille horaire : l'heure visée suit le pointeur
+		if (target && d.task && target.dataset.gridDay && this.timedTasksAvailable() && d.task.subtasks.length === 0) {
+			if (target !== d.target) {
+				d.target?.removeClass('is-drop-target');
+				d.target = target;
+				target.addClass('is-drop-target');
+			}
+			const start = Math.min(1440 - this.gridSnap(), this.minuteAt(target, y));
+			d.ghost?.addClass('has-target');
+			d.ghostLabel?.setText(`→ ${CalendarDate.relativeLabel(target.dataset.dropDate as string, this.today)} ${formatClock(start)}`);
+			return;
+		}
 		if (target === d.target) return;
 		d.target?.removeClass('is-drop-target');
 		d.target = target;
@@ -4380,7 +4547,14 @@ export class TaskCalendarView extends ItemView {
 }
 
 class ConfirmModal extends Modal {
-	constructor(app: App, private heading: string, private message: string, private onConfirm: () => void) {
+	constructor(
+		app: App,
+		private heading: string,
+		private message: string,
+		private onConfirm: () => void,
+		/** Libellé du bouton de confirmation ; par défaut une suppression */
+		private confirmLabel = 'Supprimer'
+	) {
 		super(app);
 	}
 
@@ -4390,7 +4564,7 @@ class ConfirmModal extends Modal {
 		const row = this.contentEl.createDiv({ cls: 'modal-button-container' });
 		const cancel = row.createEl('button', { text: 'Annuler' });
 		cancel.addEventListener('click', () => this.close());
-		const ok = row.createEl('button', { text: 'Supprimer', cls: 'mod-warning' });
+		const ok = row.createEl('button', { text: this.confirmLabel, cls: this.confirmLabel === 'Supprimer' ? 'mod-warning' : 'mod-cta' });
 		ok.addEventListener('click', () => {
 			this.close();
 			this.onConfirm();

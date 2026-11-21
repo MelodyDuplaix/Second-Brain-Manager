@@ -35,7 +35,9 @@
   - **Entrées des notes quotidiennes** : les lignes horodatées (`- 11:30 - 12:00 Dentiste`, `- 13:16 [[Projet]]`, cases à cocher comprises) s'affichent à leur heure. Section lue, formes de ligne (`{start}`, `{end}`, `{text}`), format d'heure, modèle d'écriture et position d'insertion sont réglables, avec un champ d'essai. Ajout, modification, déplacement et suppression depuis le calendrier.
   - **Autocomplétion dans la saisie** (entrée de note quotidienne, tâche rapide) : `[[` propose les notes et leurs alias, `#` les tags du coffre ; `Ctrl+Entrée` enregistre l'entrée.
   - Glisser-déposer pour replanifier, menus contextuels, ajout rapide d'une tâche, d'une entrée de note quotidienne ou d'un événement.
-  - **Sur mobile** : un appui long sur une entrée, un événement ou une tâche, relâché sans glisser, ouvre sa fenêtre de modification (ou son menu pour une tâche) ; glisser après l'appui long déplace toujours l'élément.
+  - **Sur mobile** : appui simple sur un élément pour son menu, appui long (doigt immobile) pour le déplacer ; refermer la barre latérale d'un balayage ne déplace rien. Appui long sur un créneau vide puis glisser pour choisir une plage horaire.
+  - **Tâches avec ou sans heure** : glisser une tâche du bandeau « Journée » vers la grille lui donne une heure (elle rejoint la note quotidienne), et l'inverse la rend à la journée. Le clic droit sur une tâche horodatée réunit les actions d'entrée et de tâche.
+  - **Fenêtre « Nouvelle tâche »** : texte avec autocomplétion, jour (raccourcis de demain à dans 1 mois), échéance ou date prévue, priorité ; la tâche reçoit sa date de création ➕ et va dans la section des nouvelles tâches.
   - Bacs « En retard » et « Sans date » fixés en haut de la barre latérale.
   - Vue Mois : tout reste visible (les semaines chargées s'agrandissent), sans bouton pour déplier une journée.
 

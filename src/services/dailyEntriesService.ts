@@ -298,6 +298,14 @@ export function asTaskLine(line: string): string {
 	return `${p[1]}- [ ] ${line.slice(p[0].length)}`;
 }
 
+/**
+ * Ligne d'une tâche horodatée devenue tâche de journée : les heures disparaissent, la puce, la
+ * case, le texte et les métadonnées restent.
+ */
+export function untimedEntryLine(entry: Pick<DailyEntry, 'prefix' | 'text'>): string {
+	return `${entry.prefix}${entry.text}`.replace(/\s+$/, '');
+}
+
 export function normalizeHeading(text: string): string {
 	return text
 		.replace(/^#+\s*/, '')
@@ -488,6 +496,17 @@ export class DailyEntryParser {
 	public rewriteLine(entry: DailyEntry, start: number, end: number | null, text: string): string {
 		if (text.trim() === entry.text.trim()) return this.rewriteTimes(entry, start, end);
 		return entry.prefix + this.formatBody(start, end, text);
+	}
+
+	/**
+	 * Ligne d'une tâche de journée qui reçoit une heure : même puce et même case (sans
+	 * l'indentation d'origine), heures écrites selon le modèle des entrées, puis le reste de la ligne.
+	 */
+	public toTimedLine(rawLine: string, start: number, end: number | null): string {
+		const p = LIST_PREFIX.exec(rawLine) as RegExpExecArray;
+		const prefix = p[0].replace(/^\s+/, '');
+		const body = rawLine.slice(p[0].length);
+		return asTaskLine(`${prefix || '- '}${this.formatBody(start, end, body)}`);
 	}
 
 	/** La note entière est lue (aucune section d'entrées configurée). */

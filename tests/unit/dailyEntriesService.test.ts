@@ -6,7 +6,8 @@ import {
 	DailyEntriesSettings,
 	TimeFormat,
 	entryBounds,
-	locateEntryLine
+	locateEntryLine,
+	untimedEntryLine
 } from '../../src/services/dailyEntriesService';
 
 const settings = (over: Partial<DailyEntriesSettings> = {}): DailyEntriesSettings => ({ ...DEFAULT_DAILY_ENTRIES_SETTINGS, ...over });
@@ -107,6 +108,23 @@ describe('DailyEntryParser', () => {
 		// Section introuvable : première section lue, comme avant
 		const fallback = p.insert(NOTE, '- [ ] 13:00 Café', 780, 'Inconnue').split('\n');
 		expect(fallback[10]).toBe('- [ ] 13:00 Café');
+	});
+
+	it('donne une heure à une tâche de journée, métadonnées comprises', () => {
+		const p = new DailyEntryParser(settings());
+		expect(p.toTimedLine('\t- [ ] Appeler Paul 📅 2026-11-12 #perso', 600, 630))
+			.toBe('- [ ] 10:00 - 10:30 Appeler Paul 📅 2026-11-12 #perso');
+		expect(p.toTimedLine('- [/] Rédiger', 540, null)).toBe('- [/] 09:00 Rédiger');
+		// La ligne produite est relue comme une entrée cochable, à la bonne heure
+		const back = p.parseLine(p.toTimedLine('- [ ] Appeler Paul', 600, 630));
+		expect(back).toMatchObject({ start: 600, end: 630, text: 'Appeler Paul', statusChar: ' ' });
+	});
+
+	it('retire les heures d’une tâche horodatée', () => {
+		const p = new DailyEntryParser(settings());
+		const raw = '- [ ] 11:30 - 12:00 Dentiste #santé 🔺';
+		const entry = p.parseLine(raw);
+		expect(entry && untimedEntryLine(entry)).toBe('- [ ] Dentiste #santé 🔺');
 	});
 
 	it('crée la section si elle manque', () => {

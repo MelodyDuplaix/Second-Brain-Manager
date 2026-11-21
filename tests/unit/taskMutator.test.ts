@@ -210,3 +210,18 @@ describe('TaskMutator', () => {
 		expect(resumed).toBe('- [/] Tester la feature');
 	});
 });
+
+describe('TaskMutator.setCreatedDate', () => {
+	it('ajoute la date de création à la fin de la ligne', () => {
+		expect(TaskMutator.setCreatedDate('- [ ] Appeler Paul 📅 2026-11-25', '2026-11-21', DEFAULT_SYNTAX_CONFIG))
+			.toBe('- [ ] Appeler Paul 📅 2026-11-25 ➕ 2026-11-21');
+	});
+	it('remplace une date de création existante', () => {
+		expect(TaskMutator.setCreatedDate('- [ ] Appeler ➕ 2026-01-01', '2026-11-21', DEFAULT_SYNTAX_CONFIG))
+			.toBe('- [ ] Appeler ➕ 2026-11-21');
+	});
+	it('écrit le champ Dataview en format dataview', () => {
+		expect(TaskMutator.setCreatedDate('- [ ] Appeler', '2026-11-21', { ...DEFAULT_SYNTAX_CONFIG, taskFormat: 'dataview' }))
+			.toBe('- [ ] Appeler [created:: 2026-11-21]');
+	});
+});
