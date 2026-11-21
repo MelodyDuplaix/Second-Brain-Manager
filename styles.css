@@ -10645,3 +10645,23 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 .sbm-chat-task-card.has-rule-color {
 	border-left: 3px solid var(--sbm-rule-color);
 }
+
+/* Tableau de bord : chargement et erreur */
+.sbm-dashboard-loading {
+	padding: 16px 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.sbm-dashboard-error {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	margin: 12px 0;
+	padding: 10px 12px;
+	border-radius: var(--radius-m, 8px);
+	border: 1px solid var(--background-modifier-error);
+	background: color-mix(in srgb, var(--background-modifier-error) 12%, transparent);
+	font-size: var(--font-ui-small);
+}

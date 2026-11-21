@@ -20,6 +20,8 @@ export class DashboardView extends ItemView {
 	private taskSearchQuery = '';
 	private taskFilterMode: 'active' | 'paused' | 'all' = 'active';
 	private showAllTodoTasks = false;
+	/** Numéro du dernier rendu lancé : un rendu dépassé s'arrête après le chargement des tâches */
+	private renderToken = 0;
 
 	constructor(leaf: WorkspaceLeaf, plugin: SecondBrainPlugin) {
 		super(leaf);
@@ -85,8 +87,40 @@ export class DashboardView extends ItemView {
 		// Carte de Gamification & Statistiques de pièces
 		this.renderGamificationStatsCard(container);
 
-		// Chargement de toutes les tâches
-		const allTasks = await this.loadAllVaultTasks();
+		// Chargement de toutes les tâches : la lecture du coffre peut prendre quelques secondes.
+		// Un rendu plus récent (pièces gagnées, tâche cochée…) rend celui-ci obsolète : il s'arrête
+		// au lieu d'ajouter ses sections à la suite de l'autre.
+		const token = ++this.renderToken;
+		const loadingEl = container.createEl('div', { cls: 'sbm-dashboard-loading', text: '⏳ Chargement des tâches…' });
+		let allTasks: ObsidianTask[];
+		try {
+			allTasks = await this.loadAllVaultTasks();
+		} catch (err) {
+			if (token !== this.renderToken) return;
+			this.showRenderError(loadingEl, 'Impossible de charger les tâches', err);
+			return;
+		}
+		if (token !== this.renderToken) return;
+		loadingEl.remove();
+		try {
+			this.renderTaskArea(container, allTasks, isEconomyMode);
+		} catch (err) {
+			this.showRenderError(container.createEl('div'), 'Erreur d’affichage des tâches', err);
+		}
+	}
+
+	/** Message d'erreur visible dans la vue (et détaillé dans la console) plutôt qu'une vue tronquée. */
+	private showRenderError(el: HTMLElement, title: string, err: unknown): void {
+		console.error(`[Second Brain Manager] ${title} :`, err);
+		el.empty();
+		el.className = 'sbm-dashboard-error';
+		el.createEl('strong', { text: `⚠️ ${title}` });
+		el.createEl('div', { text: err instanceof Error ? err.message : String(err) });
+		const retry = el.createEl('button', { text: 'Réessayer' });
+		retry.addEventListener('click', () => void this.render());
+	}
+
+	private renderTaskArea(container: HTMLElement, allTasks: ObsidianTask[], isEconomyMode: boolean): void {
 		const todoTasks = allTasks.filter(t => !t.completed && t.status !== 'cancelled');
 		const pausedTasks = todoTasks.filter(t => Boolean(t.isPaused || t.status === 'paused'));
 		const activeTasks = todoTasks.filter(t => !t.isPaused && t.status !== 'paused');
