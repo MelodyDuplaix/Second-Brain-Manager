@@ -17,6 +17,7 @@ import SecondBrainPlugin from '../main';
 import { JsonUtils } from '../utils/jsonUtils';
 import { DelegationFeature } from '../models/delegation';
 import { CalendarDate } from './taskCalendarService';
+import { getTaskExclusionRules } from './taskExclusionService';
 import {
 	EVENING_SECTION_HEADER,
 	MORNING_SECTION_HEADER,
@@ -235,7 +236,9 @@ export class MorningBriefingService {
 
 		// Lecture de toutes les tâches ouvertes du coffre en parallèle (racines + sous-tâches)
 		const allFiles = (typeof app.vault.getMarkdownFiles === 'function') ? app.vault.getMarkdownFiles() : [];
-		const files = allFiles.filter(f => !filterService.isFolderExcluded(f.path) && !filterService.isFileNameExcluded(f.path));
+		// Règles d'exclusion de tâches (réglages) : comme le tableau de bord, la revue du soir et la reprise
+		const exclusionRules = getTaskExclusionRules(app, plugin.settings);
+		const files = allFiles.filter(f => !filterService.isFolderExcluded(f.path) && !filterService.isFileNameExcluded(f.path) && !exclusionRules.isPathExcluded(f.path));
 		const results = await Promise.all(
 			files.map(async (file) => {
 				try {
@@ -253,7 +256,7 @@ export class MorningBriefingService {
 			})
 		);
 
-		const allOpenTasks = results.flat().filter(isOpenBriefingTask);
+		const allOpenTasks = exclusionRules.filter(results.flat()).filter(isOpenBriefingTask);
 
 		// Séparation stricte entre les tâches actives normales et les tâches explicitement en pause (On Hold)
 		// Mode « attribuée » : les tâches pour d'autres personnes ne sont pas les miennes

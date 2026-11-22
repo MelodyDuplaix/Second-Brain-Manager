@@ -1029,9 +1029,12 @@ export default class SecondBrainPlugin extends Plugin {
 	public async checkFileForCompletedTasks(file: TFile): Promise<void> {
 		// Gamification désactivée : aucune pièce distribuée, aucun historique enregistré
 		if (!this.isFeatureEnabled('gamification')) return;
+		// Tâches exclues par les règles (chemin, tag, mot, statut, sous-tâche d'une exclue) : aucune pièce
+		const exclusionRules = getTaskExclusionRules(this.app, this.settings);
+		if (exclusionRules.isPathExcluded(file.path)) return;
 		const isLocal = this.isLocalUserTaskCheck(file.path);
 		const content = await this.app.vault.read(file);
-		const tasks = TaskParser.parseAllTasks(content, file.path, this.settings);
+		const tasks = exclusionRules.filter(TaskParser.parseAllTasks(content, file.path, this.settings));
 
 		let dataModified = false;
 		let awardedTasks = 0;

@@ -131,6 +131,44 @@ describe('MorningBriefingService', () => {
 		expect(data.projectTasks.some(task => task.title === 'Backend déjà terminé')).toBe(false);
 	});
 
+	it('applies the task exclusion rules (paths, words) when collecting vault tasks', async () => {
+		const files: Record<string, string> = {
+			'1 Notes partagés Antoine/Liste de course partagée.md': '- [ ] Lait 📅 2026-08-24\n- [ ] Pain 📅 2026-08-24',
+			'Projet.md': '- [ ] Tâche gardée 📅 2026-08-24\n- [ ] Appeler @Antoine 📅 2026-08-24'
+		};
+		vi.spyOn(VaultContextService.prototype, 'getFilterService').mockReturnValue({
+			isFolderExcluded: () => false,
+			isFileNameExcluded: () => false,
+			isFileExcluded: () => false,
+			isTaskPrioritized: () => false,
+			getPriorityTags: () => [],
+			getPriorityProperties: () => []
+		} as any);
+		vi.spyOn(VaultContextService.prototype, 'getVaultStructure').mockReturnValue({
+			folders: [], projects: [], contacts: [], domains: [], inboxFiles: [], templates: [], totalMarkdownFiles: 2
+		});
+		vi.spyOn(VaultContextService.prototype, 'getOrCreateDailyNote').mockResolvedValue({ path: 'j.md', content: '' } as any);
+		vi.spyOn(VaultContextService.prototype, 'getDailyNote').mockResolvedValue({ content: '' } as any);
+		const read = vi.fn(async (f: { path: string }) => files[f.path]);
+		const app = {
+			vault: {
+				getMarkdownFiles: () => Object.keys(files).map(path => ({ path, basename: path })),
+				cachedRead: read
+			}
+		} as unknown as App;
+		const plugin = {
+			settings: { ...DEFAULT_SETTINGS, energyLevel: 5, taskExcludePaths: 'Liste de course partagée', taskExcludeWords: '@Antoine' },
+			isFeatureEnabled: () => false
+		};
+
+		const data = await MorningBriefingService.collectBriefingData(app, plugin as any);
+		const titles = [...data.todayTasks, ...data.overdueTasks, ...data.priorityTasks, ...data.quickWinTasks].map(t => t.title);
+
+		expect(titles).toContain('Tâche gardée');
+		expect(titles.some(t => t.includes('Lait') || t.includes('Pain') || t.includes('Antoine'))).toBe(false);
+		expect(read).toHaveBeenCalledTimes(1);
+	});
+
 	it('excludes completed and cancelled tasks even if they appear in input sections', () => {
 		const completedTask: ObsidianTask = {
 			...mockTasks[0],

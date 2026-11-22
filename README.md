@@ -21,7 +21,7 @@
   - Les sous-tâches gardent leur indentation lors d'un changement de quadrant.
 
 - **Exclusion de tâches** :
-  - Tâches ignorées dans toutes les vues et requêtes (tableau de bord, calendrier, briefing, revue du soir, reprise, recherches de l'IA).
+  - Tâches ignorées dans toutes les vues et requêtes (tableau de bord, calendrier, briefing, revue du soir, reprise, recherches de l'IA). Cocher une tâche exclue ne rapporte pas de pièces.
   - Règles par tags (sous-tags et tags de note inclus), mots ou expressions régulières, dossiers / fichiers (avec jokers `*`) et statuts.
   - Bouton « Tester les règles » pour voir immédiatement les tâches exclues.
 

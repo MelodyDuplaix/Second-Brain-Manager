@@ -4,8 +4,8 @@ import { ObsidianTask } from '../models/task';
 
 /**
  * Règles d'exclusion de tâches, appliquées à toutes les requêtes du plugin
- * (tableau de bord, calendrier, briefing, revue du soir, reprise, recherche de l'IA).
- * La gamification n'est pas concernée : cocher une tâche exclue rapporte toujours ses pièces.
+ * (tableau de bord, calendrier, briefing, revue du soir, reprise, recherche de l'IA, gamification :
+ * cocher une tâche exclue ne rapporte pas de pièces).
  */
 export interface TaskExclusionSettings {
 	/** Tags (sans ou avec #), un sous-tag est exclu avec son parent : #projet exclut #projet/x */
