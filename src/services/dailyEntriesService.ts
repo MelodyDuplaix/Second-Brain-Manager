@@ -37,7 +37,7 @@ export interface DailyEntriesSettings {
 
 	/** Première heure affichée dans la grille horaire */
 	calendarGridStartHour: number;
-	/** Dernière heure affichée dans la grille horaire (exclue) */
+	/** Dernière heure affichée dans la grille horaire (exclue) ; au-delà de 24, la journée se prolonge après minuit */
 	calendarGridEndHour: number;
 	/** Heure placée en haut de la grille à l'ouverture */
 	calendarScrollToHour: number;
@@ -221,6 +221,9 @@ export class TimeFormat {
 }
 
 /** « 09:05 » pour l'affichage interne du calendrier (indépendant du format de la note). */
+/** Dernière heure possible de la grille horaire : 06:00 le lendemain. */
+export const GRID_MAX_END_HOUR = 30;
+
 export function formatClock(totalMinutes: number): string {
 	const total = Math.max(0, Math.min(1440, Math.round(totalMinutes)));
 	return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;

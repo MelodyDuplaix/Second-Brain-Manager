@@ -6850,6 +6850,14 @@ textarea.sbm-chat-textarea:focus {
 	padding: calc(8px * var(--sbm-density, 1));
 }
 
+/*
+ * Le bas du calendrier peut passer sous une barre d'Obsidian (barre d'état, navigation mobile) :
+ * la vue mesure la hauteur recouverte et la réserve ici.
+ */
+.sbm-tcal-body {
+	margin-bottom: var(--sbm-tcal-bottom-inset, 0px);
+}
+
 .sbm-tcal-main {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -9279,6 +9287,21 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 }
 
 /* Ligne « maintenant » */
+/* Journée prolongée après minuit : heures du lendemain et passage de minuit */
+.sbm-tcal-tg-hour.is-next-day {
+	font-style: italic;
+}
+
+.sbm-tcal-tg-midnight {
+	position: absolute;
+	left: var(--tg-gutter);
+	right: 0;
+	border-top: 1px dashed var(--interactive-accent);
+	opacity: 0.6;
+	z-index: 1;
+	pointer-events: none;
+}
+
 .sbm-tcal-tg-now {
 	position: absolute;
 	left: 0;
@@ -10664,4 +10687,17 @@ body:is(.sbm-density-compact, .sbm-density-dense) .sbm-tcal {
 	border: 1px solid var(--background-modifier-error);
 	background: color-mix(in srgb, var(--background-modifier-error) 12%, transparent);
 	font-size: var(--font-ui-small);
+}
+
+/* Réglage « Heures affichées dans la grille » : début → fin, toujours dans cet ordre */
+.sbm-grid-hours-range {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+	direction: ltr;
+}
+
+.sbm-grid-hours-sep {
+	color: var(--text-muted);
 }

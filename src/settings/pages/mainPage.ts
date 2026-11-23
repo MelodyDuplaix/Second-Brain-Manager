@@ -1,4 +1,4 @@
-import { Setting, setIcon, Notice, normalizePath, debounce } from 'obsidian';
+import { DropdownComponent, Setting, setIcon, Notice, normalizePath, debounce } from 'obsidian';
 import { BaseSettingsPage } from '../baseSettingsPage';
 import { SettingGroup, SectionOptions } from '../settingGroup';
 import { FolderSuggest } from '../../suggesters/folderSuggest';
@@ -12,7 +12,7 @@ import { TaskStatusRegistry, TasksStatusType } from '../../models/taskStatusRegi
 import { getTaskExclusionRules, ExclusionReason, TaskExclusionSettings } from '../../services/taskExclusionService';
 import { TaskParser } from '../../parsers/taskParser';
 import { MatrixFeature } from '../../adapters/matrixAdapter';
-import { DailyEntryParser, DailyEntryInsertPosition, formatClock, CALENDAR_SNAP_OPTIONS, calendarSnapMinutes } from '../../services/dailyEntriesService';
+import { DailyEntryParser, DailyEntryInsertPosition, formatClock, CALENDAR_SNAP_OPTIONS, calendarSnapMinutes, GRID_MAX_END_HOUR } from '../../services/dailyEntriesService';
 import { OTHER_PERSON_COLOR, SECONDARY_PALETTE } from '../../services/calendarEventsService';
 import { describeFilter, isPresetModified, restoreDefaultPreset, restoreAllDefaultPresets, BUILTIN_FILTER_PRESETS } from '../../services/calendarFilters';
 import type { CalendarFilterPreset } from '../../services/calendarFilters';
@@ -707,29 +707,50 @@ export class MainPage extends BaseSettingsPage {
 		});
 
 		const hourOptions = (dropdown: { addOption: (v: string, l: string) => unknown }, from: number, to: number) => {
-			for (let h = from; h <= to; h++) dropdown.addOption(String(h), `${String(h).padStart(2, '0')}:00`);
+			for (let h = from; h <= to; h++) {
+				dropdown.addOption(String(h), h > 24 ? `${String(h - 24).padStart(2, '0')}:00 (lendemain)` : `${String(h).padStart(2, '0')}:00`);
+			}
 		};
 
 		group.addSetting((setting: Setting) => {
+			let startSelect: DropdownComponent | undefined;
+			let endSelect: DropdownComponent | undefined;
 			setting
 				.setName('Heures affichées dans la grille')
-				.setDesc('Première et dernière heure des vues Jour et Semaine.')
+				.setDesc('Première et dernière heure des vues Jour et Semaine. Une fin « lendemain » prolonge chaque journée après minuit (soirées, nuits) : les éléments du lendemain avant cette heure s’affichent en bas de la veille. La fin ne peut pas dépasser l’heure de début du lendemain.')
 				.addDropdown((dropdown) => {
 					hourOptions(dropdown, 0, 23);
 					dropdown.setValue(String(s.calendarGridStartHour ?? 0)).onChange(async (val) => {
 						s.calendarGridStartHour = Number(val);
 						if (s.calendarGridEndHour <= s.calendarGridStartHour) s.calendarGridEndHour = Math.min(24, s.calendarGridStartHour + 1);
+						// Une journée prolongée après minuit s'arrête au début du lendemain
+						if (s.calendarGridEndHour > 24 + s.calendarGridStartHour) s.calendarGridEndHour = 24 + s.calendarGridStartHour;
+						endSelect?.setValue(String(s.calendarGridEndHour));
 						await save();
 					});
+					startSelect = dropdown;
 				})
 				.addDropdown((dropdown) => {
-					hourOptions(dropdown, 1, 24);
+					hourOptions(dropdown, 1, GRID_MAX_END_HOUR);
 					dropdown.setValue(String(s.calendarGridEndHour ?? 24)).onChange(async (val) => {
 						s.calendarGridEndHour = Number(val);
 						if (s.calendarGridEndHour <= s.calendarGridStartHour) s.calendarGridStartHour = Math.max(0, s.calendarGridEndHour - 1);
+						if (s.calendarGridEndHour > 24 + s.calendarGridStartHour) s.calendarGridStartHour = s.calendarGridEndHour - 24;
+						startSelect?.setValue(String(s.calendarGridStartHour));
 						await save();
 					});
+					endSelect = dropdown;
 				});
+			// Ordre imposé : début à gauche, fin à droite. Le conteneur des contrôles peut être affiché
+			// à l'envers (row-reverse) : les deux listes sont regroupées dans un bloc qui garde son sens.
+			if (startSelect && endSelect) {
+				startSelect.selectEl.title = 'Heure de début';
+				endSelect.selectEl.title = 'Heure de fin';
+				const range = setting.controlEl.createDiv({ cls: 'sbm-grid-hours-range' });
+				range.append(startSelect.selectEl);
+				range.createSpan({ cls: 'sbm-grid-hours-sep', text: '→' });
+				range.append(endSelect.selectEl);
+			}
 		});
 
 		group.addSetting((setting: Setting) => {

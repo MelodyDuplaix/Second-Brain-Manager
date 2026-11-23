@@ -69,6 +69,7 @@ import {
 	entryTaskKey,
 	asTaskLine,
 	formatClock,
+	GRID_MAX_END_HOUR,
 	locateEntryLine,
 	untimedEntryLine
 } from '../services/dailyEntriesService';
@@ -111,10 +112,35 @@ interface TimedItem {
  * affiche « ↳ » au lieu de son début, un bloc qui finit le lendemain « → » au lieu de sa fin.
  */
 export function gridTimeLabel(start: number, end: number | null, clippedStart = false, clippedEnd = false): string {
-	const from = clippedStart ? '↳' : formatClock(start);
+	const from = clippedStart ? '↳' : gridClock(start);
 	if (end === null) return from;
-	const to = clippedEnd ? '→' : formatClock(end);
+	const to = clippedEnd ? '→' : gridClock(end);
 	return `${from} – ${to}`;
+}
+
+/**
+ * Heure affichée pour une minute de la grille. Une journée qui finit après minuit compte ses
+ * minutes au-delà de 1440 : 1530 s'affiche « 01:30 ». 1440 reste « 24:00 », comme avant.
+ */
+export function gridClock(minutes: number): string {
+	return formatClock(minutes > 1440 ? minutes - 1440 : minutes);
+}
+
+/**
+ * Plage de la grille (début et fin en minutes depuis minuit du jour de la colonne, éventuellement
+ * au-delà de 1440) ramenée au calendrier réel : un début après minuit passe au lendemain, une fin
+ * après minuit devient une heure plus petite que le début (entrée à cheval sur minuit).
+ */
+export function splitGridRange<E extends number | null>(day: string, start: number, end: E): { day: string; start: number; end: E } {
+	if (start >= 1440) {
+		return {
+			day: CalendarDate.addDays(day, 1),
+			start: start - 1440,
+			end: (end === null ? null : Math.min(1440, (end as number) - 1440)) as E
+		};
+	}
+	if (end !== null && (end as number) > 1440) return { day, start, end: ((end as number) - 1440) as E };
+	return { day, start, end };
 }
 
 /**
@@ -519,6 +545,7 @@ export class TaskCalendarView extends ItemView {
 
 		this.layout = this.computeLayout(this.contentEl.clientWidth);
 		this.resizeObserver = new ResizeObserver(entries => {
+			this.updateBottomInset();
 			const width = entries[0]?.contentRect.width ?? this.contentEl.clientWidth;
 			const next = this.computeLayout(width);
 			if (next !== this.layout) {
@@ -528,6 +555,9 @@ export class TaskCalendarView extends ItemView {
 			}
 		});
 		this.resizeObserver.observe(this.contentEl);
+		this.registerEvent(this.app.workspace.on('layout-change', () => this.updateBottomInset()));
+		this.registerEvent(this.app.workspace.on('css-change', () => this.updateBottomInset()));
+		this.updateBottomInset();
 
 		this.registerDomEvent(this.rootEl, 'keydown', (e) => this.onKeyDown(e));
 
@@ -974,6 +1004,16 @@ export class TaskCalendarView extends ItemView {
 				: 'Synchroniser l’agenda Google';
 	}
 
+	/**
+	 * Nouvel événement sur un créneau de la grille. La fenêtre ne connaît qu'un jour : un créneau
+	 * à cheval sur minuit s'arrête à 23:59, un créneau après minuit est créé le lendemain.
+	 */
+	private openEventModalAt(day: string, start: number, end: number): void {
+		const r = splitGridRange(day, start, end);
+		const last = r.end > r.start ? Math.min(r.end, 1439) : 1439;
+		this.openEventModal(undefined, r.day, formatClock(r.start), formatClock(last));
+	}
+
 	private openEventModal(ev?: GoogleCalendarEvent, day?: string, startTime?: string, endTime?: string): void {
 		new CalendarEventModal(this.app, this.plugin, ev, day, async () => {
 			await this.refreshEvents(false);
@@ -1327,7 +1367,9 @@ export class TaskCalendarView extends ItemView {
 	 * avec les heures écrites selon le modèle des entrées. Une tâche rangée ailleurs (note de
 	 * projet) n'est déplacée qu'après confirmation.
 	 */
-	private async scheduleTaskAt(task: ObsidianTask, day: string, start: number): Promise<void> {
+	private async scheduleTaskAt(task: ObsidianTask, gridDay: string, gridStart: number): Promise<void> {
+		// Minute de la grille après minuit : la tâche va dans la note du lendemain
+		const { day, start } = splitGridRange(gridDay, gridStart, null);
 		if (!this.timedTasksAvailable()) {
 			new Notice('Pour placer une tâche à une heure, activez les entrées des notes quotidiennes et « Inclure les tâches horodatées ».', 5000);
 			await this.moveTask(task, day);
@@ -1418,7 +1460,9 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	/** Déplacement optimiste (glisser-déposer) : l'affichage suit immédiatement. */
-	private async moveEntry(entry: DailyEntry, day: string, start: number, end: number | null): Promise<void> {
+	private async moveEntry(entry: DailyEntry, gridDay: string, gridStart: number, gridEnd: number | null): Promise<void> {
+		// Minutes de la grille (au-delà de minuit si la journée se prolonge) → jour et heures réels
+		const { day, start, end } = splitGridRange(gridDay, gridStart, gridEnd);
 		if (day === entry.date && start === entry.start && end === entry.end) return;
 		const previous = { date: entry.date, start: entry.start, end: entry.end };
 		this.flash = { key: entryKey(entry), until: Date.now() + 900 };
@@ -1588,6 +1632,31 @@ export class TaskCalendarView extends ItemView {
 				|| t.filePath.toLowerCase().includes(q)
 				|| t.domainTags.some(tag => tag.toLowerCase().includes(q));
 		});
+	}
+
+	/**
+	 * Barres d'Obsidian qui flottent au-dessus du bas de la vue : barre d'état (ordinateur,
+	 * souvent sur la barre latérale droite), barre de navigation et barre d'outils (mobile).
+	 * La hauteur qu'elles recouvrent réellement est réservée en bas du calendrier ; rien sinon.
+	 */
+	private updateBottomInset(): void {
+		if (!this.rootEl) return;
+		const view = this.contentEl.getBoundingClientRect();
+		let inset = 0;
+		this.contentEl.ownerDocument.querySelectorAll<HTMLElement>('.status-bar, .mobile-navbar, .mobile-toolbar').forEach(bar => {
+			if (bar.offsetParent === null && getComputedStyle(bar).position !== 'fixed') return;
+			const r = bar.getBoundingClientRect();
+			if (r.height === 0 || r.width === 0) return;
+			const overlapsX = r.left < view.right && r.right > view.left;
+			if (overlapsX && r.top < view.bottom && r.bottom > view.top && r.top > view.top) {
+				inset = Math.max(inset, Math.ceil(view.bottom - r.top) + 6);
+			}
+		});
+		const value = inset > 0 ? `${inset}px` : '';
+		if (this.rootEl.style.getPropertyValue('--sbm-tcal-bottom-inset') !== value) {
+			if (value) this.rootEl.style.setProperty('--sbm-tcal-bottom-inset', value);
+			else this.rootEl.style.removeProperty('--sbm-tcal-bottom-inset');
+		}
 	}
 
 	private computeLayout(width: number): LayoutSize {
@@ -2064,12 +2133,35 @@ export class TaskCalendarView extends ItemView {
 	   Grille horaire (vues Jour et Semaine)
 	   ====================================================================== */
 
+	/**
+	 * Heures de la grille. La fin peut dépasser 24 (journée qui finit après minuit) sans
+	 * empiéter sur le début du lendemain : au plus 24 + heure de début.
+	 */
 	private gridHours(): { startH: number; endH: number } {
 		const s = this.plugin.settings;
 		const startH = Math.max(0, Math.min(23, Math.floor(Number(s.calendarGridStartHour) || 0)));
 		const rawEnd = Number(s.calendarGridEndHour);
-		const endH = Math.max(startH + 1, Math.min(24, Math.floor(Number.isFinite(rawEnd) && rawEnd > 0 ? rawEnd : 24)));
+		const maxEnd = Math.min(GRID_MAX_END_HOUR, 24 + startH);
+		const endH = Math.max(startH + 1, Math.min(maxEnd, Math.floor(Number.isFinite(rawEnd) && rawEnd > 0 ? rawEnd : 24)));
 		return { startH, endH };
+	}
+
+	/** Dernière minute de la grille (au moins minuit). */
+	private gridHorizon(): number {
+		return Math.max(1440, this.gridHours().endH * 60);
+	}
+
+	/** Minutes après minuit affichées en bas de la veille (0 si la journée finit à minuit). */
+	private gridSpill(): number {
+		return this.gridHorizon() - 1440;
+	}
+
+	/** Colonne et minute de « maintenant » : après minuit, la veille tant qu'elle se prolonge. */
+	private gridNow(): { day: string; minutes: number } {
+		const now = new Date();
+		const minutes = now.getHours() * 60 + now.getMinutes();
+		if (minutes < this.gridSpill()) return { day: CalendarDate.addDays(this.today, -1), minutes: minutes + 1440 };
+		return { day: this.today, minutes };
 	}
 
 	private renderTimeGrid(container: HTMLElement, days: string[], buckets: Map<string, ObsidianTask[]>): void {
@@ -2130,17 +2222,23 @@ export class TaskCalendarView extends ItemView {
 		grid.dataset.startHour = String(startH);
 		const gutter = grid.createDiv({ cls: 'sbm-tcal-tg-gutter sbm-tcal-tg-hours' });
 		for (let h = startH; h < endH; h++) {
-			const label = gutter.createDiv({ cls: 'sbm-tcal-tg-hour', text: `${String(h).padStart(2, '0')}:00` });
+			const label = gutter.createDiv({ cls: `sbm-tcal-tg-hour${h >= 24 ? ' is-next-day' : ''}`, text: `${String(h % 24).padStart(2, '0')}:00` });
 			label.style.top = `${(h - startH) * hh}px`;
 		}
+		// Journée prolongée après minuit : un trait marque le passage au lendemain
+		if (endH > 24) {
+			const midnight = grid.createDiv({ cls: 'sbm-tcal-tg-midnight' });
+			midnight.style.top = `${(24 - startH) * hh}px`;
+		}
 
+		const nowCell = this.gridNow();
 		days.forEach(day => {
 			const col = grid.createDiv({ cls: 'sbm-tcal-tg-col' });
 			this.decorateDayCell(col, day);
 			col.dataset.gridDay = day;
 			const items = this.layoutTimedItems(this.timedItemsFor(day), hh);
 			items.forEach(item => this.renderGridItem(col, item, startH, endH, hh));
-			if (day === this.today) col.createDiv({ cls: 'sbm-tcal-tg-now' });
+			if (day === nowCell.day) col.createDiv({ cls: 'sbm-tcal-tg-now' });
 			col.addEventListener('pointerdown', (e) => this.onGridPointerDown(e, col, day));
 			// Appui long au doigt sur un créneau vide : il sélectionne, pas de menu natif
 			col.addEventListener('contextmenu', (e) => {
@@ -2160,8 +2258,8 @@ export class TaskCalendarView extends ItemView {
 
 		// Position : celle de la période précédente, sinon l'heure d'ouverture (ou maintenant)
 		const remembered = this.gridScroll && this.gridScroll.hourHeight === hh ? this.gridScroll.top : null;
-		const focusHour = days.includes(this.today)
-			? Math.max(startH, new Date().getHours() - 1)
+		const focusHour = days.includes(nowCell.day)
+			? Math.max(startH, Math.floor(nowCell.minutes / 60) - 1)
 			: Math.max(startH, Number(this.plugin.settings.calendarScrollToHour) || 7);
 		const target = remembered ?? Math.max(0, (Math.min(focusHour, endH - 1) - startH) * hh);
 		scroller.scrollTop = target;
@@ -2169,29 +2267,70 @@ export class TaskCalendarView extends ItemView {
 	}
 
 	/** Événements minutés et entrées d'un jour, en minutes sur ce jour. */
+	/**
+	 * Une journée qui finit après minuit (heure de fin de grille > 24) montre aussi, sous minuit,
+	 * le début du lendemain : ces éléments sont comptés au-delà de 1440 et ne sont plus affichés
+	 * en haut de la colonne du lendemain.
+	 */
 	private timedItemsFor(day: string): TimedItem[] {
+		const horizon = this.gridHorizon();
+		const spill = horizon - 1440;
+		const next = CalendarDate.addDays(day, 1);
 		const items: TimedItem[] = [];
-		(this.eventBuckets.get(day) || []).forEach(ev => {
+		const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+		// Minutes depuis minuit du jour de la colonne ; null au-delà du lendemain
+		const offsetOf = (date: string, time: string): number | null => {
+			const diff = CalendarDate.diffDays(day, date);
+			return diff < 0 ? -1 : diff > 1 ? null : diff * 1440 + toMin(time);
+		};
+		const push = (item: TimedItem) => {
+			// Déjà affiché en bas de la veille
+			if (spill > 0 && item.end <= spill) return;
+			if (item.start >= horizon) return;
+			items.push(item);
+		};
+
+		const seen = new Set<string>();
+		const events = [...(this.eventBuckets.get(day) || []), ...(spill > 0 ? this.eventBuckets.get(next) || [] : [])];
+		events.forEach(ev => {
 			if (ev.allDay || !ev.start?.dateTime) return;
+			const key = eventKey(ev);
+			if (seen.has(key)) return;
+			seen.add(key);
 			const s = localParts(ev.start.dateTime);
 			const e = ev.end?.dateTime ? localParts(ev.end.dateTime) : null;
-			const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
-			const clippedStart = s.date < day;
-			const start = clippedStart ? 0 : toMin(s.time);
+			const startAt = offsetOf(s.date, s.time);
+			if (startAt === null) return;
+			const clippedStart = startAt < 0;
+			const start = clippedStart ? 0 : startAt;
 			let end: number;
 			let clippedEnd = false;
 			if (!e) end = start + 60;
-			else if (e.date > day) {
-				end = 1440;
-				clippedEnd = !(e.time === '00:00' && CalendarDate.addDays(day, 1) === e.date);
-			} else end = toMin(e.time);
-			if (end <= start) end = Math.min(1440, start + GRID_MIN_SPAN);
-			items.push({ kind: 'event', key: eventKey(ev), day, start, end, clippedStart, clippedEnd, point: false, event: ev, col: 0, cols: 1 });
+			else {
+				const endAt = offsetOf(e.date, e.time);
+				if (endAt === null || endAt > horizon) {
+					end = horizon;
+					clippedEnd = true;
+				} else end = endAt;
+			}
+			if (end <= start) end = Math.min(horizon, start + GRID_MIN_SPAN);
+			push({ kind: 'event', key, day, start, end, clippedStart, clippedEnd, point: false, event: ev, col: 0, cols: 1 });
 		});
-		this.dayEntries(day).forEach(entry => {
-			const b = entryBounds(entry, this.entryDuration());
-			items.push({ kind: 'entry', key: entryKey(entry), day, start: b.start, end: b.end, clippedStart: false, clippedEnd: entry.end !== null && entry.end < entry.start, point: b.point, entry, col: 0, cols: 1 });
-		});
+
+		const duration = this.entryDuration();
+		const addEntry = (entry: DailyEntry, shift: number) => {
+			const point = entry.end === null || entry.end === entry.start;
+			const start = entry.start + shift;
+			let end = point
+				? start + Math.max(5, duration || 30)
+				: (entry.end as number) + shift + ((entry.end as number) < entry.start ? 1440 : 0);
+			const clippedEnd = !point && end > horizon;
+			end = Math.min(horizon, end);
+			if (end <= start) end = Math.min(horizon, start + GRID_MIN_SPAN);
+			push({ kind: 'entry', key: entryKey(entry), day, start, end, clippedStart: false, clippedEnd, point, entry, col: 0, cols: 1 });
+		};
+		this.dayEntries(day).forEach(entry => addEntry(entry, 0));
+		if (spill > 0) this.dayEntries(next).forEach(entry => addEntry(entry, 1440));
 		return items;
 	}
 
@@ -2417,7 +2556,10 @@ export class TaskCalendarView extends ItemView {
 		if (!line) return;
 		const { startH, endH } = this.gridHours();
 		const now = new Date();
-		const minutes = now.getHours() * 60 + now.getMinutes();
+		let minutes = now.getHours() * 60 + now.getMinutes();
+		// Ligne placée dans la colonne de la veille (journée prolongée après minuit)
+		const lineDay = line.closest<HTMLElement>('.sbm-tcal-tg-col')?.dataset.gridDay;
+		if (lineDay && lineDay < this.today) minutes += 1440;
 		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
 		line.toggleClass('is-hidden', minutes < startH * 60 || minutes > endH * 60);
 		line.style.top = `${(minutes - startH * 60) / 60 * hh}px`;
@@ -2555,7 +2697,8 @@ export class TaskCalendarView extends ItemView {
 		if (isMoveMode(d.mode)) {
 			const pointer = this.minuteAt(col, d.lastY, 1);
 			start = Math.round((pointer - d.grabOffset) / snap) * snap;
-			start = Math.max(0, Math.min(1440 - Math.min(duration, 1440), start));
+			const horizon = this.gridHorizon();
+			start = Math.max(0, Math.min(horizon - Math.min(duration, horizon), start));
 			end = start + duration;
 		} else if (movesStartEdge(d.mode)) {
 			// Bord haut : la fin ne bouge pas
@@ -2580,7 +2723,7 @@ export class TaskCalendarView extends ItemView {
 		const showEnd = !(d.item.point && isMoveMode(d.mode));
 		const time = d.preview.querySelector('.sbm-tcal-tg-item-time');
 		time?.setText(gridTimeLabel(start, showEnd ? end : null));
-		label?.setText(`${formatClock(start)}${showEnd ? ` – ${formatClock(end)}` : ''}${dayLabel}`);
+		label?.setText(`${gridClock(start)}${showEnd ? ` – ${gridClock(end)}` : ''}${dayLabel}`);
 	}
 
 	/** Un bloc déjà à cheval sur plusieurs jours ne peut pas être poussé : il fait mur. */
@@ -2744,7 +2887,7 @@ export class TaskCalendarView extends ItemView {
 			if (item.entry) {
 				const entry = item.entry;
 				// Une entrée ponctuelle déplacée reste ponctuelle ; redimensionnée, elle reçoit une heure de fin
-				const end = mode === 'move' && entry.end === null ? null : targetEnd >= 1440 ? 1440 : targetEnd;
+				const end = mode === 'move' && entry.end === null ? null : Math.min(this.gridHorizon(), targetEnd);
 				await this.moveEntry(entry, targetDay, targetStart, end === targetStart ? null : end);
 			} else if (item.event) {
 				await this.moveEventTo(item.event, targetDay, targetStart, targetEnd);
@@ -2768,7 +2911,7 @@ export class TaskCalendarView extends ItemView {
 			if (!target) continue;
 			if (target.entry) {
 				// Une entrée sans heure de fin le reste : seul son début se décale
-				const end = target.entry.end === null ? null : Math.min(1440, shift.end);
+				const end = target.entry.end === null ? null : Math.min(this.gridHorizon(), shift.end);
 				await this.moveEntry(target.entry, day, shift.start, end);
 			} else if (target.event) {
 				await this.moveEventTo(target.event, day, shift.start, shift.end);
@@ -2950,10 +3093,10 @@ export class TaskCalendarView extends ItemView {
 		let end: number;
 		if (ranged) {
 			({ start, end } = selectionRange(sel.anchor, sel.current, this.gridSnap()));
-			end = Math.min(1440, end);
+			end = Math.min(this.gridHorizon(), end);
 		} else {
 			start = sel.anchor;
-			end = Math.min(1440, start + this.entryDuration());
+			end = Math.min(this.gridHorizon(), start + this.entryDuration());
 		}
 		sel.anchor = start;
 		sel.current = end;
@@ -2981,11 +3124,11 @@ export class TaskCalendarView extends ItemView {
 		const { startH } = this.gridHours();
 		const hh = this.state.hourHeight || DEFAULT_HOUR_HEIGHT;
 		const { start, end: rawEnd } = selectionRange(sel.anchor, sel.current, this.gridSnap());
-		const end = Math.min(1440, rawEnd);
+		const end = Math.min(this.gridHorizon(), rawEnd);
 		if (!sel.box) sel.box = sel.col.createDiv({ cls: 'sbm-tcal-tg-selection' });
 		sel.box.style.top = `${(start - startH * 60) / 60 * hh}px`;
 		sel.box.style.height = `${(end - start) / 60 * hh}px`;
-		sel.box.setText(`${formatClock(start)} – ${formatClock(end)}`);
+		sel.box.setText(`${gridClock(start)} – ${gridClock(end)}`);
 	}
 
 	private clearGridSelection(): void {
@@ -3003,20 +3146,23 @@ export class TaskCalendarView extends ItemView {
 	private openCreateMenu(e: MouseEvent, day: string, start: number, end: number, explicitEnd: boolean): void {
 		const entriesOn = this.plugin.settings.dailyEntriesEnabled !== false;
 		const menu = new Menu();
-		const label = `${formatClock(start)} – ${formatClock(end)}`;
+		const label = `${gridClock(start)} – ${gridClock(end)}`;
+		// Entrée de la note quotidienne : après minuit, elle va dans la note du lendemain
+		const slot = splitGridRange(day, start, explicitEnd ? end : null);
+		const entryDraft = { date: slot.day, start: slot.start, end: slot.end };
 		if (entriesOn) {
 			menu.addItem(i => i.setTitle(`Entrée dans la note quotidienne (${label})`).setIcon('clock').onClick(() =>
-				this.openEntryModal(undefined, { date: day, start, end: explicitEnd ? end : null })));
+				this.openEntryModal(undefined, entryDraft)));
 			// Tâche à l'heure du créneau : une case à cocher dans la note quotidienne, lue comme
 			// entrée horodatée (sinon elle ne s'afficherait pas à son heure)
 			if (this.plugin.settings.dailyEntriesIncludeTasks !== false) {
 				menu.addItem(i => i.setTitle(`Tâche horodatée (${label})`).setIcon('alarm-clock-check').onClick(() =>
-					this.openEntryModal(undefined, { date: day, start, end: explicitEnd ? end : null, task: true })));
+					this.openEntryModal(undefined, { ...entryDraft, task: true })));
 			}
 		}
 		if (this.googleReady()) {
 			menu.addItem(i => i.setTitle(`Événement Google (${label})`).setIcon('calendar-plus').onClick(() =>
-				this.openEventModal(undefined, day, formatClock(start), formatClock(Math.min(end, 1439)))));
+				this.openEventModalAt(day, start, end)));
 		}
 		menu.addItem(i => i.setTitle('Tâche ce jour-là').setIcon('check-square').onClick(() => this.promptNewTask(day)));
 		menu.onHide(() => window.setTimeout(() => this.clearGridSelection(), 0));
@@ -4154,16 +4300,16 @@ export class TaskCalendarView extends ItemView {
 			else if (entry && date) {
 				// Déposée dans la grille horaire : l'entrée prend l'heure visée
 				if (target.dataset.gridDay) {
-					const start = Math.min(1440 - this.gridSnap(), this.minuteAt(target, d.lastY));
+					const start = Math.min(this.gridHorizon() - this.gridSnap(), this.minuteAt(target, d.lastY));
 					const duration = entry.end !== null && entry.end > entry.start ? entry.end - entry.start : null;
-					void this.moveEntry(entry, date, start, duration !== null ? Math.min(1440, start + duration) : null);
+					void this.moveEntry(entry, date, start, duration !== null ? Math.min(this.gridHorizon(), start + duration) : null);
 				} else {
 					void this.moveEntry(entry, date, entry.start, entry.end);
 				}
 			}
 			else if (task && date && target.dataset.gridDay) {
 				// Tâche de journée lâchée dans la grille : elle devient une tâche horodatée
-				void this.scheduleTaskAt(task, date, Math.min(1440 - this.gridSnap(), this.minuteAt(target, d.lastY)));
+				void this.scheduleTaskAt(task, date, Math.min(this.gridHorizon() - this.gridSnap(), this.minuteAt(target, d.lastY)));
 			}
 			else if (task) void this.moveTask(task, date);
 		} else if (this.pendingRender) {
@@ -4247,9 +4393,9 @@ export class TaskCalendarView extends ItemView {
 				d.target = target;
 				target.addClass('is-drop-target');
 			}
-			const start = Math.min(1440 - this.gridSnap(), this.minuteAt(target, y));
+			const start = Math.min(this.gridHorizon() - this.gridSnap(), this.minuteAt(target, y));
 			d.ghost?.addClass('has-target');
-			d.ghostLabel?.setText(`→ ${CalendarDate.relativeLabel(target.dataset.dropDate as string, this.today)} ${formatClock(start)}`);
+			d.ghostLabel?.setText(`→ ${CalendarDate.relativeLabel(target.dataset.dropDate as string, this.today)} ${gridClock(start)}`);
 			return;
 		}
 		if (target === d.target) return;
